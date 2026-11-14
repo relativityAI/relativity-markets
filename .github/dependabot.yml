@@ -4,11 +4,34 @@ updates:
     directory: "/client"
     schedule:
       interval: weekly
+    groups:
+      client-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # TS7 is the Go-based rewrite — migrate deliberately, not via dependabot.
+      - dependency-name: typescript
+        versions: [">=7"]
   - package-ecosystem: npm
     directory: "/services"
     schedule:
       interval: weekly
+    groups:
+      services-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: typescript
+        versions: [">=7"]
+      # pdf-parse v2 is an API rewrite; revisit with code changes.
+      - dependency-name: pdf-parse
+        versions: [">=2"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      actions-all:
+        patterns: ["*"]
