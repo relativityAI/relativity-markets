@@ -24,7 +24,7 @@
     "@expo-google-fonts/jetbrains-mono": "^0.4.1",
     "@langfuse/client": "^5.11.0",
     "@langfuse/otel": "^5.11.0",
-    "@langfuse/vercel-ai-sdk": "^5.11.0",
+    "@langfuse/vercel-ai-sdk": "^6.1.1",
     "@opentelemetry/sdk-node": "^0.221.0",
     "@resvg/resvg-js": "^2.6.2",
     "@supabase/supabase-js": "^2.49.1",
