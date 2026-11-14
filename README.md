@@ -34,6 +34,7 @@
         <li><a href="#built-with">Built With</a></li>
       </ul>
     </li>
+    <li><a href="#getting-started">Getting Started</a></li>
     <li><a href="#usage">Usage</a></li>
     <li><a href="#skill-creation">Skill Creation</a></li>
     <li><a href="#roadmap">Roadmap</a></li>
@@ -67,6 +68,56 @@ Relativity AI Portfolio turns an investing style into an *investor agent* — a 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 
+
+## Getting Started
+
+You need [Node.js](https://nodejs.org) **22.13 or newer** and npm. Docker is needed for web search — everything else works without it.
+
+**1. Get the code**
+
+```bash
+git clone https://github.com/relativityAI/relativity-markets.git
+cd relativity-markets
+```
+
+**2. Install the dependencies** (the app has two parts, each with its own)
+
+```bash
+cd services && npm install
+cd ../client && npm install
+cd ..
+```
+
+**3. Create the web app's settings file** (defaults are fine to start)
+
+```bash
+cp client/.env.example client/.env
+```
+
+**4. Start the app**
+
+```bash
+npm run dev
+```
+
+This starts both parts together:
+- web app → [http://localhost:5173](http://localhost:5173)
+- API → http://localhost:8080
+
+Stop with `Ctrl+C`.
+
+**5. First visit**
+
+Open http://localhost:5173. There's no sign-up — a local default user is created automatically. Go to **Settings** and paste your LLM API keys (OpenAI, Gemini, Anthropic, and others). They are stored encrypted on your machine. All your data lives in one file (`services/data/relativity.db`) — nothing is sent to a cloud.
+
+**Optional: turn on web search**
+
+Analyses that search the web need [SearXNG](https://searxng.org) running locally (requires [Docker](https://docs.docker.com/get-docker/)):
+
+```bash
+cd services
+npm run searxng
+```
 
 ## Usage
 
