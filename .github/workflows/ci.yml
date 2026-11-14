@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  client:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: npm ci
+      # ponytail: typecheck/lint NOT gated here yet — client has ~170 legacy
+      # tsc errors and ~420 lint errors (vite build never ran tsc). Keep CI
+      # green on tests + build; re-enable `npm run typecheck` and
+      # `npm run lint` steps once those counts hit zero.
+      - run: npm test
+      - run: npm run build
+
+  services:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: services/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      # Fresh-install smoke test: boot the built API on an empty SQLite file
+      # and hit the health endpoint.
+      - name: Boot smoke test (fresh SQLite)
+        run: |
+          rm -f /tmp/smoke.db /tmp/smoke.db-wal /tmp/smoke.db-shm
+          SQLITE_PATH=/tmp/smoke.db PORT=8099 node dist/api/index.js &
+          timeout 30 bash -c 'until curl -fsS http://localhost:8099/health > /dev/null; do sleep 1; done'
+          curl -fsS http://localhost:8099/health
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # client/Dockerfile refuses to build without an .env — use the example.
+      - run: cp client/.env.example client/.env
+      - run: docker build ./services
+      - run: docker build ./client

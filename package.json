@@ -1,0 +1,17 @@
+{
+  "name": "relativity-portfolio",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "npm --prefix services run dev & npm --prefix client run dev",
+    "dev:api": "npm --prefix services run dev",
+    "dev:client": "npm --prefix client run dev",
+    "build": "npm --prefix services run build && npm --prefix client run build",
+    "test": "npm --prefix services test && npm --prefix client test",
+    "typecheck": "npm --prefix services run typecheck && npm --prefix client run typecheck",
+    "lint": "npm --prefix client run lint"
+  }
+}

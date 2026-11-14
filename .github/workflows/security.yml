@@ -1,0 +1,33 @@
+name: security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 3 * * 1" # Mondays 03:00 UTC
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # gitleaks-action@v2 requires a paid license for org repos — run the
+      # free CLI directly (pinned tag).
+      - name: Scan for committed secrets
+        run: docker run --rm -v "$PWD:/repo:ro" zricethezav/gitleaks:v8.21.2 detect --source /repo --redact --no-banner
+
+  audit:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dir: [client, services]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm audit --omit=dev --audit-level=high
+        working-directory: ${{ matrix.dir }}
