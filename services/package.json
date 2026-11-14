@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch api/index.ts",
-    "build": "tsc",
+    "build": "tsc && cp -r config assets dist/ && cp -r harness/agents/defaults dist/harness/agents/ && cp -r harness/config dist/harness/",
+    "typecheck": "tsc --noEmit",
     "start": "node dist/api/index.js",
     "test": "vitest run --passWithNoTests",
     "ui:demo": "tsx harness/ui/demo.ts",
