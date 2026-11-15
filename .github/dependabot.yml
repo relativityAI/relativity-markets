@@ -9,6 +9,9 @@ updates:
         update-types:
           - minor
           - patch
+        # @assistant-ui/* internals break under the package.json overrides
+        # when bumped in bulk (exports drift) — updates individually.
+        exclude-dependency-name: "@assistant-ui/*"
     ignore:
       # TS7 is the Go-based rewrite — migrate deliberately, not via dependabot.
       - dependency-name: typescript
