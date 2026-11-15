@@ -13,10 +13,12 @@ services:
         required: false
     environment:
       SEARXNG_URL: http://searxng:8080
-      # Local-first: state is a SQLite file (mount to keep it).
+      # Local-first: state is the SAME SQLite file local dev uses
+      # (services/data/relativity.db) — runs, agents, keys are shared.
       SQLITE_PATH: /app/data/relativity.db
+    user: "${UID:-1000}:${GID:-1000}"
     volumes:
-      - relativity-sqldata:/app/data
+      - ./services/data:/app/data
     depends_on:
       - searxng
 
@@ -45,5 +47,4 @@ services:
       retries: 10
 
 volumes:
-  relativity-sqldata:
   relativity-pgdata:
