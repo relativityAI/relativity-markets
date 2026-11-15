@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/relativityAI/relativity-markets/compare/relativity-portfolio-v0.1.0...relativity-portfolio-v0.1.1) (2026-11-15)
+
+
+### Bug Fixes
+
+* **release:** match release-please tag names; allow manual publish for existing tags ([#147](https://github.com/relativityAI/relativity-markets/issues/147)) ([dcf533b](https://github.com/relativityAI/relativity-markets/commit/dcf533b4bd2fa99d5a5a3b112fdf653cf412605b))
+* **release:** zip asset path — file is created inside client/ ([#150](https://github.com/relativityAI/relativity-markets/issues/150)) ([939d5f6](https://github.com/relativityAI/relativity-markets/commit/939d5f6ecf16a8943cd64540d1d833979b69cf1a))
+
 ## 0.1.0 (2026-11-15)
 
 
