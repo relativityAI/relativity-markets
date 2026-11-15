@@ -45,7 +45,8 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.TAG }}
-          files: relativity-client-${{ env.TAG }}.zip
+          # zip is created inside client/ — glob must match from the repo root
+          files: client/relativity-client-${{ env.TAG }}.zip
 
       - name: Lowercase image name
         id: img
