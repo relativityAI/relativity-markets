@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.2.0...relativity-markets-v0.3.0) (2026-11-15)
+
+
+### Features
+
+* one-command install — prebuilt GHCR image, npm workspaces, install.sh ([#153](https://github.com/relativityAI/relativity-markets/issues/153)) ([3e46ec2](https://github.com/relativityAI/relativity-markets/commit/3e46ec2c92185090feed5707e9d1ebb78053622b))
+
 ## [0.2.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.1.0...relativity-markets-v0.2.0) (2026-11-15)
 
 
