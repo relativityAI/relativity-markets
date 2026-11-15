@@ -11,9 +11,34 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      releases_created: ${{ steps.rp.outputs.releases_created }}
     steps:
-      - uses: googleapis/release-please-action@v5
+      - id: rp
+        uses: googleapis/release-please-action@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  publish:
+    # GITHUB_TOKEN-created tags don't emit push events, so we can't rely on
+    # release.yml's tag trigger — call it directly with the tag from the
+    # manifest (the release PR just bumped it to the released version).
+    needs: release-please
+    if: needs.release-please.outputs.releases_created == 'true'
+    permissions:
+      contents: write
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Resolve tag
+        id: tag
+        run: |
+          version=$(node -p "require('./.release-please-manifest.json')['.']")
+          name=$(node -p "require('./package.json').name")
+          echo "tag=${name}-v${version}" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/workflows/release.yml
+        with:
+          tag: ${{ steps.tag.outputs.tag }}
