@@ -1,12 +1,18 @@
 name: release
 
-# Runs when release-please pushes a version tag (on merging the release PR).
-# release-please tags look like "relativity-portfolio-v0.1.0"; plain "v0.1.0"
-# is accepted too. Can also be run manually with a tag input to (re)publish
-# artifacts for an existing release.
+# Publishes release artifacts for a version tag. Triggered by:
+#  - push of a version tag (v0.1.0 / relativity-markets-v0.1.0 shapes)
+#  - manual dispatch with a tag input (re-publish an existing release)
+#  - workflow_call from release-please.yml (GITHUB_TOKEN-created tags don't
+#    emit push events, so release-please calls this directly)
 on:
   push:
     tags: ["v*", "*-v*"]
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
   workflow_dispatch:
     inputs:
       tag:
