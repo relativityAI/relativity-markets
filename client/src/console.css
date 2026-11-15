@@ -310,3 +310,15 @@ html.dark .console-shell [data-slot="sheet-content"] {
 .skill-md th { color: var(--ink-primary); font-weight: 400; }
 .skill-md a { color: var(--accent-primary); text-decoration: underline; }
 .skill-md hr { border: 0; border-top: 1px solid var(--hairline); margin: 1em 0; }
+
+/* Row/card highlight tokens. index.css owns them too, but that file's HMR
+   updates were not landing in this dev session — defining them here (imported
+   after index.css, same values) keeps them live either way. */
+:root {
+  --surface-raised: #EBEBE8;
+  --surface-raised-hover: #DFDFDC;
+}
+html.dark {
+  --surface-raised: #262626;
+  --surface-raised-hover: #303030;
+}

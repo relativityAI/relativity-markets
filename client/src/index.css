@@ -4,6 +4,10 @@
   --surface-panel: #FFFFFF;
   --surface-floating: #FFFFFF;
   --surface-recessed: #F4F4F3;
+  /* Row/card highlight: resting and hover steps, plain values (no color-mix)
+     so they render in every browser. */
+  --surface-raised: #EBEBE8;
+  --surface-raised-hover: #DFDFDC;
   --surface-inverse: #101215;
   --hairline: #D9D9D5;
   --grid-line: #C7C7C2;
@@ -65,6 +69,8 @@ html.dark {
   --surface-panel: #1F1F1F;
   --surface-floating: #262626;
   --surface-recessed: #121212;
+  --surface-raised: #262626;
+  --surface-raised-hover: #303030;
   --surface-inverse: #0A0A0A;
   --hairline: #343B43;
   --grid-line: #414A54;
@@ -313,9 +319,11 @@ html.dark .sectoral-title {
   position: relative;
   border-radius: 6px;
   overflow: hidden;
+  transition: background-color 160ms ease, border-radius 160ms ease;
 }
 .agent-cell:hover {
   background-color: var(--surface-recessed);
+  border-radius: 16px;
 }
 .agent-cell-body {
   transition: filter 160ms ease;
@@ -337,6 +345,20 @@ html.dark .sectoral-title {
 .agent-cell:hover .agent-cell-cue,
 .agent-cell:focus-visible .agent-cell-cue {
   opacity: 1;
+}
+
+/* DiceBear portraits: every SVG carries its own <style> with the same class
+   names, so the cascade gives them all one clock and a row of avatars
+   animates in lockstep. This rule outranks theirs (two classes) and phases
+   each portrait by the delay its wrapper carries — see avatarDelay().
+   Covers the Voxel Bot blink/lift (.vb-*) and the Loops turn (.dblo-g*). */
+.vb-stagger .vb-blink-fastest,
+.vb-stagger .vb-upper,
+.vb-stagger .vb-head,
+.vb-stagger .dblo-g1,
+.vb-stagger .dblo-g2,
+.vb-stagger .dblo-g3 {
+  animation-delay: var(--vb-delay, 0s);
 }
 
 /* Listbox panel rows (navbar stock search + form pickers) — the shared

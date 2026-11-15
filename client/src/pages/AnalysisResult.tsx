@@ -17,7 +17,8 @@ import { formatSeconds } from "@/utils";
 import SkillAvatar from "@/components/shared/SkillAvatar";
 import AgentActivity from "../components/shared/AgentActivity";
 import RunReasoningTimeline from "../components/report/RunReasoningTimeline";
-import { MdArrowBack, MdDownload, MdInfo } from "react-icons/md";
+import { MdArrowBack, MdInfo } from "react-icons/md";
+import { Download } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { dur, ease } from "@/lib/motion";
 import { ReportBlockRenderer } from "../components/builder/ReportBlockRenderer";
@@ -35,7 +36,7 @@ import {
     verdictForScore,
 } from "@/lib/analysisFormat";
 
-const TABS = ["report", "reasoning"] as const;
+const TABS = ["report", "reasoning", "run info"] as const;
 type Tab = (typeof TABS)[number];
 
 const OP_SYMBOL: Record<string, string> = {
@@ -59,6 +60,47 @@ export function formatTokens(n: number): string {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
     return String(n);
+}
+
+/** Icon-only PDF export at the right end of the result navbar. */
+function DownloadButton({ runId, name }: { runId?: string; name?: string }) {
+    const [state, setState] = useState<"idle" | "busy" | "error">("idle");
+    if (!runId) return null;
+    const download = async () => {
+        try {
+            setState("busy");
+            const res = await axios.get(`${API_BASE}/analysis/${encodeURIComponent(runId)}/pdf`, { responseType: "blob" });
+            if (!res.data || !(res.data instanceof Blob)) throw new Error("No PDF received");
+            const url = URL.createObjectURL(res.data);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `${(name || "analysis").replace(/\s+/g, "-")}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            setState("idle");
+        } catch (e) {
+            setState("error");
+            console.error("PDF export failed:", e);
+        }
+    };
+    return (
+        <Button
+            as={motion.button}
+            whileTap={{ scale: 0.96 }}
+            variant="subtle"
+            size="sm"
+            px={2}
+            color="var(--ink-secondary)"
+            _hover={{ color: "var(--ink-primary)" }}
+            onClick={download}
+            disabled={state === "busy"}
+            aria-label={state === "busy" ? "Generating PDF…" : state === "error" ? "Export failed — retry" : "Download as PDF"}
+        >
+            <Download size={15} aria-hidden="true" />
+        </Button>
+    );
 }
 
 interface MetaRow {
@@ -144,35 +186,28 @@ export function runMetadata(run: any, skillTags: string[] = []): { rows: MetaRow
     return { rows, tools };
 }
 
-/** Compact record of what the run row holds — shown on every analysis result.
- *  Label and value share one line and the pairs wrap, so the whole block reads
- *  as a meta strip instead of a grid of stacked cells. */
+/** What the run row records — one label/value line each (the Run Info tab). */
 export function RunMetadata({ run, tags }: { run: any; tags?: string[] }) {
     const { rows, tools } = useMemo(() => runMetadata(run, tags), [run, tags]);
     if (!rows.length && !tools.length) return null;
     return (
-        <Box my={3} pt={2.5} borderTop="1px solid var(--hairline)">
-            <Text fontSize="9.5px" fontWeight={300} color="var(--ink-tertiary)" mb={1.5}>
-                Run metadata
-            </Text>
-            <Flex flexWrap="wrap" columnGap={4} rowGap={1.5}>
-                {rows.map((r) => (
-                    <Text key={r.label} minW={0} maxW="full" fontSize="10.5px" fontWeight={300}>
-                        <Text as="span" fontFamily="var(--font-body)" fontSize="10.5px" fontWeight={300} color="var(--ink-tertiary)" mr={1.5}>
-                            {r.label}
-                        </Text>
-                        <Text as="span" fontFamily="var(--font-body)" fontSize="11.5px" fontWeight={400} color="var(--ink-primary)" overflowWrap="anywhere">
-                            {r.value}
-                        </Text>
+        <Flex direction="column" gap={1.5} py={2}>
+            {rows.map((r) => (
+                <Flex key={r.label} gap={3} align="baseline" minW={0}>
+                    <Text w="140px" flexShrink={0} fontSize="12.5px" fontWeight={300} color="var(--ink-tertiary)">
+                        {r.label}
                     </Text>
-                ))}
-            </Flex>
+                    <Text fontSize="13px" fontWeight={400} color="var(--ink-primary)" overflowWrap="anywhere" minW={0}>
+                        {r.value}
+                    </Text>
+                </Flex>
+            ))}
             {tools.length > 0 && (
-                <Flex gap={2} flexWrap="wrap" align="baseline" mt={1.5}>
-                    <Text fontFamily="var(--font-body)" fontSize="10.5px" fontWeight={300} color="var(--ink-tertiary)" whiteSpace="nowrap">
+                <Flex gap={3} align="baseline" minW={0}>
+                    <Text w="140px" flexShrink={0} fontSize="12.5px" fontWeight={300} color="var(--ink-tertiary)">
                         Tools
                     </Text>
-                    <Text fontFamily="var(--font-body)" fontSize="11.5px" fontWeight={400} color="var(--ink-secondary)" overflowWrap="anywhere">
+                    <Text fontSize="13px" fontWeight={400} color="var(--ink-secondary)" overflowWrap="anywhere" minW={0}>
                         {tools.map((t, i) => (
                             <Text as="span" key={t.name}>
                                 {t.name}
@@ -183,7 +218,7 @@ export function RunMetadata({ run, tags }: { run: any; tags?: string[] }) {
                     </Text>
                 </Flex>
             )}
-        </Box>
+        </Flex>
     );
 }
 
@@ -193,7 +228,6 @@ export default function AnalysisResult() {
     const [analysis, setAnalysis] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [pdfState, setPdfState] = useState<"idle" | "busy" | "error">("idle");
     const [activeTab, setActiveTab] = useState<Tab>("report");
 
     const statusKey = (analysis?.status || "").toLowerCase();
@@ -397,27 +431,6 @@ export default function AnalysisResult() {
 
     const traceCount = Array.isArray(analysis.trace) ? analysis.trace.length : 0;
 
-    const downloadPdf = async () => {
-        if (!analysis) return;
-        try {
-            setPdfState("busy");
-            const res = await axios.get(`${API_BASE}/analysis/${encodeURIComponent(id)}/pdf`, { responseType: "blob" });
-            if (!res.data || !(res.data instanceof Blob)) throw new Error("No PDF received");
-            const url = URL.createObjectURL(res.data);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `${(analysis.share_name || analysis.symbol || "analysis").replace(/\s+/g, "-")}.pdf`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(url);
-            setPdfState("idle");
-        } catch (e: any) {
-            setPdfState("error");
-            console.error("PDF export failed:", e);
-        }
-    };
-
     const totalScore: number | null = analysis.total_score;
     const coverage: number | null = analysis.coverage ?? null;
     // U2: low coverage must never show a big headline number AND a suppression
@@ -443,6 +456,7 @@ export default function AnalysisResult() {
 
     return (
         <Box bg="var(--surface-canvas)" minH="100%">
+            <Tabs.Root value={activeTab} onValueChange={handleTabChange} variant="subtle" size="sm">
             <Container maxW="full" px={0} py={6}>
                 {/* Sticky identity + utility bar */}                    <Box
                     as={motion.div}
@@ -459,21 +473,56 @@ export default function AnalysisResult() {
                     mb={5}
                     data-print-hide
                 >
-                    <Flex justify="space-between" align="center" gap={3} wrap="wrap" minH="44px">
-                        <HStack gap={3} align="center" minW={0}>
-                            {/* Router Link doesn't take Chakra props — this is
-                                styled with utility classes so the icon, label
-                                and hover/focus states actually apply. */}
-                            <Link
-                                to="/analysis-list"
-                                aria-label="Back to runs"
-                                className="inline-flex shrink-0 items-center gap-1 rounded-[4px] px-1.5 py-1 text-[13px] text-[var(--ink-secondary)] transition-colors hover:text-[var(--ink-primary)] focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
-                            >
-                                <MdArrowBack aria-hidden="true" />
-                                <span className="hidden sm:inline">Analyses</span>
-                            </Link>
-                        </HStack>
-                        <HStack gap={3} align="center">
+                    <Flex align="center" gap={2} minH="44px">
+                        {/* Router Link doesn't take Chakra props — this is
+                            styled with utility classes so the icon, label
+                            and hover/focus states actually apply. */}
+                        <Link
+                            to="/analysis-list"
+                            aria-label="Back to runs"
+                            className="inline-flex shrink-0 items-center gap-1 rounded-[4px] px-1.5 py-1 text-[13px] text-[var(--ink-secondary)] transition-colors hover:text-[var(--ink-primary)] focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
+                        >
+                            <MdArrowBack aria-hidden="true" />
+                            <span className="hidden sm:inline">Analyses</span>
+                        </Link>
+                        {/* One mini navbar: tabs inline, no rule under them —
+                            the selected tab is a tinted rounded pill. The strip
+                            scrolls itself, scrollbar hidden. */}
+                        <Tabs.List
+                            flex={1}
+                            minW={0}
+                            gap={1}
+                            overflowX="auto"
+                            css={{ scrollbarWidth: "none", "&::-webkit-scrollbar": { display: "none" } }}
+                            data-print-hide
+                        >
+                            {TABS.map((tab) => {
+                                const disabled = tab === "report" && !reportAvailable;
+                                return (
+                                    <Tabs.Trigger
+                                        key={tab}
+                                        value={tab}
+                                        fontSize="13px"
+                                        fontWeight={400}
+                                        color={activeTab === tab ? "var(--ink-primary)" : "var(--ink-tertiary)"}
+                                        bg={activeTab === tab ? "var(--surface-recessed)" : "transparent"}
+                                        textTransform="capitalize"
+                                        px={3}
+                                        flexShrink={0}
+                                        whiteSpace="nowrap"
+                                        borderRadius="6px"
+                                        _hover={disabled ? {} : { color: "var(--ink-primary)" }}
+                                        transition="none"
+                                        disabled={disabled}
+                                        opacity={disabled ? 0.55 : 1}
+                                        title={disabled ? "Available when the run is complete" : undefined}
+                                    >
+                                        {tab}
+                                    </Tabs.Trigger>
+                                );
+                            })}
+                        </Tabs.List>
+                        <HStack gap={2} align="center" flexShrink={0}>
                             <HStack
                                 gap={1.5}
                                 align="center"
@@ -507,24 +556,7 @@ export default function AnalysisResult() {
                                     {isError ? "Failed" : isComplete ? "Complete" : "Running"}
                                 </Text>
                             </HStack>
-                            {isComplete && (
-                                <Button
-                                    as={motion.button}
-                                    whileTap={{ scale: 0.96 }}
-                                    variant="subtle"
-                                    size="sm"
-                                    color="var(--ink-secondary)"
-                                    _hover={{ color: "var(--ink-primary)" }}
-                                    onClick={downloadPdf}
-                                    disabled={pdfState === "busy"}
-                                    aria-label="Download as PDF"
-                                >
-                                    <MdDownload style={{ marginRight: 4 }} aria-hidden="true" />{" "}
-                                    <Text as="span" display={{ base: "none", md: "inline" }}>
-                                        {pdfState === "busy" ? "Generating PDF…" : pdfState === "error" ? "Export failed — retry" : "Download as PDF"}
-                                    </Text>
-                                </Button>
-                            )}
+                            {isComplete && <DownloadButton runId={id} name={analysis.share_name || analysis.symbol} />}
                         </HStack>
                     </Flex>
                 </Box>
@@ -682,60 +714,7 @@ export default function AnalysisResult() {
 
                 {/* Completed runs: report tabs (legacy skill pipeline). */}
                 <Box key="report" id="tab-panels" css={{ scrollMarginTop: "64px" }}>
-                    <Tabs.Root
-                        value={activeTab}
-                        onValueChange={handleTabChange}
-                        variant="line"
-                        size="sm"
-                    >
-                        <Tabs.List
-                            gap={0}
-                            borderBottom="1px solid var(--hairline)"
-                            mb={6}
-                            overflowX="auto"
-                            flexWrap="nowrap"
-                            css={{ scrollbarWidth: "none", "&::-webkit-scrollbar": { display: "none" } }}
-                            data-print-hide
-                        >
-                            {TABS.map((tab) => {
-                                const disabled = tab === "report" && !reportAvailable;
-                                return (
-                                <Tabs.Trigger
-                                    key={tab}
-                                    value={tab}
-                                    fontSize="13px"
-                                    fontWeight={activeTab === tab ? 600 : 400}
-                                    color={activeTab === tab ? "var(--ink-primary)" : "var(--ink-tertiary)"}
-                                    textTransform="capitalize"
-                                    px={{ base: 3, md: 4 }}
-                                    py={2.5}
-                                    minH={{ base: "44px", md: "auto" }}
-                                    flexShrink={0}
-                                    whiteSpace="nowrap"
-                                    position="relative"
-                                    _hover={{ color: disabled ? "var(--ink-tertiary)" : "var(--ink-primary)" }}
-                                    _selected={{
-                                        color: "var(--ink-primary)",
-                                        fontWeight: 600,
-                                    }}
-                                    transition="none"
-                                    disabled={disabled}
-                                    opacity={disabled ? 0.55 : 1}
-                                    cursor={disabled ? "not-allowed" : "pointer"}
-                                >
-                                    {tab}
-                                    {disabled && (
-                                        <Text as="span" fontSize="11px" color="var(--ink-tertiary)" ml={1.5} display={{ base: "none", md: "inline" }}>
-                                            · available when complete
-                                        </Text>
-                                    )}
-                                    {activeTab === tab && (
-                                        <Box as={motion.div} layoutId="tab-underline" position="absolute" bottom={0} left={0} right={0} h="2px" bg="var(--accent-primary)" />
-                                    )}
-                                </Tabs.Trigger>
-                                );
-                            })}
-                        </Tabs.List>
+                    {/* tab triggers live in the sticky navbar above */}
 
                         {/* ── Report ── */}
                         <Tabs.Content value="report">
@@ -808,13 +787,14 @@ export default function AnalysisResult() {
                             </Box>
                         </Tabs.Content>
 
-                    </Tabs.Root>
+                        {/* ── Run info — what the run recorded, one line each ── */}
+                        <Tabs.Content value="run info">
+                            <RunMetadata run={analysis} />
+                        </Tabs.Content>
                     </Box>
 
-                {/* Everything this run recorded: tokens, tool calls, tools, timings. */}
-                <RunMetadata run={analysis} />
-
             </Container>
+            </Tabs.Root>
         </Box>
     );
 }
@@ -971,7 +951,7 @@ function EmptyState({ message }: { message: string }) {
     );
 }
 
-const HARNESS_TABS = ["report", "agent workspace"] as const;
+const HARNESS_TABS = ["report", "agent workspace", "run info"] as const;
 type HarnessTab = (typeof HARNESS_TABS)[number];
 
 /** Harness run result: the typed ReportDocument + the Agent Workspace (reasoning + knowledge base). */
@@ -992,28 +972,33 @@ function HarnessRunView({ run, tags }: { run: any; tags?: string[] }) {
     const hasTrace = Array.isArray(run.trace) && run.trace.length > 0;
     return (
         <Box bg="var(--surface-canvas)">
+            <Tabs.Root
+                value={harnessTab}
+                onValueChange={(details) => {
+                    if (!drafting) setPostRunTab(details.value as HarnessTab);
+                }}
+                variant="subtle"
+                size="sm"
+            >
             <Container maxW="full" px={0} pt={6} pb={2}>
-                <Link
-                    to="/analysis-list"
-                    className="inline-flex shrink-0 items-center gap-1 rounded-[4px] px-1.5 py-1 text-[13px] text-[var(--ink-secondary)] transition-colors hover:text-[var(--ink-primary)]"
-                >
-                    <MdArrowBack aria-hidden="true" />
-                    <span className="hidden sm:inline">Analyses</span>
-                </Link>
-                <Tabs.Root
-                    value={harnessTab}
-                    onValueChange={(details) => {
-                        if (!drafting) setPostRunTab(details.value as HarnessTab);
-                    }}
-                    variant="line"
-                    size="sm"
-                    mt={2}
-                >
+                {/* One mini navbar: back · tabs · download. Tabs carry no rule —
+                    the selected one is a tinted rounded pill; the strip scrolls
+                    itself with the scrollbar hidden. */}
+                <Flex align="center" gap={2} minH="44px" mb={3}>
+                    <Link
+                        to="/analysis-list"
+                        aria-label="Back to runs"
+                        className="inline-flex shrink-0 items-center gap-1 rounded-[4px] px-1.5 py-1 text-[13px] text-[var(--ink-secondary)] transition-colors hover:text-[var(--ink-primary)] focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
+                    >
+                        <MdArrowBack aria-hidden="true" />
+                        <span className="hidden sm:inline">Analyses</span>
+                    </Link>
                     <Tabs.List
-                        gap={0}
-                        borderBottom="1px solid var(--hairline)"
-                        mb={6}
+                        flex={1}
+                        minW={0}
+                        gap={1}
                         overflowX="auto"
+                        css={{ scrollbarWidth: "none", "&::-webkit-scrollbar": { display: "none" } }}
                         data-print-hide
                     >
                         {HARNESS_TABS.map((tab) => {
@@ -1025,26 +1010,26 @@ function HarnessRunView({ run, tags }: { run: any; tags?: string[] }) {
                                 key={tab}
                                 value={tab}
                                 fontSize="13px"
-                                fontWeight={harnessTab === tab ? 600 : 400}
+                                fontWeight={400}
                                 color={harnessTab === tab ? "var(--ink-primary)" : "var(--ink-tertiary)"}
+                                bg={harnessTab === tab ? "var(--surface-recessed)" : "transparent"}
                                 textTransform="capitalize"
-                                px={{ base: 3, md: 4 }}
-                                py={2.5}
-                                minH={{ base: "44px", md: "auto" }}
+                                px={3}
                                 flexShrink={0}
                                 whiteSpace="nowrap"
-                                position="relative"
+                                borderRadius="6px"
                                 _hover={{ color: "var(--ink-primary)" }}
                                 transition="none"
                             >
                                 {tab}
-                                {harnessTab === tab && (
-                                    <Box as={motion.div} layoutId="harness-tab-underline" position="absolute" bottom={0} left={0} right={0} h="2px" bg="var(--accent-primary)" />
-                                )}
                             </Tabs.Trigger>
                             );
                         })}
                     </Tabs.List>
+                    <Box flexShrink={0}>
+                        <DownloadButton runId={run.id} name={run.share_name || run.symbol} />
+                    </Box>
+                </Flex>
 
                     {/* ── Report ── */}
                     <Tabs.Content value="report">
@@ -1064,7 +1049,6 @@ function HarnessRunView({ run, tags }: { run: any; tags?: string[] }) {
                         <Box mt={4}>
                             <ReportDocumentRenderer document={doc} />
                         </Box>
-                        <RunMetadata run={run} tags={tags} />
                     </Tabs.Content>
 
                     {/* ── Agent Workspace ── */}
@@ -1098,8 +1082,13 @@ function HarnessRunView({ run, tags }: { run: any; tags?: string[] }) {
                             </Text>
                         )}
                     </Tabs.Content>
-                </Tabs.Root>
+
+                    {/* ── Run info — what the run recorded, one line each ── */}
+                    <Tabs.Content value="run info">
+                        <RunMetadata run={run} tags={tags} />
+                    </Tabs.Content>
             </Container>
+            </Tabs.Root>
         </Box>
     );
 }

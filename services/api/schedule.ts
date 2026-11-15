@@ -8,7 +8,7 @@
  * external cron hitting an internal HTTP trigger.
  */
 
-import { getDb } from "../db/db.js";
+import { listAllScheduleRows, claimSchedule } from "../db/repo.js";
 import { log } from "./logger.js";
 import { startAnalysisRun } from "./runs.js";
 
@@ -93,28 +93,14 @@ export function latestOccurrence(
 
 async function tick(): Promise<void> {
   try {
-    const { data, error } = await getDb().from("schedules").select("*");
-    if (error) {
-      log.warn("[schedules]", `tick failed: ${error.message}`);
-      return;
-    }
+    const schedules = await listAllScheduleRows();
     const now = Date.now();
-    for (const s of data ?? []) {
+    for (const s of schedules) {
       const due = latestOccurrence(s.time, s.timezone, now);
       if (due.at < +new Date(s.created_at)) continue; // occurrence predates the schedule
       if (s.last_fired_date && s.last_fired_date >= due.date) continue;
       // Atomic claim: only one tick may win a given local day.
-      const { data: claimed, error: cErr } = await getDb()
-        .from("schedules")
-        .update({ last_fired_date: due.date })
-        .eq("id", s.id)
-        .or(`last_fired_date.is.null,last_fired_date.neq.${due.date}`)
-        .select("id");
-      if (cErr) {
-        log.warn("[schedules]", `claim failed for ${s.id}: ${cErr.message}`);
-        continue;
-      }
-      if (!claimed?.length) continue;
+      if (!claimSchedule(s.id, due.date)) continue;
       log.info("[schedules]", `firing ${s.symbol} @ ${s.time} ${s.timezone}`);
       startAnalysisRun({
         userId: s.user_id,

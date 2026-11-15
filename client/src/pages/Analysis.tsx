@@ -40,14 +40,22 @@ const HOUR_CELLS = Array.from({ length: 24 }, (_, i) => i);
 const MINUTE_STEPS = [0, 15, 30, 45];
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
-/** Form section: a quiet title over whitespace-separated rows — no rules, no fills. */
-function FormSection({ title, children }: { title: string; children: ReactNode }) {
+/** Form section: the My-agents heading combo (light title + quiet tagline)
+ *  over whitespace-separated rows — no rules, no fills. */
+function FormSection({ title, tagline, children }: { title: string; tagline?: string; children: ReactNode }) {
     return (
-        <Box pt={4}>
-            <Text px={4} pb={1.5} fontSize="14px" fontWeight={500} color="var(--ink-secondary)">
-                {title}
-            </Text>
-            {children}
+        <Box pt={6}>
+            <div className="px-4">
+                <h2 className="font-app-body text-[20px] leading-none font-light tracking-tight text-console-ink">
+                    {title}
+                </h2>
+                {tagline && (
+                    <p className="mt-1.5 font-app-body text-[12px] font-normal text-console-ink-3">
+                        {tagline}
+                    </p>
+                )}
+            </div>
+            <Box mt={3}>{children}</Box>
         </Box>
     );
 }
@@ -168,8 +176,21 @@ function RunFooter({
     analysisDuration: string;
     correlationId: string;
 }) {
-    const action: CSSProperties = { width: "auto", height: "40px", padding: "0 22px", borderRadius: "6px", boxShadow: "none", fontWeight: 300 };
-    const ghost: CSSProperties = { height: "36px", borderRadius: "6px", fontWeight: 300, border: "none", background: "transparent" };
+    const action: CSSProperties = {
+        width: "auto",
+        height: "40px",
+        padding: "0 24px",
+        borderRadius: "9999px",
+        boxShadow: "none",
+        fontWeight: 400,
+    };
+    // The run button: blue (the app's --primary), fully rounded, greyed while disabled.
+    const runAction: CSSProperties = {
+        ...action,
+        background: canRun ? "var(--primary)" : "var(--surface-recessed)",
+        color: canRun ? "var(--primary-foreground)" : "var(--ink-tertiary)",
+    };
+    const ghost: CSSProperties = { height: "36px", borderRadius: "9999px", fontWeight: 300, border: "none", background: "transparent" };
 
     return (
         <Flex align="center" justify="space-between" gap={3} flexWrap="wrap" px={4} py={3} mt={2} minH="60px">
@@ -226,7 +247,7 @@ function RunFooter({
                             </Flex>
                         </ResumingButton>
                     ) : (
-                        <PrimaryButton onClick={onRun} disabled={!canRun} style={action}>
+                        <PrimaryButton onClick={onRun} disabled={!canRun} style={runAction}>
                             {scheduled ? <><CalendarDays size={16} /> Schedule daily run</> : <><Play size={16} /> Run analysis</>}
                         </PrimaryButton>
                     ))}
@@ -294,6 +315,8 @@ export default function Analysis() {
     const [stockQuery, setStockQuery] = useState("");
     const [stockItems, setStockItems] = useState<any[]>([]);
     const [stockLoading, setStockLoading] = useState(false);
+    // The picked search row — carries the metadata the card shows (exchange…).
+    const [pickedStock, setPickedStock] = useState<any>(null);
     const stockAbortRef = useRef<AbortController | null>(null);
     const stockDebounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     useEffect(() => {
@@ -349,6 +372,7 @@ export default function Analysis() {
         // Rows from /stocks/search always carry both key styles; pick from the
         // row itself so NSE/SEC rows resolve correctly regardless of prior config.
         const src = String(stock.source || "").toUpperCase() === "NSE" ? "NSE" : "SEC";
+        setPickedStock(stock);
         setConfig(prev => ({
             ...prev,
             source: src,
@@ -553,11 +577,14 @@ export default function Analysis() {
     const canRunAnalysis = isConfigComplete && (runMode === "once" || !!scheduleTime);
     // Explicit pick, else the first configured agent (the server default).
     const selectedAgent = agents.find((a) => a.id === agentId) ?? agents[0] ?? null;
+    // Card metadata: what the agent believes it is, then its wiring.
+    const agentRole = (selectedAgent?.soulPrompt || "").split(/[.\n]/)[0]?.trim().slice(0, 90) || "";
+    const agentMeta = selectedAgent
+        ? `${selectedAgent.skillIds.length} skill${selectedAgent.skillIds.length === 1 ? "" : "s"} · ${selectedAgent.modelId || "default model"} · max ${selectedAgent.budget.maxSteps} steps`
+        : "";
     const statusLine = config.share
         ? `${config.share} · ${config.source} · ${runMode === "daily" ? `Daily ${scheduleTime}` : "Single run"}`
         : "";
-    const statusChip =
-        status === "EMPTY" ? "Draft" : status === "PENDING" ? "Running" : status === "COMPLETED" ? "Complete" : "Failed";
 
     return (
         <Box
@@ -606,30 +633,32 @@ export default function Analysis() {
 
                 {/* One flat form: title, quiet sections, action bar — spacing only, no rules. */}
                 <Box>
-                    <Flex align="center" justify="space-between" gap={3} px={4} py={2.5}>
-                        <Text fontSize="14px" fontWeight={400} color="var(--ink-primary)">
+                    <div className="px-4 pt-2 pb-1">
+                        <h1 className="font-app-body text-[30px] leading-none font-light tracking-tight text-console-ink">
                             New analysis run
-                        </Text>
-                        <Text {...microLabel}>{statusChip}</Text>
-                    </Flex>
+                        </h1>
+                        <p className="mt-1.5 font-app-body text-[12px] font-normal text-console-ink-3">
+                            Launch a single analysis now, or schedule it to run every day.
+                        </p>
+                    </div>
 
-                    <FormSection title="Run settings">
+                    <FormSection title="Run settings" tagline="Run once now, or on a daily schedule.">
                         <FormRow label="Mode">
                             <ToggleGroup
                                 type="single"
                                 value={runMode}
                                 onValueChange={(v) => v && setRunMode(v as "once" | "daily")}
-                                className="h-auto gap-1 border-none bg-transparent p-0"
+                                className="h-auto gap-2 border-none bg-transparent p-0"
                             >
                                 <ToggleGroupItem
                                     value="once"
-                                    className="h-8 rounded-[6px] px-3.5 text-[12px] font-light text-[var(--ink-secondary)] data-[state=on]:bg-[var(--ink-primary)] data-[state=on]:text-[var(--surface-canvas)] data-[state=on]:shadow-none"
+                                    className="h-8 rounded-full border border-[color:var(--hairline)] bg-transparent px-4 text-[12px] font-light text-[var(--ink-secondary)] hover:bg-[var(--surface-recessed)] hover:text-[var(--ink-primary)] data-[state=on]:border-transparent data-[state=on]:bg-[var(--ink-primary)] data-[state=on]:text-[var(--surface-canvas)] data-[state=on]:shadow-none"
                                 >
                                     Single
                                 </ToggleGroupItem>
                                 <ToggleGroupItem
                                     value="daily"
-                                    className="h-8 rounded-[6px] px-3.5 text-[12px] font-light text-[var(--ink-secondary)] data-[state=on]:bg-[var(--ink-primary)] data-[state=on]:text-[var(--surface-canvas)] data-[state=on]:shadow-none"
+                                    className="h-8 rounded-full border border-[color:var(--hairline)] bg-transparent px-4 text-[12px] font-light text-[var(--ink-secondary)] hover:bg-[var(--surface-recessed)] hover:text-[var(--ink-primary)] data-[state=on]:border-transparent data-[state=on]:bg-[var(--ink-primary)] data-[state=on]:text-[var(--surface-canvas)] data-[state=on]:shadow-none"
                                 >
                                     Scheduled
                                 </ToggleGroupItem>
@@ -642,19 +671,40 @@ export default function Analysis() {
                         )}
                         </FormSection>
 
-                    <FormSection title="Company">
+                    <FormSection title="Company" tagline="The ticker this analysis runs on.">
                         <FormRow label="Ticker">
-                            <MenuDropdown
-                                plain
-                                logo={config.share ? <TickerLogo symbol={config.share} size={16}/> : undefined}
-                                value={config.share ? `${config.source === "NSE" ? "🇮🇳" : "🇺🇸"} ${config.shareName || config.share}` : null}
-                                placeholder="Search company or symbol…"
-                                search={{
-                                    value: stockQuery,
-                                    onChange: setStockQuery,
-                                    placeholder: "Search by company name or symbol…",
-                                }}
-                            >
+                            <div className="flex flex-col gap-2.5">
+                                {config.share && (
+                                    <div className="flex items-center gap-3 rounded-[10px] border border-[color:var(--hairline)] bg-[var(--surface-panel)] px-3 py-2.5">
+                                        <TickerLogo symbol={config.share} size={44} />
+                                        <div className="min-w-0">
+                                            <div className="truncate font-app-body text-[16px] font-light leading-tight text-[var(--ink-primary)]">
+                                                {config.shareName || config.share}
+                                            </div>
+                                            <div className="mt-1 flex items-center gap-1.5 font-app-body text-[12px] font-normal text-[var(--ink-tertiary)]">
+                                                <span className="text-[15px] leading-none">
+                                                    {config.source === "NSE" ? "🇮🇳" : "🇺🇸"}
+                                                </span>
+                                                <span className="truncate">
+                                                    {config.source}
+                                                    {" · "}
+                                                    {config.share}
+                                                    {pickedStock?.exchange ? ` · ${pickedStock.exchange}` : ""}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                                <MenuDropdown
+                                    plain
+                                    value={null}
+                                    placeholder={config.share ? "Change company…" : "Search company or symbol…"}
+                                    search={{
+                                        value: stockQuery,
+                                        onChange: setStockQuery,
+                                        placeholder: "Search by company name or symbol…",
+                                    }}
+                                >
                                 {(close) => (
                                     <Box>
                                         {stockLoading && (
@@ -689,20 +739,39 @@ export default function Analysis() {
                                     </Box>
                                 )}
                             </MenuDropdown>
+                            </div>
                         </FormRow>
 
 </FormSection>
 
-                    <FormSection title="Agent settings">
+                    <FormSection title="Agent settings" tagline="The agent, model and budget for this run.">
                         {/* Agent — the configured harness agents (Agents page) */}
                         {agents.length > 0 && (
                             <FormRow label="Agent">
-                                <MenuDropdown
-                                    plain
-                                    logo={selectedAgent ? <AgentAvatar seed={selectedAgent.id} size={16}/> : undefined}
-                                    value={selectedAgent?.name ?? null}
-                                    placeholder="Choose agent…"
-                                >
+                                <div className="flex flex-col gap-2.5">
+                                    {selectedAgent && (
+                                        <div className="flex items-center gap-3 rounded-[10px] border border-[color:var(--hairline)] bg-[var(--surface-panel)] px-3 py-2.5">
+                                            <AgentAvatar seed={selectedAgent.id} size={44} />
+                                            <div className="min-w-0">
+                                                <div className="truncate font-app-body text-[16px] font-light leading-tight text-[var(--ink-primary)]">
+                                                    {selectedAgent.name}
+                                                </div>
+                                                {agentRole && (
+                                                    <div className="mt-1 truncate font-app-body text-[12px] font-normal text-[var(--ink-tertiary)]">
+                                                        {agentRole}
+                                                    </div>
+                                                )}
+                                                <div className="mt-0.5 truncate font-app-body text-[12px] font-normal text-[var(--ink-tertiary)]">
+                                                    {agentMeta}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                    <MenuDropdown
+                                        plain
+                                        value={null}
+                                        placeholder="Change agent…"
+                                    >
                                     {(close) => (
                                         <Box>
                                             {agents.map((a) => (
@@ -720,7 +789,8 @@ export default function Analysis() {
                                             ))}
                                         </Box>
                                     )}
-                                </MenuDropdown>
+                                    </MenuDropdown>
+                                </div>
                             </FormRow>
                         )}
 

@@ -24,7 +24,10 @@ docs/
 ANALYSIS_WORKFLOW.md
 /2026-*/
 skills-lock.json
-services/config/skills/
+# Local/personal skills stay out of git; the builtin the default agent seeds
+# with must ship (see harness/agents/defaults/).
+services/config/skills/*
+!services/config/skills/nifty-indices-analysis
 research
 
 # harness run artifacts (project root)
@@ -98,6 +101,9 @@ cover/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+
+# Local-first app state (SQLite + generated key file)
+services/data/
 
 # Flask stuff:
 instance/

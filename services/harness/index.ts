@@ -54,6 +54,7 @@ export {
   setAgentRepository,
   getAgentRepository,
   createMemoryAgentRepository,
+  DEFAULT_AGENTS,
   DEFAULT_HARNESS_AGENT,
   HARNESS_VERSION,
 } from "./agents/store.js";

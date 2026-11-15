@@ -5,7 +5,7 @@
  * own data — no DB fields, no user setup:
  *
  *  - The seed is the agent's stable id (`_id || id || name`). The same
- *    seed drives BOTH the color and the Pixel Art portrait, so an
+ *    seed drives BOTH the color and the Voxel Bot portrait, so an
  *    agent looks identical on every screen and across sessions.
  *    Renames don't change the identity; deleting and recreating an
  *    agent (new id) intentionally does.
@@ -16,11 +16,11 @@
  */
 import { Avatar, Style } from "@dicebear/core";
 // Style definitions ship as JSON in @dicebear/styles (all 61 styles on the
-// website); only the notionists definition is imported.
-import pixelArtDefinition from "@dicebear/styles/pixel-art.json";
+// website); only the Voxel Bot definition is imported.
+import voxelBotDefinition from "@dicebear/styles/voxel-bot.json";
 
 // Wrap once — Avatar warns when a raw definition is passed per call.
-const pixelArt = new Style(pixelArtDefinition);
+const voxelBot = new Style(voxelBotDefinition);
 
 export interface AgentSeedLike {
     _id?: string;
@@ -103,7 +103,7 @@ export function resolveAgent(
     return hit ?? raw;
 }
 
-/* ─── Portrait rendering (Pixel Art, transparent background) ─────── */
+/* ─── Portrait rendering (Voxel Bot, animated, transparent background) ── */
 
 const svgCache = new Map<string, string>();
 
@@ -114,9 +114,13 @@ const svgCache = new Map<string, string>();
 export function agentAvatarSvg(seed: string): string {
     const cached = svgCache.get(seed);
     if (cached) return cached;
-    const svg = new Avatar(pixelArt, {
+    const svg = new Avatar(voxelBot, {
         seed,
-        // No backgroundColor → transparent; the chip supplies the tint.
+        // Only the fastest animation variant is enabled, so every chip keeps
+        // moving (blink + lift) instead of picking the default static one.
+        animationVariant: "fastest",
+        // No background → transparent; the chip supplies the tint.
+        backgroundColor: [],
     }).toString()
         // DiceBear emits a viewBox with no width/height, so the SVG has no
         // intrinsic size and collapses unless CSS sizes it. Bake the size in
@@ -124,4 +128,15 @@ export function agentAvatarSvg(seed: string): string {
         .replace("<svg ", '<svg width="100%" height="100%" ');
     if (svgCache.size < 512) svgCache.set(seed, svg);
     return svg;
+}
+
+/**
+ * Animation phase offset for one portrait. DiceBear writes the same `.vb-*`
+ * class names into every SVG's inline <style>, so the cascade hands all of
+ * them a single clock and a row of avatars blinks/lifts in lockstep. The
+ * `.vb-stagger` rule in index.css (higher specificity) reads this value off
+ * the wrapper and phases each portrait independently. Deterministic per seed.
+ */
+export function avatarDelay(seed: string): string {
+    return `-${(hashSeed(seed) % 40) / 10}s`;
 }

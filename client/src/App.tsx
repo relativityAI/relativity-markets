@@ -17,7 +17,6 @@ import AgentsList from "./pages/AgentsList";
 import AnalysisList from "./pages/AnalysisList";
 import Analysis from "./pages/Analysis";
 import AnalysisResult from "./pages/AnalysisResult";
-import AgentDetail from "./pages/AgentDetail";
 import Stock from "./pages/Stock";
 import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
@@ -36,44 +35,24 @@ import AgentLibrary from "./pages/console/AgentLibrary";
 import AgentSkills from "./pages/console/AgentSkills";
 import AgentTools from "./pages/console/AgentTools";
 import AiBuilder from "./pages/console/AiBuilder";
-import { DEFAULT_AGENTS } from "@/lib/defaultAgents";
 
+// App is usable without a sign-in — no auth gate, no redirect to /login.
 function Protected({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
-
   return (
     <AnimatePresence mode="wait" initial={false}>
-      {loading ? (
-        <motion.div key="loading" style={{ height: "100%" }} exit={{ opacity: 0 }} transition={{ duration: dur.fast, ease }}>
-          <Center minH="100%">
-            <Spinner size="lg" />
-          </Center>
-        </motion.div>
-      ) : (
-        <motion.div key="content" style={{ height: "100%" }} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: dur.base, ease }}>
-          {user ? children : <Navigate to="/login" replace />}
-        </motion.div>
-      )}
+      <motion.div key="content" style={{ height: "100%" }} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: dur.base, ease }}>
+        {children}
+      </motion.div>
     </AnimatePresence>
   );
 }
 
 function Home() {
-  const { loading } = useAuth();
-
   return (
     <AnimatePresence mode="wait" initial={false}>
-      {loading ? (
-        <motion.div key="loading" style={{ height: "100%" }} exit={{ opacity: 0 }} transition={{ duration: dur.fast, ease }}>
-          <Center minH="100%">
-            <Spinner size="lg" />
-          </Center>
-        </motion.div>
-      ) : (
-        <motion.div key="home" style={{ height: "100%" }} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: dur.base, ease }}>
-          <HomePage />
-        </motion.div>
-      )}
+      <motion.div key="home" style={{ height: "100%" }} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: dur.base, ease }}>
+        <HomePage />
+      </motion.div>
     </AnimatePresence>
   );
 }
@@ -98,14 +77,6 @@ function AgentRedirect() {
   const { id } = useParams();
   if (!id || id === "new") return <Navigate to="/my-workspace?new=1" replace />;
   return <Navigate to={`/my-workspace?agent=${encodeURIComponent(id)}`} replace />;
-}
-
-/** Default Relativity agents get their detail page; every other :id keeps
- *  the old deep link into the workspace editor. */
-function AgentRoute() {
-  const { id } = useParams();
-  if (id && DEFAULT_AGENTS.some((a) => a.id === id)) return <AgentDetail />;
-  return <AgentRedirect />;
 }
 
 /** Old /console URLs → /my-workspace, keeping the sub-path and query. */
@@ -191,7 +162,7 @@ function AppRoutes() {
                     <Route path="/agent/builder" element={<AgentRedirect />} />
                     <Route path="/agent/builder/:id" element={<AgentRedirect />} />
                     <Route path="/agent/new" element={<AgentRedirect />} />
-                    <Route path="/agent/:id" element={<AgentRoute />} />
+                    <Route path="/agent/:id" element={<AgentRedirect />} />
                     <Route
                       path="/agents"
                       element={

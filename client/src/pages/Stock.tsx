@@ -153,7 +153,7 @@ export default function Stock() {
                         <div className="flex items-center gap-4">
                             <TickerLogo symbol={symbol} size={88} />
                             <div className="min-w-0">
-                                <h1 className="font-[family-name:var(--font-display)] text-[clamp(1.75rem,3vw,2.5rem)] leading-tight font-normal text-[var(--ink-primary)]">
+                                <h1 className="font-[family-name:var(--font-body)] text-[clamp(1.75rem,3vw,2.5rem)] leading-tight font-light text-[var(--ink-primary)]">
                                     {d.name || symbol}
                                 </h1>
                                 <p className="mt-1 font-[family-name:var(--font-body)] text-sm font-light text-[var(--ink-tertiary)]">

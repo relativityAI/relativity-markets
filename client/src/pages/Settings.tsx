@@ -1,15 +1,18 @@
 import { useState, useEffect } from "react";
 import {
-    Flex, Text, Box, Button, Input, VStack, InputGroup, Spinner
+    Flex, Text, Box, VStack
 } from "@chakra-ui/react";
 import { Check, Eye, EyeOff, X, Trash2, Plus, Pencil, ExternalLink, Lock, Sun, Moon } from "lucide-react";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Button as UIButton } from "@/components/ui/button";
+import { Input as UIInput } from "@/components/ui/input";
 import { toaster } from "@/components/ui/toaster";
 import { SettingsService } from "@/db";
 import { useAuth } from "@/auth/useAuth";
 import { useColorMode } from "@/components/ui/color-mode";
 import UserAvatar from "@/components/shared/UserAvatar";
 import { ModelLogo } from "@/lib/modelLogos";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
 import { dur, ease } from "@/lib/motion";
 
 // One card per provider. Every provider the backend can actually route a model
@@ -39,8 +42,8 @@ function StatusPill({ connected }: { connected: boolean }) {
             px={2}
             py={0.5}
             borderRadius="full"
+            w="full"
             flexShrink={0}
-            alignSelf="flex-start"
             bg={connected ? "color-mix(in srgb, var(--signal-positive) 12%, transparent)" : "var(--surface-recessed)"}
         >
             <Box
@@ -62,17 +65,16 @@ interface ProviderCardProps {
     /** Where to get an API key for this provider — shown as a subtle icon link. */
     url?: string;
     savedKey?: string;
-    expanded: boolean;
-    onToggle: () => void;
     onSave: (value: string, key: string) => Promise<void>;
     onRemove: (value: string) => Promise<void>;
 }
 
 /**
- * One provider card. Collapsed: logo + name + status.
- * Expanded: an EMPTY input (never a saved value), Save/Cancel, and Remove when a key exists.
+ * One provider row: logo + name + link, full-width status badge, Add/Edit.
+ * Clicking opens the key editor as a popup — same shell as the agent editor.
  */
-function ProviderCard({ value, label, url, savedKey, expanded, onToggle, onSave, onRemove }: ProviderCardProps) {
+function ProviderCard({ value, label, url, savedKey, onSave, onRemove }: ProviderCardProps) {
+    const [open, setOpen] = useState(false);
     const [draft, setDraft] = useState("");
     const [showKey, setShowKey] = useState(false);
     const [busy, setBusy] = useState(false);
@@ -88,11 +90,11 @@ function ProviderCard({ value, label, url, savedKey, expanded, onToggle, onSave,
     };
     const close = () => {
         reset();
-        onToggle();
+        setOpen(false);
     };
-    const handleHeaderClick = () => {
-        if (expanded) close();
-        else onToggle();
+    const openEditor = () => {
+        reset();
+        setOpen(true);
     };
 
     const handleSave = async () => {
@@ -120,31 +122,26 @@ function ProviderCard({ value, label, url, savedKey, expanded, onToggle, onSave,
     };
 
     return (
-        <Box
-            as={motion.div}
-            layout
-            transition={{ duration: dur.fast, ease }}
-            alignSelf="start"
-            w="full"
-        >
-            {/* Header — the whole block toggles the editor */}
+        <Box w="full">
+            {/* Row — click Add/Edit to open the key popup */}
             <Flex
                 as="button"
                 type="button"
-                onClick={handleHeaderClick}
+                onClick={openEditor}
                 align="center"
                 gap={3}
                 w="100%"
+                minH="56px"
                 textAlign="left"
                 cursor="pointer"
-                aria-expanded={expanded}
+                px={1}
+                borderRadius="2px"
+                _hover={{ bg: "var(--surface-recessed)" }}
             >
-                <Flex w="24px" justify="center" flexShrink={0}>
-                    <ModelLogo model={value} size={20} />
-                </Flex>
-                <Box flex={1} minW={0}>
-                    <Flex align="center" gap={1.5} minW={0}>
-                        <Text fontSize="13.5px" color="var(--ink-primary)" noOfLines={1}>
+                <Box w="fit-content" maxW="full">
+                    <Flex align="center" gap={2.5} minW={0} w="fit-content" maxW="full">
+                        <ModelLogo model={value} size={30} />
+                        <Text fontSize="14px" color="var(--ink-primary)" noOfLines={1}>
                             {label}
                         </Text>
                         {url && (
@@ -157,11 +154,12 @@ function ProviderCard({ value, label, url, savedKey, expanded, onToggle, onSave,
                                 onClick={(e) => e.stopPropagation()}
                                 style={{ display: "flex", color: "var(--ink-tertiary)", flexShrink: 0 }}
                             >
-                                <ExternalLink size={13} />
+                                <ExternalLink size={14} />
                             </a>
                         )}
                     </Flex>
-                    <Box mt={1}>
+                    {/* Badge spans icon → end of name/link */}
+                    <Box mt={1.5} w="full">
                         <StatusPill connected={connected} />
                     </Box>
                 </Box>
@@ -171,131 +169,96 @@ function ProviderCard({ value, label, url, savedKey, expanded, onToggle, onSave,
                     align="center"
                     gap={1}
                     flexShrink={0}
-                    px={2}
-                    py={1}
+                    ml="auto"
+                    px={2.5}
+                    py={1.5}
                     borderRadius="2px"
-                    fontSize="11.5px"
+                    fontSize="12px"
                     color="var(--accent-primary)"
                     _hover={{ bg: "var(--surface-recessed)" }}
                 >
-                    {expanded ? <X size={13} /> : connected ? <Pencil size={13} /> : <Plus size={13} />}
-                    {expanded ? "Close" : connected ? "Change" : "Add"}
+                    {connected ? <Pencil size={13} /> : <Plus size={13} />}
+                    {connected ? "Edit" : "Add"}
                 </Box>
             </Flex>
 
-            {/* Expanded editor */}
-            <AnimatePresence initial={false}>
-                {expanded && (
-                    <Box
-                        as={motion.div}
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: dur.base, ease }}
-                        overflow="hidden"
-                    >
-                        <Box pt={3}>
-                            {confirmRemove ? (
-                                <VStack
-                                    align="stretch"
-                                    gap={2}
-                                    p={3}
-                                    border="1px solid color-mix(in srgb, var(--signal-negative) 35%, transparent)"
-                                    borderRadius="2px"
-                                    bg="color-mix(in srgb, var(--signal-negative) 6%, transparent)"
-                                >
-                                    <Text fontSize="12.5px" color="var(--ink-primary)">
-                                        Remove the {label} key? Analyses will stop using it immediately.
-                                    </Text>
-                                    <Flex gap={2}>
-                                        <Button
-                                            variant="surface"
-                                            colorPalette="red"
-                                            flex={1}
-                                            borderRadius="full"
-                                            onClick={handleRemove}
-                                            disabled={busy}
-                                        >
-                                            {busy ? <Spinner size="sm" borderWidth="2px" /> : <><Trash2 size={16} /> Confirm remove</>}
-                                        </Button>
-                                        <Button
-                                            variant="ghost"
-                                            color="var(--ink-secondary)"
-                                            borderRadius="full"
-                                            px={4}
-                                            onClick={() => setConfirmRemove(false)}
-                                            disabled={busy}
-                                        >
-                                            <X size={16} /> Cancel
-                                        </Button>
-                                    </Flex>
-                                </VStack>
-                            ) : (
-                                <VStack gap={2.5} align="stretch">
-                                    <InputGroup
-                                        endElement={
-                                            <Button
-                                                variant="ghost"
-                                                aria-label={showKey ? "Hide key" : "Show key"}
-                                                color="var(--ink-tertiary)"
-                                                borderRadius="full"
-                                                _hover={{ color: "var(--ink-primary)" }}
-                                                onClick={() => setShowKey((v) => !v)}
-                                            >
-                                                {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                                            </Button>
-                                        }
-                                        endElementProps={{ px: "4px" }}
+            {/* Key editor — popup, same shell as the agent editor on My Workspace */}
+            <Dialog open={open} onOpenChange={(o) => { if (!o) close(); }}>
+                <DialogContent showCloseButton={false} className="sm:max-w-xl">
+                    <DialogTitle className="flex items-center gap-2.5 font-app-body text-[14px] font-normal text-console-ink">
+                        <ModelLogo model={value} size={22} />
+                        <span className="truncate">{label}</span>
+                        <span className="ml-auto text-[11px] font-medium text-console-ink-3">
+                            {connected ? "Key stored" : "No key"}
+                        </span>
+                    </DialogTitle>
+
+                    {confirmRemove ? (
+                        <div className="flex flex-col gap-2 rounded-[6px] border-[0.5px] border-[color:color-mix(in_srgb,var(--signal-negative)_35%,transparent)] bg-[color-mix(in_srgb,var(--signal-negative)_6%,transparent)] p-3">
+                            <p className="text-[12.5px] text-console-ink">
+                                Remove the {label} key? Analyses will stop using it immediately.
+                            </p>
+                            <div className="flex gap-2">
+                                <UIButton size="sm" variant="destructive" onClick={handleRemove} disabled={busy}>
+                                    {busy ? "Removing…" : <><Trash2 size={14} /> Confirm remove</>}
+                                </UIButton>
+                                <UIButton size="sm" variant="ghost" onClick={() => setConfirmRemove(false)} disabled={busy}>
+                                    <X size={14} /> Cancel
+                                </UIButton>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="flex flex-col gap-3">
+                            <div className="flex flex-col gap-1.5">
+                                <span className="font-app-body text-[11px] font-medium tracking-[0.08em] text-console-ink-3 uppercase">
+                                    API key
+                                </span>
+                                <div className="relative">
+                                    <UIInput
+                                        type={showKey ? "text" : "password"}
+                                        placeholder={connected ? `New ${label} key to replace the saved one` : `Paste your ${label} API key`}
+                                        value={draft}
+                                        onChange={(e) => setDraft(e.target.value)}
+                                        onKeyDown={(e) => { if (e.key === "Enter") handleSave(); }}
+                                        autoFocus
+                                        className="h-9 rounded-[6px] border-[0.5px] border-[color:var(--hairline)] bg-transparent px-2.5 pr-9 text-sm shadow-none placeholder:text-console-ink-4 focus-visible:ring-1 focus-visible:ring-console-accent/40 dark:bg-transparent"
+                                    />
+                                    <button
+                                        type="button"
+                                        aria-label={showKey ? "Hide key" : "Show key"}
+                                        onClick={() => setShowKey((v) => !v)}
+                                        className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-[4px] p-1 text-console-ink-3 hover:text-console-ink"
                                     >
-                                        <Input
-                                            type={showKey ? "text" : "password"}
-                                            placeholder={connected ? `New ${label} key to replace the saved one` : `Paste your ${label} API key`}
-                                            value={draft}
-                                            onChange={(e) => setDraft(e.target.value)}
-                                            minH="40px"
-                                            borderColor="var(--hairline)"
-                                            borderRadius="2px"
-                                            _focus={{ borderColor: "var(--accent-primary)" }}
-                                            onKeyDown={(e) => { if (e.key === "Enter") handleSave(); }}
-                                        />
-                                    </InputGroup>
-                                    <Flex align="center" gap={2}>
-                                        <Button
-                                            as={motion.button}
-                                            whileTap={{ scale: 0.97 }}
-                                            variant="surface"
-                                            colorPalette="blue"
-                                            borderRadius="full"
-                                            px={4}
-                                            onClick={handleSave}
-                                            disabled={busy || !draft.trim()}
-                                        >
-                                            {busy ? <Spinner size="sm" borderWidth="2px" /> : <><Check size={16} /> Save key</>}
-                                        </Button>
-                                        <Button variant="ghost" color="var(--ink-secondary)" borderRadius="full" px={4} onClick={close} disabled={busy}>
-                                            <X size={16} /> Cancel
-                                        </Button>
-                                        {connected && (
-                                            <Button
-                                                variant="ghost"
-                                                color="var(--ink-tertiary)"
-                                                _hover={{ color: "var(--signal-negative)" }}
-                                                onClick={() => setConfirmRemove(true)}
-                                                disabled={busy}
-                                                borderRadius="full"
-                                                px={4}
-                                                ml="auto"
-                                            >
-                                                <Trash2 size={16} /> Remove
-                                            </Button>
-                                        )}
-                                    </Flex>
-                                </VStack>
-                            )}
-                        </Box>
-                    </Box>
-                )}
-            </AnimatePresence>
+                                        {showKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                                    </button>
+                                </div>
+                                <span className="text-[11.5px] text-console-ink-4">
+                                    Stored locally on this device.
+                                </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <UIButton size="sm" onClick={handleSave} disabled={busy || !draft.trim()}>
+                                    {busy ? "Saving…" : <><Check size={14} /> Save key</>}
+                                </UIButton>
+                                <UIButton size="sm" variant="ghost" onClick={close} disabled={busy}>
+                                    Cancel
+                                </UIButton>
+                                {connected && (
+                                    <UIButton
+                                        size="sm"
+                                        variant="ghost"
+                                        className="ml-auto text-console-ink-3 hover:text-[var(--signal-negative)]"
+                                        onClick={() => setConfirmRemove(true)}
+                                        disabled={busy}
+                                    >
+                                        <Trash2 size={14} /> Remove
+                                    </UIButton>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
         </Box>
     );
 }
@@ -354,7 +317,6 @@ export default function Settings() {
     const { colorMode, setColorMode } = useColorMode();
     const [savedKeys, setSavedKeys] = useState<Record<string, string>>({});
     const [loading, setLoading] = useState(true);
-    const [expandedRow, setExpandedRow] = useState<string | null>(null);
 
     useEffect(() => {
         SettingsService.getSettings()
@@ -395,33 +357,16 @@ export default function Settings() {
         (user?.user_metadata?.full_name as string | undefined) ??
         email.split("@")[0] ??
         "User";
-    const createdAt = user?.created_at;
-    const memberSince = createdAt
-        ? new Date(createdAt).toLocaleDateString(undefined, { month: "short", year: "numeric" })
-        : null;
-    const lastSignIn = user?.last_sign_in_at;
-    const lastSignInLabel = lastSignIn
-        ? new Date(lastSignIn).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
-        : "—";
 
     const connectedCount = Object.keys(savedKeys).length;
     const isDark = colorMode === "dark";
-
-    const metaRow = (label: string, value: React.ReactNode) => (
-        <Flex justify="space-between" gap={3} align="center" py={2} borderBottom="1px solid var(--hairline)" _last={{ borderBottom: "none" }}>
-            <Text fontSize="12px" color="var(--ink-tertiary)" flexShrink={0}>{label}</Text>
-            <Text fontSize="12px" color="var(--ink-secondary)" fontFamily="var(--font-mono)" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
-                {value}
-            </Text>
-        </Flex>
-    );
 
     return (
         <Box bg="var(--surface-canvas)" minH="100%">
             <Flex direction="column" gap={6} w="full" px={{ base: 4, md: 8 }} py={6}>
                 {/* Header — flat masthead, same title/subtitle treatment as the Runs and New Run pages */}
                 <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 px-0.5">
-                    <h1 className="font-app-display min-w-0 text-[26px] leading-[1.1] font-normal tracking-[-0.02em] text-[var(--ink-primary)] md:text-[30px]">
+                    <h1 className="font-app-body min-w-0 text-[26px] leading-[1.1] font-light tracking-[-0.02em] text-[var(--ink-primary)] md:text-[30px]">
                         Settings
                     </h1>
                     <Text fontSize="11.5px" color="var(--ink-tertiary)" whiteSpace="nowrap">
@@ -443,14 +388,11 @@ export default function Settings() {
                                         {displayName}
                                     </Text>
                                     <Text fontSize="12.5px" color="var(--ink-tertiary)" noOfLines={1}>{email}</Text>
-                                    {memberSince && (
-                                        <Text fontSize="11.5px" color="var(--ink-tertiary)" mt={1}>Member since {memberSince}</Text>
-                                    )}
                                 </Box>
                             </Flex>
-                            <Box mt={4}>
-                                {metaRow("Last sign-in", lastSignInLabel)}
-                            </Box>
+                            <Text fontSize="12px" color="var(--ink-tertiary)" mt={4}>
+                                Local-first: all your data lives on this machine.
+                            </Text>
                         </SectionCard>
 
                         <SectionCard title="Appearance" subtitle="Choose how Relativity looks on this device.">
@@ -486,22 +428,6 @@ export default function Settings() {
                                 })}
                             </Flex>
                         </SectionCard>
-
-                        <SectionCard title="Subscription">
-                            <Flex align="center" justify="space-between" gap={3}>
-                                <Text fontSize="15px" color="var(--ink-primary)">Free</Text>
-                                <Flex align="center" gap={1.5} px={2} py={0.5} borderRadius="full" bg="var(--surface-recessed)">
-                                    <Box w="6px" h="6px" borderRadius="full" bg="var(--ink-tertiary)" />
-                                    <Text fontSize="10.5px" color="var(--ink-tertiary)">Current plan</Text>
-                                </Flex>
-                            </Flex>
-                            <Text fontSize="12px" color="var(--ink-tertiary)" mt={2}>
-                                Billing and plan upgrades are under development. You'll be able to manage your subscription here soon.
-                            </Text>
-                            <Button mt={4} size="sm" minH="36px" variant="subtle" color="var(--ink-tertiary)" borderRadius="full" disabled width="full">
-                                <Lock size={14} /> Manage plan · coming soon
-                            </Button>
-                        </SectionCard>
                     </VStack>
 
                     {/* RIGHT MAIN — API keys */}
@@ -515,7 +441,7 @@ export default function Settings() {
                         <Flex align="center" gap={2} mb={5}>
                             <Lock size={14} color="var(--ink-tertiary)" />
                             <Text fontSize="12px" color="var(--ink-tertiary)">
-                                Keys are stored securely on the server, encrypted at rest. Never exposed in the browser.
+                                All keys stored locally.
                             </Text>
                         </Flex>
 
@@ -523,11 +449,15 @@ export default function Settings() {
                             <GridSkeleton />
                         ) : (
                             <>
-                                <GroupHeader
-                                    title="Model Providers"
-                                    purpose="Keys here become available as model choices when starting an analysis."
-                                />
-                                <Box display="grid" gridTemplateColumns={{ base: "1fr", sm: "repeat(2, 1fr)", xl: "repeat(3, 1fr)" }} gap={5} mb={8} alignItems="start">
+                                <div className="mb-4">
+                                    <h2 className="font-app-body text-[20px] leading-none font-light tracking-tight text-console-ink">
+                                        Model Providers
+                                    </h2>
+                                    <p className="mt-1.5 font-app-body text-[12px] font-normal text-console-ink-3">
+                                        Keys here become available as model choices when starting an analysis.
+                                    </p>
+                                </div>
+                                <Box display="flex" flexDirection="column" gap={1} mb={8}>
                                     {MODEL_PROVIDERS.map((p) => (
                                         <ProviderCard
                                             key={p.value}
@@ -535,8 +465,6 @@ export default function Settings() {
                                             label={p.label}
                                             url={p.url}
                                             savedKey={savedKeys[p.value]}
-                                            expanded={expandedRow === p.value}
-                                            onToggle={() => setExpandedRow((cur) => (cur === p.value ? null : p.value))}
                                             onSave={handleSaveKey}
                                             onRemove={handleRemoveKey}
                                         />
@@ -547,14 +475,12 @@ export default function Settings() {
                                     title="Web Search"
                                     purpose="Powers the optional web-search step during analysis."
                                 />
-                                <Box display="grid" gridTemplateColumns={{ base: "1fr", sm: "repeat(2, 1fr)", xl: "repeat(3, 1fr)" }} gap={5} alignItems="start">
+                                <Box display="flex" flexDirection="column" gap={1}>
                                     <ProviderCard
                                         value="tavily"
                                         label="Tavily"
                                         url="https://app.tavily.com"
                                         savedKey={savedKeys.tavily}
-                                        expanded={expandedRow === "tavily"}
-                                        onToggle={() => setExpandedRow((cur) => (cur === "tavily" ? null : "tavily"))}
                                         onSave={handleSaveKey}
                                         onRemove={handleRemoveKey}
                                     />

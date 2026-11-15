@@ -366,7 +366,11 @@ export function MarketChart({ data, variant, height = 380, title }: MarketChartP
           </Flex>
         ))}
       </Flex>
-      <table
+      {/* Screen-reader data table. The clip lives on the WRAPPER: on a
+          <table>, CSS treats height as a minimum, so the 1px trick on the
+          table itself let it grow to ~10k px and silently extend the page
+          scroll (long blank space after the report). */}
+      <div
         style={{
           position: "absolute",
           width: "1px",
@@ -379,16 +383,18 @@ export function MarketChart({ data, variant, height = 380, title }: MarketChartP
           border: 0,
         }}
       >
-        <caption>{title ?? "Chart data"}</caption>
-        <thead>
-          <tr>{model.tableHead.map((h) => <th key={h} scope="col">{h}</th>)}</tr>
-        </thead>
-        <tbody>
-          {model.tableRows.map((row, i) => (
-            <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>
-          ))}
-        </tbody>
-      </table>
+        <table>
+          <caption>{title ?? "Chart data"}</caption>
+          <thead>
+            <tr>{model.tableHead.map((h) => <th key={h} scope="col">{h}</th>)}</tr>
+          </thead>
+          <tbody>
+            {model.tableRows.map((row, i) => (
+              <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Box>
   );
 }

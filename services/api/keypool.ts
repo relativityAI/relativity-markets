@@ -11,7 +11,7 @@
  * table, which the admin panel reads.
  */
 import { getModels, isKeylessProvider } from "./models.js";
-import { getDb } from "../db/db.js";
+import { flushApiUsage, type UsageRow } from "../db/repo.js";
 import { log } from "./logger.js";
 import { config, DEFAULT_DAILY_REQUESTS } from "./config.js";
 
@@ -58,17 +58,6 @@ interface ProviderState {
   userRequests: number;
   userFailures: number;
   pickSeq: number;
-}
-
-interface UsageRow {
-  day: string;
-  provider: string;
-  key_ref: string;
-  model_id: string;
-  requests: number;
-  tokens_in: number;
-  tokens_out: number;
-  failures: number;
 }
 
 export class KeyPool {
@@ -340,10 +329,7 @@ export class KeyPool {
       const rows = [...this.usageKeyMap.values()];
       this.usageKeyMap.clear();
       try {
-        const { error } = await getDb().from("api_usage").upsert(rows, {
-          onConflict: "day,provider,key_ref,model_id",
-        });
-        if (error) log.warn("[keypool]", `api_usage persist failed: ${error.message}`);
+        flushApiUsage(rows as UsageRow[]);
       } catch (e: any) {
         log.warn("[keypool]", `api_usage persist error: ${e?.message || e}`);
         // Keep the rows so a later flush retries them.

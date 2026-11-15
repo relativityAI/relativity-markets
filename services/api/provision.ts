@@ -1,7 +1,7 @@
 import { encrypt, decrypt } from "./crypto.js";
 import { config } from "./config.js";
 import { log } from "./logger.js";
-import { getUserSettings, upsertUserSettings } from "../db/localdb.js";
+import { getUserSettings, upsertUserSettings } from "../db/settings.js";
 
 /** Auto-provision a Voyager key for a new user via Voyager's admin API.
  *

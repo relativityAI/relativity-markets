@@ -28,7 +28,7 @@ export function dumpMarkdown(doc: ReportDocument): string {
   };
   let figN = 0;
   for (const sec of doc.sections as Section[]) {
-    lines.push(`${"#".repeat(sec.heading.level + 1)} ${sec.heading.text}`, "");
+    lines.push(`${"#".repeat(sec.heading.level + 1)} ${sec.heading.text}`, sec.heading.tagline ? `${sec.heading.tagline}` : "");
     for (const s of sec.blocks as Block[]) {
       switch (s.type) {
         case "text":
@@ -49,8 +49,12 @@ export function dumpMarkdown(doc: ReportDocument): string {
           break;
         }
         case "chart": {
-          figN++;
-          lines.push(`**Fig. ${figN} — ${s.title ?? "(untitled chart)"}**${s.measure ? ` *(${s.measure})*` : ""}`, "");
+          const isStat = s.spec.kind === "stat";
+          if (!isStat) figN++;
+          if (isStat) {
+            // stat = KPI card: title + tagline, no Fig. N
+            lines.push(`**${s.title ?? "(stat)"}**${s.tagline ? ` — *${s.tagline}*` : ""}`, "");
+          } else lines.push(`**Fig. ${figN} — ${s.title ?? "(untitled chart)"}**${s.measure ? ` *(${s.measure})*` : ""}`, "");
           if (s.svgs?.length) {
             lines.push(s.svgs.join("\n"), "");
           } else {

@@ -7,7 +7,7 @@
 
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { getDb } from "../../db/db.js";
+import { getSkillRow, listSkillRows, upsertSkillRow, deleteSkillRow } from "../../db/repo.js";
 import { log } from "../../api/logger.js";
 import { parseSkillMarkdown, serializeSkill, type SkillIssue } from "./parse.js";
 import type { SkillDefinition } from "./types.js";
@@ -65,10 +65,9 @@ export function getBuiltinSkill(id: string): SkillDefinition | null {
   return loadBuiltinSkills().find((s) => s.id === id) || null;
 }
 
-// ── Custom skills (per-user, Supabase) ────────────────────────────────────
+// ── Custom skills (per-user, SQLite via ../db/repo.ts) ────────────────────
 
 export interface CustomSkillRow {
-  id: string;
   user_id: string;
   skill_id: string;
   markdown: string;
@@ -161,9 +160,8 @@ export function getBuiltinSkillFiles(slug: string): SkillFiles | null {
 
 /** Files of one custom skill: row.files plus SKILL.md from the markdown column. */
 export async function getCustomSkillFiles(userId: string, skillId: string): Promise<SkillFiles | null> {
-  const db = getDb();
-  const { data, error } = await db.from("skills").select("markdown,files").eq("user_id", userId).eq("skill_id", skillId).maybeSingle();
-  if (error || !data) return null;
+  const data = await getSkillRow(userId, skillId);
+  if (!data) return null;
   const out: SkillFiles = {};
   const rest = data.files;
   if (rest && typeof rest === "object" && !Array.isArray(rest)) {
@@ -175,48 +173,30 @@ export async function getCustomSkillFiles(userId: string, skillId: string): Prom
   return out;
 }
 
-function rowToDefinition(row: CustomSkillRow): SkillDefinition | null {
+function rowToDefinition(row: { skill_id: string; markdown: string }): SkillDefinition | null {
   const { skill } = parseSkillMarkdown(row.markdown, "custom", row.skill_id);
   return skill ? { ...skill, id: row.skill_id, source: "custom" } : null;
 }
 
 export async function listCustomSkills(userId: string): Promise<SkillDefinition[]> {
-  const db = getDb();
-  const { data, error } = await db.from("skills").select("*").eq("user_id", userId).order("created_at", { ascending: true });
-  if (error) {
-    log.warn("skills", `list custom skills failed: ${error.message}`);
-    return [];
-  }
-  return (data || []).map(rowToDefinition).filter((s): s is SkillDefinition => !!s);
+  const rows = await listSkillRows(userId);
+  return rows.map(rowToDefinition).filter((s): s is SkillDefinition => !!s);
 }
 
 export async function getCustomSkill(userId: string, skillId: string): Promise<SkillDefinition | null> {
-  const db = getDb();
-  const { data, error } = await db.from("skills").select("*").eq("user_id", userId).eq("skill_id", skillId).maybeSingle();
-  if (error || !data) return null;
-  return rowToDefinition(data as CustomSkillRow);
+  const row = await getSkillRow(userId, skillId);
+  return row ? rowToDefinition(row) : null;
 }
 
 export async function saveCustomSkill(userId: string, markdown: string, files?: SkillFiles): Promise<{ skill: SkillDefinition | null; issues: SkillIssue[] }> {
   const { skill, issues } = parseSkillMarkdown(markdown, "custom");
   if (!skill) return { skill: null, issues };
-  const db = getDb();
-  const row: { user_id: string; skill_id: string; markdown: string; files?: SkillFiles; updated_at: string } = {
-    user_id: userId,
-    skill_id: skill.id,
-    markdown,
-    updated_at: new Date().toISOString(),
-  };
-  if (files) row.files = { ...files, "SKILL.md": markdown }; // markdown wins over any stale copy
-  const { error } = await db.from("skills").upsert(row, { onConflict: "user_id,skill_id" });
-  if (error) throw new Error(`Failed to save skill: ${error.message}`);
+  await upsertSkillRow(userId, skill.id, markdown, files ? { ...files, "SKILL.md": markdown } : undefined);
   return { skill, issues };
 }
 
 export async function deleteCustomSkill(userId: string, skillId: string): Promise<boolean> {
-  const db = getDb();
-  const { error } = await db.from("skills").delete().eq("user_id", userId).eq("skill_id", skillId);
-  if (error) throw new Error(`Failed to delete skill: ${error.message}`);
+  await deleteSkillRow(userId, skillId);
   return true;
 }
 

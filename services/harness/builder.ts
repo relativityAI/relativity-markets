@@ -12,7 +12,7 @@ import type { MetricDef } from "../api/metrics.js";
 import { normalizeQuantRules } from "../api/metrics.js";
 import { buildAgentBuilderSystemPrompt, buildBuilderRecoveryPrompt, buildDocumentExtractionPrompt } from "./agentPrompts.js";
 import { buildWebSearchTool, getToolCatalog, renderToolResults } from "./tools.js";
-import { getDb } from "../db/db.js";
+import { insertBuilderSessionTurn } from "../db/repo.js";
 import { runAgentTurn, type HarnessTraceEvent } from "./harness.js";
 import { classifyModelError } from "../api/modelcheck.js";
 import { keyPool } from "../api/keypool.js";
@@ -112,17 +112,15 @@ async function persistBuilderSessionTurn(
 ): Promise<void> {
   if (!req.session_id || !req.user_id) return;
   try {
-    const db = getDb();
-    await db.from("builder_sessions").insert({
-      session_id: req.session_id,
-      user_id: req.user_id,
-      turn_index: req.messages.length,
-      user_message: req.user_response || "",
-      agent_draft_snapshot: res.agent_draft_update || req.agent_draft || {},
-      annotations: res.annotations || [],
-      sources: res.sources || [],
-      created_at: new Date().toISOString(),
-    });
+    insertBuilderSessionTurn(
+      req.session_id,
+      req.user_id,
+      req.messages.length,
+      req.user_response || "",
+      res.agent_draft_update || req.agent_draft || {},
+      res.annotations || [],
+      res.sources || [],
+    );
   } catch (e: any) {
     console.warn(`[builder] failed to persist session turn: ${e?.message}`);
   }

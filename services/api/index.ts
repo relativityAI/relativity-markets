@@ -2,9 +2,25 @@ import express from "express";
 import cors from "cors";
 import { randomUUID } from "node:crypto";
 import { config } from "./config.js";
-import { getDb } from "../db/db.js";
 import { encrypt, decrypt } from "./crypto.js";
-import { getUserSettings, upsertUserSettings } from "../db/localdb.js";
+import { getUserSettings, upsertUserSettings } from "../db/settings.js";
+import {
+  listAgentRows,
+  searchAgentRows,
+  getAgentRow,
+  getAgentRowByNameOrId,
+  updateAgentRow,
+  deleteAgentRow,
+  insertScheduleRow,
+  listScheduleRows,
+  deleteScheduleRow,
+  listRunRows,
+  listRunSummaries,
+  getRunRow,
+  updateRunRowForUser,
+  deleteRunRow,
+  getMeta,
+} from "../db/repo.js";
 import { fetchUserKeys, ensureUserSettings } from "./provision.js";
 import { getSourceStatuses } from "./datasources.js";
 import { getModelIds, getAvailableModelsForUser } from "./models.js";
@@ -39,12 +55,13 @@ import {
   updateAgent as updateHarnessAgent,
   deleteAgent as deleteHarnessAgent,
   getAgent as getHarnessAgent,
+  DEFAULT_AGENTS,
   DEFAULT_HARNESS_AGENT,
   loadSystemPrompts,
   type ReportDocument,
   type Verdict,
 } from "../harness/index.js";
-import { installHarnessAdapters, harnessToView, viewToHarnessPatch } from "../harness/harness-adapters.js";
+import { installHarnessAdapters, harnessToView, viewToHarnessPatch } from "../harness/sqlite-adapters.js";
 import { runHarnessSymbol, startAnalysisRun, startStaleRunSweeper } from "./runs.js";
 import { startScheduleTicker, isValidTime, isValidTimeZone } from "./schedule.js";
 import { extractText } from "./upload.js";
@@ -82,7 +99,7 @@ function statusColor(code: number): string {
   return "1;32";
 }
 
-// Harness persistence: install the Supabase adapters (agent/skill
+// Harness persistence: install the SQLite adapters (agent/skill
 // repositories) before any route can serve a request.
 installHarnessAdapters();
 
@@ -183,9 +200,7 @@ app.use((req, _res, next) => {
 app.get("/health", async (_req, res) => {
   let dbOk = false;
   try {
-    const db = getDb();
-    const { error } = await db.from("agents").select("id").limit(1);
-    dbOk = !error;
+    dbOk = getMeta("first_run_at") != null;
   } catch {
     dbOk = false;
   }
@@ -319,13 +334,11 @@ app.get("/agents", requireAuth, async (req, res) => {
 
 app.get("/agents/search", requireAuth, async (req, res) => {
   try {
-    const db = getDb();
     const userId = (req as AuthedRequest).user.id;
     const q = String(req.query.query || "");
-    const { data, error } = await db.from("agents").select("*").eq("user_id", userId).ilike("name", `%${q}%`).limit(25);
-    if (error) throw error;
+    const rows = await searchAgentRows(userId, q);
     const out = [];
-    for (const row of (data || []) as AgentRow[]) {
+    for (const row of rows) {
       const { config } = await agentFromRow(row);
       out.push({ ...row, ...(config || {}) });
     }
@@ -384,16 +397,29 @@ app.post("/agents", requireAuth, async (req, res) => {
   }
 });
 
+/** File-defined default agents (harness/agents/defaults/*.md) — static
+ *  content, no auth: the workspace lists them beside the user's own. */
+app.get("/agents/defaults", (_req, res) => {
+  const builtins = loadBuiltinSkills();
+  res.json(
+    DEFAULT_AGENTS.map((a) => {
+      const skillId = a.skillIds?.[0] ?? "";
+      return {
+        name: a.name,
+        skill_name: (skillId && builtins.find((s) => s.id === skillId)?.name) || skillId,
+      };
+    }),
+  );
+});
+
 app.get("/agents/:id", requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
     const harness = await getHarnessAgent(userId, String(req.params.id));
     if (harness) return res.json(harnessToView(harness));
     // Legacy fallback: markdown-first v3 config for pre-harness rows.
-    const db = getDb();
-    const { data, error } = await db.from("agents").select("*").eq("id", req.params.id).eq("user_id", userId).single();
-    if (error || !data) return res.status(404).json({ error: "Agent not found" });
-    const row = data as AgentRow;
+    const row = await getAgentRow(userId, String(req.params.id));
+    if (!row) return res.status(404).json({ error: "Agent not found" });
     const { config, issues, md } = await agentFromRow(row);
     res.json({ ...row, ...(config || {}), md, md_issues: issues });
   } catch (e: any) {
@@ -414,9 +440,8 @@ app.put("/agents/:id", requireAuth, async (req, res) => {
       return res.json(harnessToView(updated));
     }
 
-    const db = getDb();
-    const { data: existing, error: fetchErr } = await db.from("agents").select("*").eq("id", id).eq("user_id", userId).single();
-    if (fetchErr || !existing) return res.status(404).json({ error: "Agent not found" });
+    const existing = await getAgentRow(userId, id);
+    if (!existing) return res.status(404).json({ error: "Agent not found" });
 
     let built;
     try {
@@ -442,8 +467,7 @@ app.put("/agents/:id", requireAuth, async (req, res) => {
       updated_at: new Date().toISOString(),
     };
 
-    const { error } = await db.from("agents").update(doc).eq("id", id).eq("user_id", userId);
-    if (error) throw error;
+    await updateAgentRow(userId, id, doc);
     res.json({ ...doc, ...config, md, md_issues: issues });
   } catch (e: any) {
     res.status(503).json({ error: e.message });
@@ -452,19 +476,17 @@ app.put("/agents/:id", requireAuth, async (req, res) => {
 
 app.delete("/agents/:id", requireAuth, async (req, res) => {
   try {
-    const db = getDb();
     const userId = (req as AuthedRequest).user.id;
-    const id = req.params.id;
+    const id = String(req.params.id);
     // Remember if the user deletes a default profile so it doesn't get
     // re-seeded on the next list fetch ("unless they chose to delete it").
-    const { data: existing } = await db.from("agents").select("source, preset_key").eq("id", id).eq("user_id", userId).single();
-    const { error } = await db.from("agents").delete().eq("id", id).eq("user_id", userId);
-    if (error) throw error;
+    const existing = await getAgentRow(userId, id);
+    await deleteAgentRow(userId, id);
     if (existing?.source === "default") {
       // Scope the suppression to the deleted preset only. The old boolean flag
       // nuked ALL four presets on any single delete — irreversible and
       // undisclosed. Re-seeding is per-preset below; this just records intent.
-      const presetKey = String(existing.preset_key || "");
+      const presetKey = String((existing as any).preset_key || "");
       const settings = await getUserSettings(userId);
       const prior: string[] = Array.isArray(settings?.deleted_preset_keys) ? settings!.deleted_preset_keys! : [];
       const deletedKeys = prior.includes(presetKey) && presetKey ? prior : [...prior, presetKey].filter(Boolean);
@@ -750,7 +772,7 @@ app.post("/schedules", requireAuth, async (req, res) => {
     const skillIds = Array.isArray(body.skills) && body.skills.length ? body.skills.map(String).slice(0, 1) : null;
     const maxSteps = body.max_steps != null && body.max_steps !== "" && Number.isFinite(Number(body.max_steps)) ? Number(body.max_steps) : null;
     const maxTokens = body.max_tokens != null && body.max_tokens !== "" && Number.isFinite(Number(body.max_tokens)) ? Number(body.max_tokens) : null;
-    const { data, error } = await getDb().from("schedules").insert({
+    const data = await insertScheduleRow({
       user_id: userId,
       symbol,
       share_name: String(body.share_name || symbol),
@@ -763,8 +785,7 @@ app.post("/schedules", requireAuth, async (req, res) => {
       max_tokens: maxTokens,
       time,
       timezone,
-    }).select().single();
-    if (error) throw new Error(error.message);
+    });
     res.json(data);
   } catch (e: any) {
     console.error("POST /schedules ERROR:", e);
@@ -775,12 +796,7 @@ app.post("/schedules", requireAuth, async (req, res) => {
 app.get("/schedules", requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
-    const { data, error } = await getDb().from("schedules")
-      .select("*")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false });
-    if (error) throw new Error(error.message);
-    res.json(data ?? []);
+    res.json(await listScheduleRows(userId));
   } catch (e: any) {
     res.status(503).json({ error: e?.message || "Could not list schedules" });
   }
@@ -789,11 +805,7 @@ app.get("/schedules", requireAuth, async (req, res) => {
 app.delete("/schedules/:id", requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
-    const { error } = await getDb().from("schedules")
-      .delete()
-      .eq("id", String(req.params.id))
-      .eq("user_id", userId);
-    if (error) throw new Error(error.message);
+    await deleteScheduleRow(userId, String(req.params.id));
     res.json({ ok: true });
   } catch (e: any) {
     res.status(503).json({ error: e?.message || "Could not delete schedule" });
@@ -802,24 +814,10 @@ app.delete("/schedules/:id", requireAuth, async (req, res) => {
 
 app.get("/analysis", requireAuth, async (req, res) => {
   try {
-    const db = getDb();
     const userId = (req as AuthedRequest).user.id;
-    const cols = "id, symbol, share_name, agent_name, run_mode, skill_id, status, total_score, quantitative_score, qualitative_score, created_at, updated_at, duration, model, source, error, coverage, fit_low, fit_high, report->verdict";
-    let data: any[] | null = null;
-    let error: any = null;
-    // Older databases may miss migration 021/022 — drop whatever the table
-    // lacks and retry; the list falls back to showing the agent.
-    const selects = [
-      `${cols}, skill_ids, system_prompt`,
-      `${cols}, skill_ids`,
-      cols,
-    ];
-    for (const sel of selects) {
-      ({ data, error } = await db.from("analysis_runs").select(sel).eq("user_id", userId));
-      if (!error || !/skill_ids|system_prompt/.test(error.message)) break;
-    }
-    if (error) throw error;
-    const docs = (data || []).sort((a: any, b: any) => +new Date(b.created_at ?? 0) - +new Date(a.created_at ?? 0));
+    // Summary columns only — the full report/trace stay in the DB; the list
+    // surfaces the verdict extracted from the report json.
+    const docs = await listRunSummaries(userId);
     res.json(docs);
   } catch (e: any) {
     res.status(503).json({ error: e.message });
@@ -879,26 +877,15 @@ app.get("/analysis/data-status", requireAuth, async (req, res) => {
 // Cancel a saved run that is still marked pending or running.
 app.post("/analysis/:id/cancel", requireAuth, async (req, res) => {
   try {
-    const db = getDb();
     const userId = (req as AuthedRequest).user.id;
     const id = String(req.params.id);
-    const { data } = await db
-      .from("analysis_runs")
-      .select("status")
-      .eq("id", id)
-      .eq("user_id", userId)
-      .single();
-    if (!data) return res.status(404).json({ error: "Analysis not found" });
-    const s = String(data.status || "").toUpperCase();
+    const row = await getRunRow(userId, id);
+    if (!row) return res.status(404).json({ error: "Analysis not found" });
+    const s = String(row.status || "").toUpperCase();
     if (s !== "PENDING" && s !== "RUNNING") {
       return res.status(409).json({ error: `Run already ${s.toLowerCase()}; nothing to cancel` });
     }
-    const { error } = await db
-      .from("analysis_runs")
-      .update({ status: "CANCELED", error: "Canceled by the user.", updated_at: new Date().toISOString() })
-      .eq("id", id)
-      .eq("user_id", userId);
-    if (error) throw error;
+    await updateRunRowForUser(userId, id, { status: "CANCELED", error: "Canceled by the user." });
     res.json({ canceled: true });
   } catch (e: any) {
     res.status(503).json({ error: e.message });
@@ -907,10 +894,9 @@ app.post("/analysis/:id/cancel", requireAuth, async (req, res) => {
 
 app.get("/analysis/:id", requireAuth, async (req, res) => {
   try {
-    const db = getDb();
     const userId = (req as AuthedRequest).user.id;
-    const { data, error } = await db.from("analysis_runs").select("*").eq("id", req.params.id).eq("user_id", userId).single();
-    if (error || !data) return res.status(404).json({ error: "Analysis not found" });
+    const data = await getRunRow(userId, String(req.params.id));
+    if (!data) return res.status(404).json({ error: "Analysis not found" });
     // Harness runs store their typed ReportDocument in `report`; the result
     // view reads `report_document`, so surface it under that name.
     if ((data as any).report?.schema === "relativity/report.v1" || (data as any).report?.schema === "relativity/report.v2") (data as any).report_document = (data as any).report;
@@ -922,10 +908,8 @@ app.get("/analysis/:id", requireAuth, async (req, res) => {
 
 app.delete("/analysis/:id", requireAuth, async (req, res) => {
   try {
-    const db = getDb();
     const userId = (req as AuthedRequest).user.id;
-    const { error } = await db.from("analysis_runs").delete().eq("id", req.params.id).eq("user_id", userId);
-    if (error) throw error;
+    await deleteRunRow(userId, String(req.params.id));
     res.json({ deleted: true });
   } catch (e: any) {
     res.status(503).json({ error: e.message });
@@ -935,10 +919,9 @@ app.delete("/analysis/:id", requireAuth, async (req, res) => {
 // Server-generated PDF export of the analysis report (same plots as the UI).
 app.get("/analysis/:id/pdf", requireAuth, async (req, res) => {
   try {
-    const db = getDb();
     const userId = (req as AuthedRequest).user.id;
-    const { data, error } = await db.from("analysis_runs").select("*").eq("id", req.params.id).eq("user_id", userId).single();
-    if (error || !data) return res.status(404).json({ error: "Analysis not found" });
+    const data = await getRunRow(userId, String(req.params.id));
+    if (!data) return res.status(404).json({ error: "Analysis not found" });
     if (!data.quantitative_analysis && !data.qualitative_analysis && !data.report) {
       return res.status(409).json({ error: "No analysis to export" });
     }
@@ -946,12 +929,7 @@ app.get("/analysis/:id/pdf", requireAuth, async (req, res) => {
     // agent name for the report header/footer (and fall back to the masked
     // label inside the PDF builder if the agent no longer exists).
     if (data.agent_name && isUuid(data.agent_name)) {
-      const { data: agentRow } = await db
-        .from("agents")
-        .select("name")
-        .eq("user_id", userId)
-        .or(`id.eq.${data.agent_name},name.eq.${data.agent_name}`)
-        .maybeSingle();
+      const agentRow = await getAgentRowByNameOrId(userId, data.agent_name);
       (data as any).agent_display_name = agentRow?.name || "";
     }
     const pdf = await buildReportPdf(data);
@@ -968,10 +946,9 @@ app.get("/analysis/:id/pdf", requireAuth, async (req, res) => {
 // the binary is built here, per request, so no file is ever persisted or cached.
 app.get("/analysis/:id/artifact/:artifactId", requireAuth, async (req, res) => {
   try {
-    const db = getDb();
     const userId = (req as AuthedRequest).user.id;
-    const { data, error } = await db.from("analysis_runs").select("*").eq("id", req.params.id).eq("user_id", userId).single();
-    if (error || !data) return res.status(404).json({ error: "Analysis not found" });
+    const data = await getRunRow(userId, String(req.params.id));
+    if (!data) return res.status(404).json({ error: "Analysis not found" });
 
     const outputs: any[] = Array.isArray(data.skill_outputs) ? data.skill_outputs : [];
     const skillId = String(req.params.artifactId).split(":")[0];
@@ -1001,9 +978,8 @@ app.get("/analysis/:id/artifact/:artifactId", requireAuth, async (req, res) => {
 // decisions) for a single run. Also replays events already buffered.
 app.get("/analysis/:id/stream", requireAuth, async (req, res) => {
   const runId = String(req.params.id);
-  const db = getDb();
-  const { data, error } = await db.from("analysis_runs").select("trace").eq("id", runId).eq("user_id", (req as AuthedRequest).user.id).single();
-  if (error || !data) return res.status(404).json({ error: "Analysis not found" });
+  const data = await getRunRow((req as AuthedRequest).user.id, runId);
+  if (!data) return res.status(404).json({ error: "Analysis not found" });
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -1329,15 +1305,9 @@ app.get("/harness/system-prompts", requireAuth, async (_req, res) => {
 
 app.get("/harness/runs/:id", requireAuth, async (req, res) => {
   try {
-    const { data, error } = await getDb()
-      .from("analysis_runs")
-      .select("id, agent_name, symbol, status, report, trace, created_at")
-      .eq("id", String(req.params.id))
-      .eq("user_id", (req as AuthedRequest).user.id)
-      .single();
-    if (error) throw error;
+    const data = await getRunRow((req as AuthedRequest).user.id, String(req.params.id));
     if (!data) return res.status(404).json({ error: "Run not found" });
-    res.json({ ...data, report_document: (data as any).report });
+    res.json({ ...data, report_document: data.report });
   } catch (e: any) {
     res.status(503).json({ error: e.message });
   }
@@ -1498,7 +1468,7 @@ const server = app.listen(config.port, async () => {
   log.info("[api]", `listening on :${config.port}`);
   log.info(
     "[api]",
-    `config: supabase=${config.supabaseUrl ? "set" : "unset"} voyager=${config.voyagerUrl} mcp=${config.mcpVoyagerUrl || "off"} rateLimit=${config.rateLimitPerMin}/min logLevel=${process.env.LOG_LEVEL || "info"}`,
+    `config: mode=${config.authMode} db=${config.sqlitePath} voyager=${config.voyagerUrl} mcp=${config.mcpVoyagerUrl || "off"} rateLimit=${config.rateLimitPerMin}/min logLevel=${process.env.LOG_LEVEL || "info"}`,
   );
   // Runs execute in-process, so nothing survives a restart: anything left
   // PENDING/RUNNING from a previous process is dead. Clear it, then keep

@@ -256,6 +256,10 @@ export async function runPlanAnalysis(options: RunCanvasOptions): Promise<RunCan
     .filter((t) => t.status === "completed")
     .map((t) => ({ task: t.id, outputRef: t.outputRef, result: views.get(t.id) }));
   const sectionTasks = plan.tasks.filter((t) => t.tool === SECTION_TOOL);
+  // ponytail: enforce the figure assignment only when the planner actually
+  // emitted one — a planner that ignores input.figures degrades to today's
+  // unconstrained behaviour instead of shipping figure-less sections.
+  const figureBudgetPlanned = sectionTasks.some((t) => Array.isArray((t.input as Record<string, unknown>)?.figures));
   let callSeq = 0;
   const sdkTools: ToolSet = Object.fromEntries(
     fsTools.map((t) => [
@@ -281,10 +285,17 @@ export async function runPlanAnalysis(options: RunCanvasOptions): Promise<RunCan
 
   const draftOne = async (task: PlanTask): Promise<void> => {
     const started = Date.now();
+    const figures = (task.input as Record<string, unknown>)?.figures;
     const prompt = [
       `Draft the report section "${task.name}" for ${options.ctx.symbol}.`,
       `sectionId: ${String((task.input as Record<string, unknown>)?.sectionId ?? task.id)}`,
       task.description ? `Instructions: ${task.description}` : "",
+      ...(figureBudgetPlanned
+        ? [
+            `Figures assigned to YOUR section by the planner (render each as a chart block: add "type":"chart" and a sourceId, fill categorical \`values\` from evidence; drop one only if its data is unavailable):\n${JSON.stringify(figures ?? [])}`,
+            "Your section may contain ONLY the figures listed above — never add, duplicate, or substitute a figure, and apply no report-wide figure quota (the planner already set it).",
+          ]
+        : []),
       `Evidence collected (cite as [src:<id>]):\n${JSON.stringify(evidence)}`,
       "Everything you need — numbers, dates, rows, series — is in the evidence above. Do NOT fs_read it back; the fs tools exist only for something specific that is genuinely missing (the raw payloads at the outputRef paths go deeper).",
       "Reply with ONLY the JSON object described in your instructions, as your final message — do not write the draft to a file.",

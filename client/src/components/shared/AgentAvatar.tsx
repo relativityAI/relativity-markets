@@ -1,10 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, type CSSProperties } from "react";
 import { Box } from "@chakra-ui/react";
 import { useColorModeValue } from "@/components/ui/color-mode";
 import {
     agentAvatarSvg,
     agentIdentity,
     agentSeed,
+    avatarDelay,
     type AgentSeedLike,
 } from "@/lib/agentIdentity";
 
@@ -22,7 +23,7 @@ export interface AgentAvatarProps {
 }
 
 /**
- * An agent's identity chip: a Pixel Art portrait on a muted chip
+ * An agent's identity chip: an animated Voxel Bot portrait on a muted chip
  * in the agent's stable color. Deterministic — same agent, same chip,
  * everywhere it appears. Below 14px the portrait is dropped in favor of
  * a plain color swatch, which stays legible at tooltip sizes.
@@ -65,6 +66,8 @@ export default function AgentAvatar({ agent, size = 24, label }: AgentAvatarProp
             h={`${size}px`}
             borderRadius="2px"
             overflow="hidden"
+            className="vb-stagger"
+            style={{ "--vb-delay": avatarDelay(seed) } as CSSProperties}
             role={label ? "img" : undefined}
             aria-label={label}
             aria-hidden={label ? undefined : true}

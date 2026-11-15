@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 import { config } from "./config.js";
 import { ensureUserSettings } from "./provision.js";
-import { recordActivity } from "../db/localdb.js";
+import { recordActivity } from "../db/settings.js";
 import { log } from "./logger.js";
 
 export interface AuthUser {
@@ -15,6 +15,8 @@ export interface AuthedRequest extends Request {
 }
 
 const PROJECT_URL = config.supabaseProjectUrl.replace(/\/+$/, "");
+
+const DEFAULT_USER: AuthUser = { id: config.localUser.id, email: config.localUser.email };
 
 let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 let issuer = "";
@@ -46,15 +48,26 @@ function extractUser(payload: JWTPayload): AuthUser | null {
 }
 
 /**
- * Express middleware that verifies the Supabase access token (JWT) on each
- * request. Uses the project's public JWKS endpoint so no secret is stored
- * server-side. Attaches the verified user to req.user.
+ * Express middleware that resolves the request's user. Two modes:
+ *  - local (default): no sign-in — every request is the single default user.
+ *  - supabase: verifies the Supabase access token (JWT) via the project's
+ *    public JWKS endpoint; no secret is stored server-side.
  */
 export async function requireAuth(
   req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
+  if (config.authMode !== "supabase") {
+    (req as AuthedRequest).user = DEFAULT_USER;
+    ensureUserSettings(DEFAULT_USER.id).catch((e) =>
+      log.error("[auth]", `ensureUserSettings failed for ${DEFAULT_USER.id}: ${e.message}`),
+    );
+    void recordActivity(DEFAULT_USER.id, req.method, req.originalUrl || req.url);
+    next();
+    return;
+  }
+
   const token = bearerToken(req);
   if (!token) {
     res.status(401).json({ error: "Missing Authorization: Bearer token" });

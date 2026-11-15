@@ -46,13 +46,9 @@ export interface AgentInput {
   systemPrompt?: string | null;
 }
 
-/** Seeded for a user with no harness agents: the built-in technical read. */
-export const DEFAULT_HARNESS_AGENT: AgentInput = {
-  name: "Technical Analysis Agent",
-  soulPrompt:
-    "You are a technical analyst. Judge the market's own record — trend structure, momentum, volume, and support/resistance — over opinion. Read price and indicator evidence from the tools, and say INSUFFICIENT where the data does not cover the question.",
-  skillIds: ["chartist-technical-analysis"],
-};
+/** Seeded for a user with no harness agents: the first default agent.
+ *  The registry lives in ./defaults/*.md — add new defaults there. */
+export { DEFAULT_AGENTS, DEFAULT_HARNESS_AGENT } from "./defaults.js";
 
 /** Where agent definitions live. Two real adapters: Supabase (server) + memory. */
 export interface AgentRepository {

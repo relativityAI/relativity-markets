@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Search, Plus, Trash2, Globe, BadgeCheck } from "lucide-react";
+import { Plus, Trash2, Globe, BadgeCheck } from "lucide-react";
 import { SkillService, type SkillSummary } from "@/db";
 import { useSkillLibrary } from "@/components/skills/SkillBrowser";
 import SkillAvatar from "@/components/shared/SkillAvatar";
 import SkillWorkspace from "@/components/skills/SkillWorkspace";
 import SkillImportPane from "@/components/skills/SkillImportPane";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { toaster } from "@/compat/ui";
 import { SkillSourceBadge } from "@/components/console/SkillSourceBadge";
+import { SectionSearch } from "@/components/console/SectionSearch";
 import { cn } from "@/lib/utils";
 
 /**
@@ -28,24 +29,7 @@ type Mode = "inspect" | "create" | "download";
 const SECTION_BOX = "rounded-xl border-[0.5px] border-[color:var(--hairline)] bg-console-surface/60 p-5";
 
 /** Fixed height: filtering never grows or shrinks the section. */
-const SECTION_LIST = "h-[22rem] overflow-y-auto pr-1";
-
-function SectionSearch({ label, placeholder, value, onChange }: {
-    label: string; placeholder: string; value: string; onChange: (v: string) => void;
-}) {
-    return (
-        <div className="relative ml-auto w-48 shrink-0">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-console-ink-4" />
-            <Input
-                className="h-9 rounded-[6px] pl-9"
-                placeholder={placeholder}
-                aria-label={label}
-                value={value}
-                onChange={(e) => onChange(e.target.value)}
-            />
-        </div>
-    );
-}
+const SECTION_LIST = "h-[22rem] overflow-x-hidden overflow-y-auto pr-1";
 
 function matches(s: SkillSummary, q: string): boolean {
     if (!q) return true;
@@ -117,23 +101,22 @@ export default function AgentSkills() {
         <button
             key={s.id}
             onClick={() => openSkill(s)}
-            className="group flex flex-wrap items-start gap-x-5 gap-y-2 py-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/40"
+            className="group -mx-2 flex w-full cursor-pointer flex-wrap items-start gap-x-5 gap-y-2 rounded-[8px] px-2 py-4 text-left transition-colors hover:bg-[var(--surface-raised-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/40"
         >
-            <SkillAvatar skill={s} size={40} round />
+            <SkillAvatar skill={s} size={48} round />
             <span className="flex min-w-0 shrink flex-col gap-1">
                 <span className="block truncate font-app-display text-[22px] font-normal leading-[1.05] tracking-[-0.015em] text-console-ink">
                     {s.name}
                 </span>
                 {s.tags?.length ? (
-                    <span className="block font-app-body text-[12px] font-normal text-console-ink-4">
-                        {s.tags.join(" · ")}
+                    <span className="flex flex-wrap gap-1.5">
+                        {s.tags.map((t) => (
+                            <Badge key={t} className="bg-console-recessed font-app-body text-[11px] font-normal text-console-ink-2">
+                                {t}
+                            </Badge>
+                        ))}
                     </span>
                 ) : null}
-            </span>
-            <span className="ml-auto min-w-0 max-w-full sm:max-w-[55%] sm:text-right">
-                <span className="line-clamp-2 font-app-body text-[14px] leading-snug font-light text-console-ink-2">
-                    {s.description}
-                </span>
             </span>
         </button>
     );
@@ -180,8 +163,8 @@ export default function AgentSkills() {
                                 Default skills
                             </h2>
                             <p className="mt-1.5 flex items-center gap-1.5 font-app-body text-[12px] font-normal text-console-ink-3">
-                                <BadgeCheck className="size-3.5 shrink-0 text-console-accent" aria-hidden />
                                 Relativity verified skills
+                                <BadgeCheck className="size-3.5 shrink-0 text-console-accent" aria-hidden />
                             </p>
                         </div>
                         <SectionSearch label="Search default skills" placeholder="Search defaults…" value={qDefault} onChange={setQDefault} />
@@ -224,7 +207,7 @@ export default function AgentSkills() {
     return (
         <div className="w-full py-8">
             <div className="flex flex-wrap items-center gap-3">
-                <h1 className="font-app-display shrink-0 text-[30px] leading-none font-normal tracking-tight text-console-ink">
+                <h1 className="font-app-body shrink-0 text-[30px] leading-none font-light tracking-tight text-console-ink">
                     Skills
                 </h1>
                 {mode === "inspect" && (
