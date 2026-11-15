@@ -34,7 +34,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MarketChart } from "@/components/builder/MarketChart";
 import { downloadSvg, downloadCsv, downloadPng } from "@/lib/figureExport";
-import { isV2, type ChartSpec, type DiagramSpec, type Highlight, type ReportBlock, type ReportDocument, type ReportSection, type Section, type Source } from "@/lib/reportContract";
+import { isV2, type ChartSpec, type DiagramSpec, type Highlight, type ReportDocument, type ReportSection, type Section, type Source } from "@/lib/reportContract";
 import "@/styles/almanac-report.css";
 
 const HIGHLIGHT_COLOR: Record<Highlight["kind"], string> = {
@@ -106,7 +106,7 @@ function SeriesRechartsBlock({ spec, title }: { spec: ChartSpec; title?: string 
   const labels = (spec.series ?? []).map((s) => s.label);
   return (
     <Box data-testid="report-chart" data-kind={spec.kind} my={4}>
-      {title && <Text fontWeight="semibold" mb={2}>{title}</Text>}
+      {title && <Text fontWeight="light" mb={2}>{title}</Text>}
       <ResponsiveContainer width="100%" height={280}>
         {spec.kind === "area" ? (
           <AreaChart data={rows}>
@@ -164,7 +164,7 @@ function DiagramBlock({ spec, title }: { spec: DiagramSpec; title?: string }) {
   }, [spec.code]);
   return (
     <Box data-testid="report-diagram" my={4}>
-      {title && <Text fontWeight="semibold" mb={2}>{title}</Text>}
+      {title && <Text fontWeight="light" mb={2}>{title}</Text>}
       {svg ? (
         <Box dangerouslySetInnerHTML={{ __html: svg }} overflow="auto" />
       ) : (
@@ -178,30 +178,76 @@ const isChart = (spec: ChartSpec | DiagramSpec): spec is ChartSpec => "kind" in 
 
 function ChartBlock({ spec, title }: { spec: ChartSpec; title?: string }) {
   const rows = toMarketRows(spec);
-  // Categorical charts draw from categories/values; a `bar` may instead carry
-  // resolved time series, in which case it draws as a volume-style histogram.
-  if (spec.kind === "pie" || (spec.kind === "bar" && !!spec.categories?.length)) {
-    const data = (spec.categories ?? []).map((name, i) => ({ name, value: spec.values?.[i] ?? 0 }));
+  // Categorical charts draw from categories/values — share strip, ring,
+  // columns, horizontal bars; hover shows the value.
+  // Grouped columns: several series across the SAME categories (returns by
+  // period, YTD across indices) — one recharts <Bar> per group, hover reads all.
+  if (spec.kind === "gbar" && spec.categories?.length && spec.groups?.length) {
+    const groups = spec.groups;
+    const data = (spec.categories ?? []).map((name, i) => {
+      const row: Record<string, string | number> = { name };
+      for (const gp of groups) row[gp.name] = gp.values[i] ?? 0;
+      return row;
+    });
+    // figure-kit's series ink ladder: story ink → ink → grey → mid grey
+    const inks = ["#3A5BD0", "#16181B", "#b7b7bf", "#5A6270"];
     return (
       <Box data-testid="report-chart" data-kind={spec.kind} my={4}>
-        {title && <Text fontWeight="semibold" mb={2}>{title}</Text>}
-        <ResponsiveContainer width="100%" height={280}>
-          {spec.kind === "bar" ? (
-            <BarChart data={data}>
-              <XAxis dataKey="name" />
-              <YAxis />
+        {title && <Text fontWeight="light" mb={2}>{title}</Text>}
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={data} margin={{ top: 8, right: 16, bottom: 4 }}>
+            <XAxis dataKey="name" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            {groups.map((gp, i) => (
+              <Bar key={gp.name} dataKey={gp.name} fill={inks[i % inks.length]} />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      </Box>
+    );
+  }
+  const cat = spec.categories?.length && spec.values?.length;
+  if (cat && (spec.kind === "pie" || spec.kind === "donut" || spec.kind === "hbar" || spec.kind === "vbar" || spec.kind === "bar" || spec.kind === "movers")) {
+    const data = (spec.categories ?? []).map((name, i) => ({ name, value: spec.values?.[i] ?? 0 }));
+    if (spec.kind === "hbar" || spec.kind === "movers") {
+      return (
+        <Box data-testid="report-chart" data-kind={spec.kind} my={4}>
+          {title && <Text fontWeight="light" mb={2}>{title}</Text>}
+          <ResponsiveContainer width="100%" height={Math.max(180, data.length * 44 + 40)}>
+            <BarChart layout="vertical" data={data} margin={{ left: 8, right: 24 }}>
+              <XAxis type="number" hide />
+              <YAxis type="category" dataKey="name" width={150} tick={{ fontSize: 12 }} />
               <Tooltip />
-              <Bar dataKey="value" fill="#3182ce" />
+              <Bar dataKey="value">
+                {data.map((d, i) => <Cell key={i} fill={d.value < 0 ? "#c05050" : "#3182ce"} />)}
+              </Bar>
             </BarChart>
-          ) : (
+          </ResponsiveContainer>
+        </Box>
+      );
+    }
+    return (
+      <Box data-testid="report-chart" data-kind={spec.kind} my={4}>
+        {title && <Text fontWeight="light" mb={2}>{title}</Text>}
+        <ResponsiveContainer width="100%" height={280}>
+          {spec.kind === "pie" || spec.kind === "donut" ? (
             <PieChart>
-              <Pie data={data} dataKey="value" nameKey="name" outerRadius={100}>
+              <Pie data={data} dataKey="value" nameKey="name" outerRadius={100} innerRadius={spec.kind === "donut" ? 62 : 0}>
                 {data.map((_, i) => (
                   <Cell key={i} fill={["#3182ce", "#38a169", "#d69e2e", "#e53e3e", "#805ad5"][i % 5]} />
                 ))}
               </Pie>
               <Tooltip />
             </PieChart>
+          ) : (
+            <BarChart data={data}>
+              <XAxis dataKey="name" />
+              <YAxis />
+              <Tooltip />
+              <Bar dataKey="value" fill="#3182ce" />
+            </BarChart>
           )}
         </ResponsiveContainer>
       </Box>
@@ -235,7 +281,7 @@ function HighlightParts({ text, highlights, footnotes }: { text: string; highlig
               data-testid="report-highlight"
               data-kind={part.kind}
               bg="transparent"
-              fontWeight="semibold"
+              fontWeight="light"
               color={HIGHLIGHT_COLOR[part.kind]}
             >
               {part.text}
@@ -340,6 +386,34 @@ function FigureBlock({
   );
 }
 
+/** Stat kind → KPI card: own title + coloured tagline over the big-number SVG,
+ * never a Fig. N plot frame. */
+function StatCard({ section, sources }: { section: Extract<Section, { type: "chart" }>; sources: Source[] }) {
+  const svgs = section.svgs ?? [];
+  const src = section.sourceId ? sources.find((s) => s.id === section.sourceId) : undefined;
+  return (
+    <Box data-testid="report-stat" className="stat-card">
+      {section.title && <Text className="stat-title">{section.title}</Text>}
+      {section.tagline && <Text className="sec-tagline">{section.tagline}</Text>}
+      {svgs.length ? (
+        svgs.map((svg, i) => <Box key={i} className="fig-body" dangerouslySetInnerHTML={{ __html: svg }} />)
+      ) : (
+        <ChartBlock spec={section.spec} title={undefined} />
+      )}
+      {section.caption && <Text className="fig-cap">{section.caption}</Text>}
+      <Flex className="fig-foot">
+        {src ? (
+          <a href={src.url || undefined} target="_blank" rel="noreferrer">
+            Source: {src.label}
+          </a>
+        ) : (
+          <span>No source attached</span>
+        )}
+      </Flex>
+    </Box>
+  );
+}
+
 function SectionView({
   section,
   sources,
@@ -354,21 +428,20 @@ function SectionView({
   switch (section.type) {
     case "heading":
       return (
-        <Text
-          data-testid="report-heading"
-          as={`h${section.level + 1}` as "h2" | "h3" | "h4"}
-          fontSize={
-            section.level === 1
-              ? { base: "28px", md: "38px" }
-              : section.level === 2
-                ? { base: "22px", md: "30px" }
-                : { base: "18px", md: "23px" }
-          }
-          mt={10}
-          mb={3}
-        >
-          {section.text}
-        </Text>
+        <Box data-testid="report-heading" data-level={section.level} mt={10} mb={4}>
+          <Text
+            as={`h${section.level + 1}` as "h2" | "h3" | "h4"}
+            fontSize="40px"
+            mb={0}
+          >
+            {section.text}
+          </Text>
+          {section.tagline && (
+            <Text className="sec-tagline" mt={1.5}>
+              {section.tagline}
+            </Text>
+          )}
+        </Box>
       );
     case "paragraph":
       return <ParagraphBlock section={section} footnotes={footnotes} />;
@@ -408,7 +481,7 @@ function SectionView({
     case "table":
       return (
         <Box data-testid="report-table" my={4} overflowX="auto">
-          {section.title && <Text fontWeight="semibold" mb={2}>{section.title}</Text>}
+          {section.title && <Text fontWeight="light" mb={2}>{section.title}</Text>}
           <Table>
             <TableHeader>
               <TableRow>
@@ -446,10 +519,16 @@ function SectionView({
         </Box>
       );
     case "chart": {
-      // Line/multiline draw live inside the fig frame (hover shows x+y);
-      // everything else keeps the assembly's static Almanac SVG. Candles and
-      // legacy stored docs (no svgs) already took the client path below.
-      const interactive = section.spec.kind === "line" || section.spec.kind === "multiline";
+      // stat kind = a KPI card (own title + tagline), not a Fig. plot frame.
+      if (section.spec.kind === "stat") return <StatCard section={section} sources={sources} />;
+      // Everything else draws live inside the frame (hover readout): lines and
+      // candles on the crosshair chart, categorical on recharts tooltips —
+      // the stored SVG still powers the SVG/PNG downloads. `table`/categorical
+      // radar keep the assembly's static Almanac SVG (no honest hover there).
+      const k = section.spec.kind;
+      // table / radar: no honest client hover — keep the static Almanac SVG.
+      // movers: live only when it carries categories (its real shape).
+      const interactive = k === "movers" ? !!section.spec.categories?.length : k !== "table" && k !== "radar";
       if (section.svgs?.length && figN != null)
         return <FigureBlock section={section} sources={sources} figN={figN} interactive={interactive} />;
       return (
@@ -482,7 +561,7 @@ function SectionView({
     case "compare":
       return (
         <Box data-testid="report-compare" my={4}>
-          {section.title && <Text fontWeight="semibold" mb={2}>{section.title}</Text>}
+          {section.title && <Text fontWeight="light" mb={2}>{section.title}</Text>}
           <Flex gap={4} direction={{ base: "column", md: "row" }}>
             <Box flex={1}>
               {isChart(section.before) ? <ChartBlock spec={section.before} title="Before" /> : <DiagramBlock spec={section.before} title="Before" />}
@@ -576,12 +655,13 @@ export function ReportDocumentRenderer({ document }: { document: ReportDocument 
   let figSeq = 0;
   const figOf = new Map<number, number>();
   sections.forEach((s, i) => {
-    if (s.type === "chart") figOf.set(i, ++figSeq);
+    // stat cards are not plots — they never take a Fig. N number
+    if (s.type === "chart" && s.spec.kind !== "stat") figOf.set(i, ++figSeq);
   });
   return (
     <Box data-testid="report-document" data-symbol={document.symbol} className="almanac-report dom-economy">
       {document.title && (
-        <Text as="h1" fontSize={{ base: "32px", md: "46px" }}>
+        <Text as="h1" fontSize="48px">
           {document.title}
         </Text>
       )}
@@ -590,10 +670,9 @@ export function ReportDocumentRenderer({ document }: { document: ReportDocument 
           {document.subtitle}
         </Text>
       )}
-      {(document.symbol || document.generatedAt) && (
+      {(document.generatedAt) && (
         <Flex gap={4} fontSize="sm" color="fg.muted" mb={4}>
-          <Text>{document.symbol}</Text>
-          {document.generatedAt && <Text>{document.generatedAt}</Text>}
+          <Text>{document.generatedAt}</Text>
         </Flex>
       )}
       {sections.map((section, i) => (
@@ -625,7 +704,7 @@ export function ReportDocumentRenderer({ document }: { document: ReportDocument 
       ) : null}
       {document.artifacts?.length ? (
         <Box data-testid="report-artifacts" mt={6} pt={3} borderTopWidth="1px" borderColor="border">
-          <Text fontSize="sm" fontWeight="semibold" mb={1}>Attachments</Text>
+          <Text fontSize="sm" fontWeight="light" mb={1}>Attachments</Text>
           <Flex gap={3} flexWrap="wrap">
             {document.artifacts.map((a) => (
               <a key={a.id} href={a.url} download={a.label} className="text-sm text-blue-500">

@@ -1,9 +1,10 @@
-import { useMemo } from "react";
+import { useMemo, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
 import { Avatar, Style } from "@dicebear/core";
-import pixelArtDefinition from "@dicebear/styles/pixel-art.json";
+import voxelBotDefinition from "@dicebear/styles/voxel-bot.json";
+import { avatarDelay } from "@/lib/agentIdentity";
 
-const pixelArt = new Style(pixelArtDefinition);
+const voxelBot = new Style(voxelBotDefinition);
 
 export interface AgentCellAgent {
     /** Default-agent slug → the card links to /agent/:id; absent → legacy /analysis-list. */
@@ -17,53 +18,25 @@ export interface AgentCellAgent {
 export function AgentAvatar({ seed, size = 64 }: { seed: string; size?: number }) {
     const svg = useMemo(
         () =>
-            new Avatar(pixelArt, { seed })
+            new Avatar(voxelBot, {
+                seed,
+                // Fastest animation only → the chip keeps moving.
+                animationVariant: "fastest",
+                // No background → the card supplies the surface.
+                backgroundColor: [],
+            })
                 .toString()
                 .replace("<svg ", '<svg width="100%" height="100%" '),
         [seed]
     );
     return (
         <span
-            className="inline-block flex-shrink-0"
-            style={{ width: size, height: size }}
+            className="vb-stagger inline-block flex-shrink-0"
+            style={{ width: size, height: size, "--vb-delay": avatarDelay(seed) } as CSSProperties}
             role="img"
             aria-label={`${seed} avatar`}
             dangerouslySetInnerHTML={{ __html: svg }}
         />
-    );
-}
-
-function LivePulse({ size = 20 }: { size?: number }) {
-    return (
-        <svg
-            width={size}
-            height={size}
-            viewBox="0 0 16 16"
-            className="flex-shrink-0"
-            aria-hidden="true"
-        >
-            <circle cx="8" cy="8" r="2.5" fill="none" stroke="var(--signal-live)" strokeWidth="1.25">
-                <animate
-                    attributeName="r"
-                    values="2.5;7;2.5"
-                    dur="1.8s"
-                    repeatCount="indefinite"
-                    calcMode="spline"
-                    keySplines="0.4 0 0.6 1;0.4 0 0.6 1"
-                    keyTimes="0;0.5;1"
-                />
-                <animate
-                    attributeName="opacity"
-                    values="0.7;0;0.7"
-                    dur="1.8s"
-                    repeatCount="indefinite"
-                    calcMode="spline"
-                    keySplines="0.4 0 0.6 1;0.4 0 0.6 1"
-                    keyTimes="0;0.5;1"
-                />
-            </circle>
-            <circle cx="8" cy="8" r="2.5" fill="var(--signal-live)" />
-        </svg>
     );
 }
 
@@ -77,7 +50,7 @@ export default function AgentCell({ agent }: { agent: AgentCellAgent }) {
         <Link
             to={agent.id ? `/agent/${agent.id}` : "/analysis-list"}
             data-solid=""
-            className="agent-cell flex items-stretch gap-3 p-3 transition-colors focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
+            className="agent-cell flex items-stretch gap-3 p-3 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
         >
             <div className="agent-cell-body flex min-w-0 flex-1 items-stretch gap-3">
                 <AgentAvatar seed={agent.seed} size={64} />
@@ -86,7 +59,6 @@ export default function AgentCell({ agent }: { agent: AgentCellAgent }) {
                         <span className="whitespace-nowrap font-[family-name:var(--font-body)] text-[10px] font-normal tracking-wide text-[var(--ink-tertiary)]">
                             {agent.when}
                         </span>
-                        <LivePulse size={22} />
                     </div>
                     <h3 className="mt-1.5 font-[family-name:var(--font-display)] font-normal text-[var(--ink-primary)] text-lg leading-snug">{agent.name}</h3>
                     <div className="mt-auto flex items-center justify-between gap-2 pt-2">

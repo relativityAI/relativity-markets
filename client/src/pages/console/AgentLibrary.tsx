@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Search, Plus, Trash2, ChevronDown, ChevronRight, X, BadgeCheck } from "lucide-react";
+import { Plus, Trash2, ChevronDown, ChevronRight, X, BadgeCheck } from "lucide-react";
 import { AgentService, SkillService, type SkillSummary } from "@/db";
 import AgentAvatar from "@/components/shared/AgentAvatar";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -13,10 +14,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toaster } from "@/compat/ui";
 import { cn } from "@/lib/utils";
-import { Switch } from "@/components/ui/switch";
-import { DEFAULT_AGENTS, activeDefaultAgentIds, saveActiveDefaultAgentIds } from "@/lib/defaultAgents";
 import { tagsFor, putTags, finalTags } from "@/lib/agentTags";
 import TagInput from "@/components/shared/TagInput";
+import { SectionSearch } from "@/components/console/SectionSearch";
 import AgentSkills from "./AgentSkills";
 
 /**
@@ -92,7 +92,7 @@ const FIELD_INPUT =
 const SECTION_BOX = "rounded-xl border-[0.5px] border-[color:var(--hairline)] bg-console-surface/60 p-5";
 
 /** Fixed height: filtering never grows or shrinks the section. */
-const SECTION_LIST = "h-[22rem] overflow-y-auto pr-1";
+const SECTION_LIST = "h-[22rem] overflow-x-hidden overflow-y-auto pr-1";
 
 /** The run form's label | control row, in console styles. */
 function FormRow({ label, children }: { label: string; children: ReactNode }) {
@@ -115,41 +115,8 @@ function FormSection({ title, children }: { title: string; children: ReactNode }
     );
 }
 
-/** Comma-separated tags: a chip per tag, X or backspace to drop one. */
-function SectionSearch({ label, placeholder, value, onChange }: {
-    label: string; placeholder: string; value: string; onChange: (v: string) => void;
-}) {
-    return (
-        <div className="relative ml-auto w-48 shrink-0">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-console-ink-4" />
-            <Input
-                className="h-9 rounded-[6px] pl-9"
-                placeholder={placeholder}
-                aria-label={label}
-                value={value}
-                onChange={(e) => onChange(e.target.value)}
-            />
-        </div>
-    );
-}
-
-/* ── My agents on/off — local until the API grows an `enabled` flag ──────── */
-const MINE_KEY = "relativity.disabled-my-agents";
-
-function loadDisabledMine(): Set<string> {
-    try {
-        const raw = localStorage.getItem(MINE_KEY);
-        if (raw) {
-            const parsed: unknown = JSON.parse(raw);
-            if (Array.isArray(parsed)) return new Set(parsed.filter((x): x is string => typeof x === "string"));
-        }
-    } catch { /* corrupt storage → all enabled */ }
-    return new Set();
-}
-
-function saveDisabledMine(ids: Set<string>): void {
-    try { localStorage.setItem(MINE_KEY, JSON.stringify([...ids])); } catch { /* session-only */ }
-}
+/** A default agent as served by GET /agents/defaults (from agents/defaults/*.md). */
+type DefaultAgentRow = { name: string; skill_name?: string };
 
 export default function AgentLibrary() {
     const [searchParams, setSearchParams] = useSearchParams();
@@ -166,29 +133,7 @@ export default function AgentLibrary() {
     const [newDraft, setNewDraft] = useState<Draft>({ name: "", soul: "", skill: "", tags: [], tagText: "" });
     const [deleteTarget, setDeleteTarget] = useState<Agent | null>(null);
     const [deleting, setDeleting] = useState(false);
-    const [activeIds, setActiveIds] = useState<Set<string>>(() => activeDefaultAgentIds());
-    const [defaultQuery, setDefaultQuery] = useState("");
-    const [disabledMine, setDisabledMine] = useState<Set<string>>(() => loadDisabledMine());
-
-    const toggleDefaultAgent = (id: string) => {
-        setActiveIds((prev) => {
-            const next = new Set(prev);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
-            saveActiveDefaultAgentIds(next);
-            return next;
-        });
-    };
-
-    const toggleMine = (id: string) => {
-        setDisabledMine((prev) => {
-            const next = new Set(prev);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
-            saveDisabledMine(next);
-            return next;
-        });
-    };
+    const [defaults, setDefaults] = useState<DefaultAgentRow[]>([]);
 
     /* ── Load ─────────────────────────────────────────────────────────── */
 
@@ -204,6 +149,9 @@ export default function AgentLibrary() {
             .finally(() => { if (!cancelled) setLoading(false); });
         SkillService.listSkills()
             .then((data) => { if (!cancelled && Array.isArray(data)) setSkills(data); })
+            .catch(() => {});
+        AgentService.listDefaultAgents()
+            .then((data) => { if (!cancelled && Array.isArray(data)) setDefaults(data); })
             .catch(() => {});
         return () => { cancelled = true; };
     }, []);
@@ -396,17 +344,6 @@ export default function AgentLibrary() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [agents, query, skills]);
 
-    const filteredDefaults = useMemo(() => {
-        const q = defaultQuery.trim().toLowerCase();
-        if (!q) return DEFAULT_AGENTS;
-        return DEFAULT_AGENTS.filter(
-            (a) =>
-                a.name.toLowerCase().includes(q) ||
-                a.headline.toLowerCase().includes(q) ||
-                (a.group === "sector" ? "sectoral" : "market").includes(q),
-        );
-    }, [defaultQuery]);
-
     const blank = !!draft && (!draft.name.trim() || !draft.soul.trim());
     const FLASH = "bg-console-negative animate-[pulse_3s_ease-in-out_infinite]";
     const saveState = saving
@@ -421,9 +358,14 @@ export default function AgentLibrary() {
         <div className="w-full py-8">
             {/* Header — title, action on one line */}
             <div className="flex flex-wrap items-center gap-3">
-                <h1 className="font-app-display shrink-0 text-[30px] leading-none font-normal tracking-tight text-console-ink">
-                    Agents
-                </h1>
+                <div className="min-w-0">
+                    <h1 className="font-app-body shrink-0 text-[30px] leading-none font-light tracking-tight text-console-ink">
+                        Agents
+                    </h1>
+                    <p className="mt-1.5 font-app-body text-[12px] font-normal text-console-ink-3">
+                        Investment agents to analyze, track and monitor the markets.
+                    </p>
+                </div>
                 <Button
                     size="sm"
                     variant="outline"
@@ -491,7 +433,7 @@ export default function AgentLibrary() {
 
             {/* ── Agents side by side: defaults left, yours right ── */}
             <div className="mt-6 grid gap-x-12 gap-y-10 lg:grid-cols-2">
-                {/* ── Default agents — Relativity defaults shown on the home page ── */}
+                {/* ── Default agents — file-defined, listed from the API ── */}
                 <section className={SECTION_BOX}>
                     <div className="flex flex-wrap items-center gap-3">
                         <div className="min-w-0">
@@ -499,35 +441,24 @@ export default function AgentLibrary() {
                                 Default agents
                             </h2>
                             <p className="mt-1.5 flex items-center gap-1.5 font-app-body text-[12px] font-normal text-console-ink-3">
-                                <BadgeCheck className="size-3.5 shrink-0 text-console-accent" aria-hidden />
                                 Relativity verified agents
+                                <BadgeCheck className="size-3.5 shrink-0 text-console-accent" aria-hidden />
                             </p>
                         </div>
-                        <SectionSearch
-                            label="Search default agents"
-                            placeholder="Search defaults…"
-                            value={defaultQuery}
-                            onChange={setDefaultQuery}
-                        />
                     </div>
                     <div className={cn("mt-2 w-full", SECTION_LIST)}>
-                        {filteredDefaults.length === 0 && (
-                            <p className="py-6 text-center font-app-body text-sm text-console-ink-3">No defaults match that search.</p>
+                        {defaults.length === 0 && (
+                            <p className="py-6 text-center font-app-body text-sm text-console-ink-3">No default agents found.</p>
                         )}
-                        {filteredDefaults.map((a) => (
-                            <div key={a.id} className="flex items-center gap-3 py-3">
-                                <AgentAvatar agent={a.seed} size={36} />
+                        {defaults.map((d) => (
+                            <div key={d.name} className="-mx-2 flex w-full cursor-pointer items-center gap-3 rounded-[8px] px-2 py-3 transition-colors hover:bg-[var(--surface-raised-hover)]">
+                                <AgentAvatar agent={d.name} size={48} />
                                 <div className="min-w-0 flex-1">
-                                    <p className="truncate font-app-display text-[16px] font-normal text-console-ink">{a.name}</p>
+                                    <p className="truncate font-app-display text-[22px] leading-[1.1] font-normal tracking-[-0.015em] text-console-ink">{d.name}</p>
                                     <p className="truncate font-app-body text-[12px] font-normal text-console-ink-3">
-                                        {a.group === "sector" ? "Sectoral" : "Market"} · {a.headline}
+                                        {d.skill_name ? `Skill · ${d.skill_name}` : "No skill attached"}
                                     </p>
                                 </div>
-                                <Switch
-                                    checked={activeIds.has(a.id)}
-                                    onCheckedChange={() => toggleDefaultAgent(a.id)}
-                                    aria-label={`Show ${a.name} on the home page`}
-                                />
                             </div>
                         ))}
                     </div>
@@ -580,10 +511,8 @@ export default function AgentLibrary() {
                             {filtered.map((agent) => {
                                 const id = agent._id || agent.id || "";
                                 const isOpen = expanded === id && !!draft;
-                                const skill = agent.skills?.[0];
-                                const creed = creedOf(agent);
                                 return (
-                                    <div key={id} className="py-5">
+                                    <div key={id} className="-mx-2 w-full cursor-pointer rounded-[8px] px-2 py-3 transition-colors hover:bg-[var(--surface-raised-hover)]">
                                         <div className="group flex items-start gap-3">
                                             <button
                                                 type="button"
@@ -592,7 +521,7 @@ export default function AgentLibrary() {
                                                 aria-label={`${isOpen ? "Close" : "Edit"} ${agent.name || "agent"}`}
                                                 className="flex w-full min-w-0 flex-wrap items-start gap-x-5 gap-y-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/40"
                                             >
-                                                <AgentAvatar agent={agent} size={40} label={agent.name || "Agent"} />
+                                                <AgentAvatar agent={agent} size={48} label={agent.name || "Agent"} />
                                                 {/* Left: name over the created date */}
                                                 <span className="flex min-w-0 shrink flex-col gap-1">
                                                     <span className="block truncate font-app-display text-[22px] font-normal leading-[1.1] tracking-[-0.015em] text-console-ink">
@@ -601,23 +530,17 @@ export default function AgentLibrary() {
                                                     <span className="block font-app-body text-[12px] font-normal text-console-ink-4">
                                                         Created {formatDate(agent.created_at)}
                                                     </span>
-                                                </span>
-                                                {/* Right: the full one-liner + skill */}
-                                                <span className="ml-auto flex min-w-0 max-w-full flex-col gap-1 sm:max-w-[55%] sm:text-right">
-                                                    <span className={`font-app-body text-[14px] leading-snug font-light italic ${creed ? "text-console-ink-2" : "text-console-ink-4"}`}>
-                                                        “{creed || "No prompt written yet."}”
-                                                    </span>
-                                                    <span className="font-app-body text-[12px] font-normal text-console-ink-3">
-                                                        {skill ? `Skill · ${nameOf(skill.skill_id)}` : "No skill attached"}
-                                                    </span>
+                                                    {tagsFor(id).length > 0 && (
+                                                        <span className="flex flex-wrap gap-1.5">
+                                                            {tagsFor(id).map((t) => (
+                                                                <Badge key={t} className="bg-console-recessed font-app-body text-[11px] font-normal text-console-ink-2">
+                                                                    {t}
+                                                                </Badge>
+                                                            ))}
+                                                        </span>
+                                                    )}
                                                 </span>
                                             </button>
-                                            <Switch
-                                                checked={!disabledMine.has(id)}
-                                                onCheckedChange={() => toggleMine(id)}
-                                                aria-label={`Enable ${agent.name || "agent"}`}
-                                                className="mt-1.5"
-                                            />
                                             <Button
                                                 variant="ghost"
                                                 size="icon-sm"

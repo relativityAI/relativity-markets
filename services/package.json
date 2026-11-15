@@ -4,22 +4,23 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch api/index.ts",
+    "dev": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx watch api/index.ts",
     "build": "tsc && cp -r config assets dist/ && cp -r harness/config dist/harness/ && if [ -d harness/agents/defaults ]; then cp -r harness/agents/defaults dist/harness/agents/; fi",
     "typecheck": "tsc --noEmit",
-    "start": "node dist/api/index.js",
+    "start": "node --disable-warning=ExperimentalWarning dist/api/index.js",
     "test": "vitest run --passWithNoTests",
     "ui:demo": "tsx harness/ui/demo.ts",
     "searxng": "docker compose -f ../docker-compose.yml up -d searxng",
-    "db:up": "docker compose -f ../docker-compose.yml up -d postgres"
+    "db:up": "docker compose -f ../docker-compose.yml up -d postgres",
+    "db:reset": "rm -f data/relativity.db data/relativity.db-wal data/relativity.db-shm"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.46",
     "@ai-sdk/google": "^4.0.58",
     "@ai-sdk/openai": "^4.0.52",
     "@ai-sdk/openai-compatible": "^3.0.41",
-    "@dicebear/core": "^9.4.3",
-    "@dicebear/notionists": "^9.4.2",
+    "@dicebear/core": "^10.7.0",
+    "@dicebear/styles": "^10.6.0",
     "@expo-google-fonts/inter": "^0.4.2",
     "@expo-google-fonts/jetbrains-mono": "^0.4.1",
     "@langfuse/client": "^5.11.0",

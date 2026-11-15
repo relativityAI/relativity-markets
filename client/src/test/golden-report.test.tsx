@@ -238,7 +238,8 @@ describe("figure frames (almanac, assembly-rendered svgs)", () => {
     expect(frames[0].querySelectorAll(".fig-exports button")).toHaveLength(3);
     // numbering counts every chart (candle = Fig. 2), matching the md dump
     expect(frames[1].textContent).toContain("Fig. 3");
-    expect(screen.getAllByTestId("report-chart")).toHaveLength(2); // live line in frame + candle fallback
+    // every chart now draws live in-frame with hover (line, candle fallback, pie)
+    expect(screen.getAllByTestId("report-chart")).toHaveLength(3);
   });
 
   it("numbers inline markers from doc.footnotes (highlight sourceIds)", () => {

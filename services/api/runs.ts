@@ -8,12 +8,12 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { getDb } from "../db/db.js";
 import { keyPool } from "./keypool.js";
 import { buildModel, type LlmKeys } from "../harness/agent.js";
 import { fetchUserKeys } from "./provision.js";
 import { log } from "./logger.js";
 import { TraceCollector, type TraceEvent } from "../harness/trace.js";
+import { insertRunRow, updateRunRow, getRunRow, failStaleRunRows } from "../db/repo.js";
 import {
   getAgent,
   listAgents,
@@ -47,11 +47,9 @@ async function gradeInBackground(document: ReportDocument, modelId: string, llmK
     const { apiKey } = keyPool.pickKey(modelId, llmKeys);
     const verdict = await gradeReport({ text: digest, model: buildModel(modelId, llmKeys, apiKey) });
     if (!verdict) return;
-    const { error } = await getDb()
-      .from("analysis_runs")
-      .update({ report: { ...document, verdict }, updated_at: new Date().toISOString() })
-      .eq("id", runId);
-    if (error) log.warn("harness", `background verdict failed for run ${runId}: ${error.message}`);
+    await updateRunRow(runId, { report: { ...document, verdict } }).catch((e: any) =>
+      log.warn("harness", `background verdict failed for run ${runId}: ${e?.message || e}`),
+    );
   } catch (e: any) {
     log.warn("harness", `background verdict error for run ${runId}: ${e?.message || e}`);
   }
@@ -164,15 +162,10 @@ export async function runHarnessSymbol(
   let initialWorkspace: Record<string, string> | undefined;
   if (existingRunId) {
     try {
-      const { data } = await getDb()
-        .from("analysis_runs")
-        .select("workspace")
-        .eq("id", existingRunId)
-        .eq("user_id", userId)
-        .maybeSingle();
-      initialWorkspace = (data?.workspace as Record<string, string> | null) ?? undefined;
+      const row = await getRunRow(userId, existingRunId);
+      initialWorkspace = (row?.workspace as Record<string, string> | null) ?? undefined;
     } catch {
-      // column missing (pre-0.20) or row unreadable — run fresh
+      // row unreadable — run fresh
     }
   }
 
@@ -181,10 +174,7 @@ export async function runHarnessSymbol(
   // the panel. The final write below replaces it with the complete trace.
   const collector = new TraceCollector(runId, async (events) => {
     try {
-      await getDb()
-        .from("analysis_runs")
-        .update({ trace: events, updated_at: new Date().toISOString() })
-        .eq("id", runId);
+      await updateRunRow(runId, { trace: events });
     } catch {
       // trace persistence is best-effort; the final write is authoritative
     }
@@ -199,10 +189,7 @@ export async function runHarnessSymbol(
     if (!force && now - lastCanvasFlush < 3000) return;
     lastCanvasFlush = now;
     try {
-      await getDb()
-        .from("analysis_runs")
-        .update({ report: canvas.document(), updated_at: new Date().toISOString() })
-        .eq("id", runId);
+      await updateRunRow(runId, { report: canvas.document() });
     } catch (e: any) {
       log.warn("harness", `canvas snapshot failed for run ${runId}: ${e?.message || e}`);
     }
@@ -213,10 +200,7 @@ export async function runHarnessSymbol(
     if (!force && now - lastWorkspaceFlush < 5000) return;
     lastWorkspaceFlush = now;
     try {
-      await getDb()
-        .from("analysis_runs")
-        .update({ workspace: snapshot, updated_at: new Date().toISOString() })
-        .eq("id", runId);
+      await updateRunRow(runId, { workspace: snapshot });
     } catch (e: any) {
       log.warn("harness", `workspace snapshot failed for run ${runId}: ${e?.message || e}`);
     }
@@ -308,37 +292,28 @@ export async function runHarnessSymbol(
     updated_at: new Date().toISOString(),
   };
   if (existingRunId) {
-    let { error } = await getDb().from("analysis_runs").update(payload).eq("id", existingRunId);
-    if (error && /workspace/.test(error.message)) {
-      log.warn("harness", `analysis_runs missing workspace column — apply services/db/supabase/migrations/020_analysis_workspace.sql (${error.message})`);
-      const { workspace: _drop, ...rest } = payload;
-      ({ error } = await getDb().from("analysis_runs").update(rest).eq("id", existingRunId));
+    try {
+      await updateRunRow(existingRunId, payload);
+    } catch (e: any) {
+      log.warn("harness", `final run write failed for ${existingRunId}: ${e?.message || e}`);
     }
-    if (error) throw new Error(error.message);
     // Grade only when the run carries no verdict yet (v1 passes grade:false
     // server-side; v2 sets its score-derived verdict itself).
     if (!result.verdict && result.status !== "failed") void gradeInBackground(result.document, modelId, llmKeys, existingRunId);
     return { status: result.status, document: result.document, errors: result.errors, verdict: result.verdict, runId: existingRunId };
   }
-  let row: Record<string, any> = {
+  const row: Record<string, any> = {
     id: runId,
     user_id: userId,
     ...payload,
     system_prompt: systemPrompt ?? null,
     created_at: new Date().toISOString(),
   };
-  let { error } = await getDb().from("analysis_runs").insert(row);
-  // Columns newer than the deployed schema (020 workspace, 022 system
-  // prompt) — drop whichever the table is missing and retry; the run's
-  // report/trace are what the UI renders.
-  for (const col of ["workspace", "system_prompt"]) {
-    if (error && error.message.includes(col)) {
-      log.warn("harness", `analysis_runs missing ${col} column — apply services/db/supabase/migrations (${error.message})`);
-      delete row[col];
-      ({ error } = await getDb().from("analysis_runs").insert(row));
-    }
+  try {
+    await insertRunRow(row);
+  } catch (e: any) {
+    throw new Error(`run persist failed: ${e?.message || e}`);
   }
-  if (error) throw new Error(error.message);
   if (!result.verdict && result.status !== "failed") void gradeInBackground(result.document, modelId, llmKeys, runId);
   return { status: result.status, document: result.document, errors: result.errors, verdict: result.verdict, runId };
 }
@@ -381,22 +356,13 @@ export async function startAnalysisRun(o: StartAnalysisRunOpts): Promise<string>
     agent_name: agent.name,
     model: o.model || agent.modelId || null,
     source: o.source,
+    skill_ids: o.skillIds ?? null,
+    system_prompt: o.systemPrompt ?? null,
+    started_at: new Date().toISOString(),
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
-  // Older databases may miss migration 021/022 — try with both columns, then
-  // without the newer one; the run still starts and the list just shows less.
-  const inserts = [
-    { ...runRow, skill_ids: o.skillIds ?? null, system_prompt: o.systemPrompt ?? null },
-    { ...runRow, skill_ids: o.skillIds ?? null },
-    runRow,
-  ];
-  let phErr: { message: string } | null = null;
-  for (const row of inserts) {
-    ({ error: phErr } = await getDb().from("analysis_runs").insert(row));
-    if (!phErr || !/skill_ids|system_prompt/.test(phErr.message)) break;
-  }
-  if (phErr) throw new Error(phErr.message);
+  await insertRunRow(runRow);
 
   runHarnessSymbol(
     o.userId,
@@ -419,9 +385,7 @@ export async function startAnalysisRun(o: StartAnalysisRunOpts): Promise<string>
     if (!result) throw new Error("run did not start: agent not found");
   }).catch(async (e: any) => {
     console.error("background analysis run failed:", e);
-    await getDb().from("analysis_runs")
-      .update({ status: "ERROR", error: e?.message || "run failed", updated_at: new Date().toISOString() })
-      .eq("id", runId);
+    await updateRunRow(runId, { status: "ERROR", error: e?.message || "run failed" }).catch(() => {});
   });
   return runId;
 }
@@ -432,13 +396,7 @@ const STALE_RUN_MS = 15 * 60 * 1000;
  *  restart, and a hung model call would otherwise leave a run "running" forever). */
 export async function sweepStaleRuns(reason: string, olderThanMs: number): Promise<void> {
   try {
-    let q = getDb()
-      .from("analysis_runs")
-      .update({ status: "FAILED", error: reason, updated_at: new Date().toISOString() })
-      .in("status", ["PENDING", "RUNNING"]);
-    if (olderThanMs > 0) q = q.lt("started_at", new Date(Date.now() - olderThanMs).toISOString());
-    const { error } = await q;
-    if (error) log.warn("[sweeper]", `stale-run sweep failed: ${error.message}`);
+    failStaleRunRows(reason, olderThanMs);
   } catch (e: any) {
     log.warn("[sweeper]", `stale-run sweep error: ${e?.message || e}`);
   }

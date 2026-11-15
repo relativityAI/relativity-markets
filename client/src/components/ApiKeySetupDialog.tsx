@@ -1,10 +1,9 @@
 import { useState, useEffect } from "react";
-import { Box, Flex, Text, Button } from "@chakra-ui/react";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { Button as UIButton } from "@/components/ui/button";
 import { SettingsService } from "@/db";
 import { hasRequiredKeys } from "@/utils";
-import { MdInfo } from "react-icons/md";
-import { motion, AnimatePresence } from "motion/react";
-import { dur, ease } from "@/lib/motion";
+import { KeyRound } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 const warnedFlag = (userId: string) => `relativity_keys_warned_${userId}`;
@@ -35,66 +34,31 @@ export default function ApiKeySetupDialog({ user }: { user: any }) {
     setIsOpen(false);
   };
 
+  // Same console popup shell as the agent editor / settings key editor:
+  // app-body title with a leading icon, status tag on the right, description
+  // below, and a ghost + primary button pair in the footer.
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <Box
-          position="fixed"
-          inset={0}
-          zIndex={9999}
-          display="flex"
-          alignItems="center"
-          justifyContent="center"
-          bg="blackAlpha.600"
-          as={motion.div}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: dur.fast, ease }}
-        >
-          <Box
-            as={motion.div}
-            initial={{ opacity: 0, scale: 0.95, y: 10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: 6 }}
-            transition={{ duration: dur.base, ease }}
-            bg="var(--surface-panel)"
-            border="1px solid var(--hairline)"
-            borderRadius="4px"
-            w="90%"
-            maxW="420px"
-            p={6}
-            boxShadow="0 12px 32px rgba(0,0,0,0.15)"
-          >
-            <Flex align="center" gap={2.5} mb={2}>
-              <MdInfo size={22} color="var(--accent-primary)" flexShrink={0} />
-              <Text fontSize="16px" fontWeight={600} color="var(--ink-primary)">
-                Add your own API keys (optional)
-              </Text>
-            </Flex>
-            <Text fontSize="13px" color="var(--ink-secondary)" mb={6}>
-              Analyses run on our servers out of the box. Adding your own LLM key lets you use a preferred model and opens up provider-specific features. Web search works without any key (local SearXNG); a Tavily key upgrades it when you want one.
-            </Text>
+    <Dialog open={isOpen} onOpenChange={(o) => { if (!o) dismiss(); }}>
+      <DialogContent showCloseButton={false} className="sm:max-w-xl">
+        <DialogTitle className="flex items-center gap-2.5 font-app-body text-[14px] font-normal text-console-ink">
+          <KeyRound size={18} className="shrink-0 text-console-ink-3" />
+          <span className="truncate">Add your own API keys (optional)</span>
+          <span className="ml-auto text-[11px] font-medium text-console-ink-3">No LLM key</span>
+        </DialogTitle>
 
-            <Flex justify="flex-end" gap={3} align="center">
-              <Button size="xs" variant="subtle" color="var(--ink-tertiary)" onClick={dismiss}>
-                Skip for now
-              </Button>
-              <Button
-                size="sm"
-                variant="surface"
-                colorPalette="blue"
-                onClick={() => {
-                  dismiss();
-                  navigate("/settings");
-                }}
-              >
-                Go to Settings
-              </Button>
-            </Flex>
-          </Box>
-        </Box>
-      )}
-    </AnimatePresence>
+        <DialogDescription className="font-app-body text-[13px] leading-relaxed font-light text-console-ink-2">
+          Runs execute on this machine. Adding your own LLM key lets you use a preferred model and unlocks provider-specific models. Web search works without any key (local SearXNG); a Tavily key upgrades it when you want one.
+        </DialogDescription>
+
+        <div className="flex items-center justify-end gap-2 pt-2">
+          <UIButton size="sm" variant="ghost" onClick={dismiss}>
+            Skip for now
+          </UIButton>
+          <UIButton size="sm" onClick={() => { dismiss(); navigate("/settings"); }}>
+            Go to Settings
+          </UIButton>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

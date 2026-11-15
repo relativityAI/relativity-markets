@@ -117,7 +117,17 @@ export const config = {
         "bseindia.com",
         "bsmedia.business-standard.com",
       ],
-  // Local Postgres (docker compose service `postgres`) — user settings/API keys + activity.
+  // Local-first storage: one SQLite file (env SQLITE_PATH; relative = services/ cwd).
+  sqlitePath: process.env.SQLITE_PATH || "data/relativity.db",
+  // AUTH_MODE: "local" is the default (single default user, no sign-in).
+  // "supabase" opts back into the legacy cloud login (JWT via JWKS).
+  authMode: (process.env.AUTH_MODE as "local" | "supabase") || "local",
+  localUser: {
+    id: process.env.LOCAL_USER_ID || "local",
+    email: "default@localhost",
+    name: "Default User",
+  },
+  // Legacy cloud path (docker compose `postgres`) — kept, unused in local mode.
   databaseUrl: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/relativity",
   // Supabase (auth only — JWT verification via JWKS; data lives in Postgres)
   supabaseProjectUrl: process.env.SUPABASE_PROJECT_URL || "",

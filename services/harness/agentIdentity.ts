@@ -3,12 +3,16 @@
 // Mirrors client/src/lib/agentIdentity.ts so the PDF carries the same
 // avatar + colour the user sees in the app: same seed precedence
 // (_id → id → name), same FNV-1a hash, same 11-hue palette, same
-// sepia close-up Notionists portrait on a tinted chip. The portrait is
-// rasterized to PNG with resvg (same pipeline as report charts) so
-// pdfmake can embed it.
-import { createAvatar } from "@dicebear/core";
-import * as notionists from "@dicebear/notionists";
+// Voxel Bot portrait (fastest animation variant) on a tinted chip. The
+// portrait is rasterized to PNG with resvg (same pipeline as report
+// charts) so pdfmake can embed it — print is a still frame, so the
+// animation simply resolves to its resting pose.
+import { Avatar, Style } from "@dicebear/core";
+import voxelBotDefinition from "@dicebear/styles/voxel-bot.json" with { type: "json" };
 import { Resvg } from "@resvg/resvg-js";
+
+// Wrap once — Avatar warns when a raw definition is passed per call.
+const voxelBot = new Style(voxelBotDefinition);
 
 export interface AgentSeedLike {
     _id?: string;
@@ -52,20 +56,12 @@ export function agentIdentity(seed: string): { color: string; tint: string } {
     return PALETTE[hashSeed(seed) % PALETTE.length];
 }
 
-// Sepia wash matching the UI's CSS filter (sepia(0.52) saturate(0.72)
-// contrast(0.96)) expressed as an SVG feColorMatrix so resvg applies it.
-const SEPIA_FILTER =
-    '<filter id="agentIdentitySepia" color-interpolation-filters="sRGB">' +
-    '<feColorMatrix type="matrix" values="' +
-    "0.55 0.62 0.22 0 0.06  " +
-    "0.31 0.55 0.20 0 0.05  " +
-    "0.21 0.38 0.15 0 0.04  " +
-    "0 0 0 1 0\"/></filter>";
-
+// Sepia wash was dropped with the Notionists portrait: the Voxel Bot
+// renders in its own colours, matching the app exactly.
 const chipCache = new Map<string, Buffer>();
 
 /**
- * The agent's identity chip (sepia portrait on tinted rounded square)
+ * The agent's identity chip (Voxel Bot portrait on tinted rounded square)
  * rendered to a PNG buffer at 4x for print sharpness.
  */
 export function agentChipPng(seed: string, px = 128): Buffer {
@@ -73,22 +69,26 @@ export function agentChipPng(seed: string, px = 128): Buffer {
     if (cached) return cached;
 
     const { color, tint } = agentIdentity(seed);
-    const svg = createAvatar(notionists, { seed, scale: 140, translateY: 6 }).toString();
+    const svg = new Avatar(voxelBot, {
+        seed,
+        // Same options as the UI: fastest animation only, no background.
+        animationVariant: "fastest",
+        backgroundColor: [],
+    }).toString();
 
     // Strip the outer <svg> wrapper so the portrait can be nested inside
     // the chip artwork and scaled to the chip's inner square.
     const inner = svg.replace(/^<svg[^>]*>/, "").replace(/<\/svg>\s*$/, "");
     const viewBox = /viewBox="0 0 (\d+) (\d+)"/.exec(svg);
-    const src = viewBox ? Number(viewBox[1]) || 1744 : 1744;
+    const src = viewBox ? Number(viewBox[1]) || 128 : 128;
     const pad = Math.round(px * 0.05); // portrait fills 90% of the chip
     const scale = (px - pad * 2) / src;
 
     const chip =
         `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${px} ${px}">` +
-        `<defs>${SEPIA_FILTER}</defs>` +
         `<rect width="${px}" height="${px}" rx="${Math.round(px * 0.06)}" fill="${tint}"/>` +
         `<rect x="0.5" y="0.5" width="${px - 1}" height="${px - 1}" rx="${Math.round(px * 0.06) - 0.5}" fill="none" stroke="${color}" stroke-opacity="0.38"/>` +
-        `<g filter="url(#agentIdentitySepia)"><g transform="translate(${pad} ${pad}) scale(${scale})">${inner}</g></g>` +
+        `<g transform="translate(${pad} ${pad}) scale(${scale})">${inner}</g>` +
         `</svg>`;
 
     const resvg = new Resvg(chip, { fitTo: { mode: "width", value: px * 4 } });

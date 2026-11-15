@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, type CSSProperties } from "react";
 import { Box } from "@chakra-ui/react";
 import { skillSeed, skillAvatarSvg, type SkillSeedLike } from "@/lib/skillIdentity";
+import { avatarDelay } from "@/lib/agentIdentity";
 
 export interface SkillAvatarProps {
     /** Skill object, or a raw id/name string. */
@@ -14,9 +15,9 @@ export interface SkillAvatarProps {
 }
 
 /**
- * A skill's identity chip: a DiceBear "patchwork" portrait, unbordered
- * (square by default, round with `round`). Deterministic — same skill, same
- * chip, everywhere.
+ * A skill's identity chip: a DiceBear "Loops" portrait (animated, fastest
+ * variant), unbordered (square by default, round with `round`).
+ * Deterministic — same skill, same chip, everywhere.
  */
 
 export default function SkillAvatar({ skill, size = 24, label, round }: SkillAvatarProps) {
@@ -34,6 +35,10 @@ export default function SkillAvatar({ skill, size = 24, label, round }: SkillAva
             h={`${size}px`}
             borderRadius={round ? "9999px" : "0"}
             overflow="hidden"
+            // Phases the Loops turn animation per skill — same trick as the
+            // agent portraits (see avatarDelay / .vb-stagger in index.css).
+            className="vb-stagger"
+            style={{ "--vb-delay": avatarDelay(seed) } as CSSProperties}
             role={label ? "img" : undefined}
             aria-label={label}
             aria-hidden={label ? undefined : true}

@@ -69,7 +69,7 @@ function txt(
   const style = [
     `font-family:${o.serif ? C.serif : C.sans}`,
     `font-size:${o.size ?? 11}px`,
-    `font-weight:${o.weight ?? 400}`,
+    `font-weight:${o.weight ?? 300}`,
     `fill:${o.fill ?? C.mid}`,
     o.italic ? "font-style:italic" : "",
     o.halo ? `paint-order:stroke;stroke:${C.bg};stroke-width:3px;stroke-linejoin:round` : "",
@@ -250,7 +250,7 @@ function lineSvg(series: Series[], o: FigureOpts): string | null {
     g.push(
       txt(X(xs.length - 1) + 10, y + 4, `${seriesLabels[si]}${data.length === 1 ? ` ${fmtNum(v, o.unit)}` : ""}`, {
         size: data.length === 1 ? 14 : 11,
-        weight: data.length === 1 ? 600 : 500,
+        weight: 300,
         fill: colorOf(si, ink),
         halo: true,
         serif: data.length === 1,
@@ -287,7 +287,7 @@ function hBarsSvg(categories: string[], values: number[], o: FigureOpts): string
     const bw = hi > 0 ? (Math.abs(values[i]) / hi) * trackW : 0;
     g.push(txt(padL - 8, y + barH / 2 + 4, categories[i], { anchor: "end", size: 12, fill: C.ink, halo: true }));
     g.push(rect(padL, y, bw, barH, ink, undefined, 3));
-    g.push(txt(padL + bw + 7, y + barH / 2 + 4, fmtNum(values[i], o.unit), { size: 11.5, weight: 500, fill: C.ink }));
+    g.push(txt(padL + bw + 7, y + barH / 2 + 4, fmtNum(values[i], o.unit), { size: 11.5, weight: 300, fill: C.ink }));
   }
   g.push("</svg>");
   return g.join("");
@@ -316,7 +316,7 @@ function shareStripSvg(categories: string[], values: number[], o: FigureOpts): s
     const segW = (values[i] / total) * w;
     g.push(rect(x, stripY, Math.max(0, segW - 2), stripH, ink, ops[i % ops.length]));
     const p = (values[i] / total) * 100;
-    if (p >= 20) g.push(txt(x + 13, stripY + stripH / 2 + 5, pct(values[i]), { size: 13, weight: 600, fill: C.onC }));
+    if (p >= 20) g.push(txt(x + 13, stripY + stripH / 2 + 5, pct(values[i]), { size: 13, weight: 300, fill: C.onC }));
     x += segW;
   }
   // big-number legend beneath
@@ -325,7 +325,7 @@ function shareStripSvg(categories: string[], values: number[], o: FigureOpts): s
     const ix = i * itemW;
     g.push(rect(ix, legendY - 12, 10, 10, ink, ops[i % ops.length]));
     g.push(txt(ix + 17, legendY - 2, categories[i], { size: 12, fill: C.ink }));
-    g.push(txt(ix + 17, legendY + 22, pct(values[i]), { size: 20, weight: 500, serif: true, fill: C.ink }));
+    g.push(txt(ix + 17, legendY + 22, pct(values[i]), { size: 20, weight: 300, serif: true, fill: C.ink }));
   }
   g.push("</svg>");
   return g.join("");
@@ -371,7 +371,7 @@ function donutSvg(categories: string[], values: number[], o: FigureOpts): string
     }
     a += span;
   }
-  g.push(txt(cy, cy + 2, fmtNum(total, o.unit ?? ""), { anchor: "middle", size: 30, weight: 500, serif: true, fill: C.ink, extra: "font-variant-numeric:tabular-nums lining-nums" }));
+  g.push(txt(cy, cy + 2, fmtNum(total, o.unit ?? ""), { anchor: "middle", size: 30, weight: 300, serif: true, fill: C.ink, extra: "font-variant-numeric:tabular-nums lining-nums" }));
   g.push(txt(cy, cy + 24, "Total", { anchor: "middle", size: 11, fill: C.dim, extra: "letter-spacing:.08em" }));
   // legend rows to the right of the ring
   const lx = size + 40;
@@ -380,7 +380,7 @@ function donutSvg(categories: string[], values: number[], o: FigureOpts): string
     const y = 16 + i * rowH;
     g.push(rect(lx, y, 10, 10, ink, ops[i % ops.length]));
     g.push(txt(lx + 18, y + 10, categories[i], { size: 13, fill: C.ink }));
-    g.push(txt(w - 8, y + 11, `${pct(values[i])}  ${fmtNum(values[i], o.unit ?? "")}`, { anchor: "end", size: 13, weight: 500, fill: C.ink, extra: "font-variant-numeric:tabular-nums lining-nums" }));
+    g.push(txt(w - 8, y + 11, `${pct(values[i])}  ${fmtNum(values[i], o.unit ?? "")}`, { anchor: "end", size: 13, weight: 300, fill: C.ink, extra: "font-variant-numeric:tabular-nums lining-nums" }));
     if (i < n - 1) g.push(line(lx, y + rowH - 10, w - 8, y + rowH - 10, C.grid, 1));
   }
   g.push("</svg>");
@@ -473,6 +473,63 @@ function vBarsSvg(series: Series[], o: FigureOpts): string | null {
   return columnsSvg(xLabels, vals, o);
 }
 
+/** Series ink ladder for grouped bars — mirrors colorOf(), extended to four stops. */
+const groupColor = (i: number, ink: string) => [ink, C.ink, C.slate, C.mid][i % 4];
+
+/**
+ * Grouped columns (`gbar`) — several series across the SAME categories
+ * (returns by period, YTD across indices). Signed values sit below the zero
+ * baseline; a legend row above the plot names each group. 2–4 groups.
+ */
+function groupedColumnsSvg(labels: string[], groups: { name: string; values: number[] }[], o: FigureOpts): string | null {
+  const finite = groups.flatMap((g) => g.values).filter(Number.isFinite);
+  if (!labels.length || !groups.length || !finite.length) return null;
+  const w = o.w ?? 1040;
+  const h = o.h ?? 360;
+  const padT = 44; // the legend row lives here
+  const padB = 44;
+  const vmax = Math.max(0, ...finite);
+  const vmin = Math.min(0, ...finite);
+  const { lo, hi, step, ticks } = niceTicks(vmin < 0 ? vmin * 1.05 : 0, vmax > 0 ? vmax * 1.05 : 0, 4);
+  const ylab = tickFmt(step, Math.max(Math.abs(lo), hi), o.unit);
+  const padL = Math.max(...ticks.map((t) => ylab(t).length)) * 6.6 + 16;
+  const padR = 16;
+  const span = hi - lo || 1;
+  const Y = (v: number) => h - padB - ((v - lo) / span) * (h - padT - padB);
+  const stepW = (w - padL - padR) / labels.length;
+  const gw = (stepW * 0.7) / groups.length; // bar width inside one cluster
+  const ink = o.ink ?? C.c;
+
+  const g: string[] = [svgOpen(w, h, o.label)];
+  // legend row (swatch + name), left-aligned above the plot
+  let lx = padL;
+  groups.forEach((grp, gi) => {
+    g.push(rect(lx, padT - 30, 10, 10, groupColor(gi, ink), undefined, 2));
+    g.push(txt(lx + 15, padT - 21, grp.name, { fill: C.mid, size: 11 }));
+    lx += 15 + grp.name.length * 6.4 + 24;
+  });
+  // axis: grid ticks with a heavier zero baseline
+  for (const t of ticks) {
+    if (!(t !== 0 && t === ticks[ticks.length - 1])) g.push(line(padL, Y(t), w - padR, Y(t), t === 0 ? C.dim : C.grid, t === 0 ? 1.2 : 1));
+    g.push(txt(padL - 8, Y(t) + 4, ylab(t), { anchor: "end", fill: C.dim }));
+  }
+  // clusters: one bar per group inside each category slot
+  labels.forEach((_, i) => {
+    const base = padL + i * stepW + (stepW - gw * groups.length) / 2;
+    groups.forEach((grp, gi) => {
+      const v = grp.values[i];
+      if (!Number.isFinite(v)) return;
+      g.push(rect(base + gi * gw, Math.min(Y(v), Y(0)), gw - 2, Math.abs(Y(0) - Y(v)), groupColor(gi, ink), undefined, 2));
+    });
+  });
+  const everyX = Math.max(1, Math.ceil(labels.length / 8));
+  labels.forEach((lab, i) => {
+    if (i % everyX === 0 || i === labels.length - 1) g.push(txt(padL + i * stepW + stepW / 2, h - padB + 20, lab, { anchor: "middle", fill: C.mid }));
+  });
+  g.push("</svg>");
+  return g.join("");
+}
+
 /** Signed-number inks (skill: colour on data, same pair as table .pos/.neg). */
 const signColor = (v: number) => (v > 0 ? C.pos : v < 0 ? C.neg : C.ink);
 const signed = (v: number, unit = "") =>
@@ -503,7 +560,7 @@ function statSvg(spec: ChartSpec, o: FigureOpts): string | null {
   const h = spark.length >= 2 ? bandTop + bandH + 14 : sub ? subY + 18 : valueY + 16;
 
   g.push(svgOpen(w, h, o.label));
-  if (label) g.push(txt(4, 24, label, { size: 15, weight: 500, fill: C.mid, extra: "letter-spacing:.04em" }));
+  if (label) g.push(txt(4, 24, label, { size: 15, weight: 300, fill: C.mid, extra: "letter-spacing:.04em" }));
   g.push(
     txt(4, valueY, signed(v, o.unit ?? ""), {
       size: 86,
@@ -555,12 +612,12 @@ function moversSvg(spec: ChartSpec, o: FigureOpts): string | null {
     const yTop = padT + r * rowH;
     if (r > 0) g.push(line(x0, yTop, x0 + colW, yTop, C.grid, 1));
     const mid = yTop + rowH / 2;
-    g.push(txt(x0, mid + 5, cats[i], { size: 13.5, weight: 500, fill: C.ink, extra: "letter-spacing:.06em" }));
+    g.push(txt(x0, mid + 5, cats[i], { size: 13.5, weight: 300, fill: C.ink, extra: "letter-spacing:.06em" }));
     g.push(
       txt(x0 + colW, mid + 5, signed(vals[i], o.unit ?? ""), {
         anchor: "end",
         size: 13.5,
-        weight: 500,
+        weight: 300,
         fill: signColor(vals[i]),
         extra: "font-variant-numeric:tabular-nums lining-nums",
       }),
@@ -590,7 +647,7 @@ function tableSvg(spec: ChartSpec, o: FigureOpts): string | null {
   const g: string[] = [svgOpen(w, h, o.label)];
   // headers: small caps, dim, letterspaced, at column starts
   cols.forEach((c, i) => {
-    g.push(txt(i === 0 ? 2 : i * colW + 8, padT + 16, String(c), { size: 11, weight: 600, fill: C.dim, extra: "letter-spacing:.08em" }));
+    g.push(txt(i === 0 ? 2 : i * colW + 8, padT + 16, String(c), { size: 11, weight: 300, fill: C.dim, extra: "letter-spacing:.08em" }));
   });
   rows.forEach((row, r) => {
     const yTop = padT + (r + 1) * rowH;
@@ -606,7 +663,7 @@ function tableSvg(spec: ChartSpec, o: FigureOpts): string | null {
         txt(x, mid + 4, text, {
           anchor: num ? "end" : "start",
           size: 13,
-          weight: num ? 500 : 400,
+          weight: 300,
           fill: C.ink,
           extra: num ? "font-variant-numeric:tabular-nums lining-nums" : "",
         }),
@@ -699,7 +756,7 @@ function candleSvg(spec: ChartSpec, o: FigureOpts): string | null {
     g.push(
       txt(X(xs.length - 1) + 10, y + 4, `${seriesLabels[si]}${data.length === 1 ? ` ${fmtNum(v, o.unit)}` : ""}`, {
         size: data.length === 1 ? 14 : 11,
-        weight: data.length === 1 ? 600 : 500,
+        weight: 300,
         fill: colorOf(si, ink),
         halo: true,
         serif: data.length === 1,
@@ -720,6 +777,7 @@ export function renderFigure(spec: ChartSpec, o: FigureOpts = {}): string | null
   if (spec.kind === "stat") return statSvg(spec, o);
   if (spec.kind === "movers") return moversSvg(spec, o);
   if (spec.kind === "table") return tableSvg(spec, o);
+  if (spec.categories?.length && spec.groups?.length) return groupedColumnsSvg(spec.categories, spec.groups, o);
   if (spec.categories?.length && spec.values?.length) {
     if (spec.kind === "pie") return shareStripSvg(spec.categories, spec.values, o);
     if (spec.kind === "donut") return donutSvg(spec.categories, spec.values, o);
@@ -740,6 +798,12 @@ export function figureCsv(spec: ChartSpec): string {
   const q = (x: string) => (/[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x);
   if (spec.columns?.length && spec.rows?.length) {
     return [spec.columns, ...spec.rows].map((row) => row.map((c) => q(String(c))).join(",")).join("\n");
+  }
+  if (spec.categories?.length && spec.groups?.length) {
+    return [
+      ["category", ...spec.groups.map((g) => g.name)].map(q).join(","),
+      ...spec.categories.map((c, i) => [c, ...spec.groups!.map((g) => String(g.values[i] ?? ""))].map(q).join(",")),
+    ].join("\n");
   }
   if (spec.categories?.length && spec.values) {
     return [["name", "value"], ...spec.categories.map((c, i) => [c, String(spec.values?.[i] ?? "")])]

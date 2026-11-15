@@ -24,12 +24,14 @@ export interface Series {
 }
 
 export interface ChartSpec {
-  kind: "line" | "multiline" | "candle" | "bar" | "vbar" | "hbar" | "pie" | "donut" | "area" | "scatter" | "radar" | "stat" | "movers" | "table";
+  kind: "line" | "multiline" | "candle" | "bar" | "vbar" | "hbar" | "gbar" | "pie" | "donut" | "area" | "scatter" | "radar" | "stat" | "movers" | "table";
   /** Domain token(s) resolved server-side into `series` (e.g. "price" or "price, sma200"). */
   data?: string;
   series?: Series[];
   categories?: string[];
   values?: number[];
+  /** kind:"gbar" — named series aligned to `categories`. */
+  groups?: { name: string; values: number[] }[];
   /** kind:"table" — column headers. */
   columns?: string[];
   /** kind:"table" — one array per row. */
@@ -67,7 +69,7 @@ export interface ArtifactRef {
 export type ReportBlock =
   | { type: "text"; level: 1 | 2; text: string; highlights?: Highlight[] }
   | { type: "callout"; variant: "info" | "warn" | "key"; title?: string; text: string; highlights?: Highlight[] }
-  | { type: "chart"; title?: string; spec: ChartSpec; panels?: ChartSpec[]; caption?: string; measure?: string; sourceId: string; color?: string; svgs?: string[] }
+  | { type: "chart"; title?: string; tagline?: string; spec: ChartSpec; panels?: ChartSpec[]; caption?: string; measure?: string; sourceId: string; color?: string; svgs?: string[] }
   | { type: "diagram"; title?: string; spec: DiagramSpec; caption?: string; sourceId: string }
   | { type: "table"; title?: string; columns: string[]; rows: (string | number)[][]; caption?: string; sourceId: string }
   | { type: "compare"; title?: string; before: ChartSpec | DiagramSpec; after: ChartSpec | DiagramSpec; sourceId: string }
@@ -77,17 +79,17 @@ export type ReportBlock =
 
 /** v2 full section: exactly one heading + its inner blocks. */
 export interface ReportSection {
-  heading: { level: 1 | 2 | 3; text: string };
+  heading: { level: 1 | 2 | 3; text: string; tagline?: string };
   blocks: ReportBlock[];
 }
 
 /** v1 flat section (stored runs — read path only). */
 export type Section =
-  | { type: "heading"; level: 1 | 2 | 3; text: string }
+  | { type: "heading"; level: 1 | 2 | 3; text: string; tagline?: string }
   | { type: "paragraph"; text: string; highlights?: Highlight[]; level?: 1 | 2 }
   | { type: "callout"; variant: "info" | "warn" | "key"; title?: string; text: string; highlights?: Highlight[] }
   | { type: "table"; title?: string; columns: string[]; rows: (string | number)[][]; caption?: string; sourceId?: string }
-  | { type: "chart"; title?: string; spec: ChartSpec; panels?: ChartSpec[]; caption?: string; measure?: string; sourceId?: string; svgs?: string[] }
+  | { type: "chart"; title?: string; tagline?: string; spec: ChartSpec; panels?: ChartSpec[]; caption?: string; measure?: string; sourceId?: string; svgs?: string[] }
   | { type: "citations"; refs: string[] }
   | { type: "diagram"; title?: string; spec: DiagramSpec; caption?: string; sourceId?: string }
   | { type: "badges"; items: { label: string; tone?: "neutral" | "positive" | "negative" | "accent" }[] }

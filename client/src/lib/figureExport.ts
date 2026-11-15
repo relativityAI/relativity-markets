@@ -48,7 +48,12 @@ export function downloadPng(svg: string, name: string, width = 1040) {
 export function downloadCsv(spec: ChartSpec, name: string) {
   const q = (x: string) => (/[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x);
   let csv = "";
-  if (spec.categories?.length && spec.values) {
+  if (spec.categories?.length && spec.groups?.length) {
+    csv = [
+      ["category", ...spec.groups.map((g) => g.name)].map(q).join(","),
+      ...spec.categories.map((c, i) => [c, ...spec.groups!.map((g) => String(g.values[i] ?? ""))].map(q).join(",")),
+    ].join("\n");
+  } else if (spec.categories?.length && spec.values) {
     csv = [["name", "value"], ...spec.categories.map((c, i) => [c, String(spec.values?.[i] ?? "")])]
       .map((r) => r.map(q).join(","))
       .join("\n");

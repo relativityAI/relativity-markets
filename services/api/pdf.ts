@@ -1145,6 +1145,17 @@ function reasoningBlocks(run: any): PdfContent {
 /** Time-series ChartSpec → legacy chart rows (the SVG renderers' input). */
 function chartRows(spec: ChartSpec): { data: Record<string, string | number>[]; sourceKeys: string[] } {
   if (spec.categories?.length) {
+    // gbar: one column per group, aligned to the categories — never zero-filled.
+    if (spec.groups?.length) {
+      const names = spec.groups.map((g) => g.name);
+      return {
+        data: spec.categories.map((name, i) => ({
+          name,
+          ...Object.fromEntries(spec.groups!.map((g) => [g.name, g.values[i] ?? 0])),
+        })),
+        sourceKeys: ["name", ...names],
+      };
+    }
     return {
       data: spec.categories.map((name, i) => ({ name, value: spec.values?.[i] ?? 0 })),
       sourceKeys: ["name", "value"],
@@ -1174,7 +1185,7 @@ const CHART_TYPE = (kind: ChartSpec["kind"]): LegacyChartType =>
   kind === "candle" ? "candlestick"
   : kind === "stat" || kind === "multiline" ? "line"
   : kind === "donut" ? "pie"
-  : kind === "vbar" || kind === "hbar" || kind === "bar" || kind === "movers" || kind === "table" ? "bar"
+  : kind === "vbar" || kind === "hbar" || kind === "bar" || kind === "gbar" || kind === "movers" || kind === "table" ? "bar"
   : kind;
 
 /** Typed ReportDocument (v1 flat or v2 nested) → legacy blocks, reusing the existing block renderers. */

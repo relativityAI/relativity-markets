@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { Menu, Flex, Text, Box } from "@chakra-ui/react";
-import { Search, Menu as MenuIcon, X, LogOut, Moon, Sun, Settings, Check, TriangleAlert, SquareArrowRightEnter } from "lucide-react";
+import { Search, Menu as MenuIcon, X, LogOut, Moon, Sun, Bolt, Check, TriangleAlert, SquareArrowRightEnter } from "lucide-react";
 import { useAuth } from "@/auth/useAuth";
+import { LOCAL_AUTH } from "@/auth/AuthContext";
 import { useColorMode } from "@/components/ui/color-mode";
 import UserAvatar from "@/components/shared/UserAvatar";
-import { Button } from "@/components/ui/button";
 import { API_BASE, SettingsService } from "@/db";
 import { TickerLogo } from "@/lib/sourceLogos";
 import { DropdownItem } from "@/pages/shared/AnalysisControls";
@@ -245,40 +245,52 @@ export default function NavBar() {
             {colorMode === "dark" ? <Moon size={18} /> : <Sun size={18} />}
           </button>
 
-          {/* Avatar — or Log in when signed out */}
-          {user ? (
-            <Menu.Root positioning={{ placement: "bottom-end" }}>
-              <Menu.Trigger asChild>
-                <Box cursor="pointer" title={email || "Account"}>
-                  <UserAvatar seed={email} size={30} />
-                </Box>
-              </Menu.Trigger>
-              <Menu.Positioner>
-                <Menu.Content minWidth="220px">
-                  <Flex direction="column" gap={0} px={3} py={2.5} w="full" minW={0}>
-                    <Text textStyle="xs" color="fg.muted">Signed in as</Text>
-                    <Text fontSize="sm" color="fg" w="full" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
-                      {email}
-                    </Text>
-                  </Flex>
-                  <Menu.Separator />
-                  <Menu.Item value="settings" onClick={() => navigate("/settings")}>
-                    <Settings size={15} />
-                    <Text fontSize="sm">Settings</Text>
-                  </Menu.Item>
-                  <Menu.Item value="signout" onClick={() => signOut()}>
-                    <LogOut size={15} />
-                    <Text fontSize="sm">Sign out</Text>
-                  </Menu.Item>
-                </Menu.Content>
-              </Menu.Positioner>
-            </Menu.Root>
-          ) : (
-            <Button size="sm" variant="outline" className="rounded-full px-4 gap-1.5" onClick={() => navigate("/login")}>
-              <SquareArrowRightEnter size={15} />
-              Log in
-            </Button>
-          )}
+          {/* Account avatar — dropdown holds Log in when signed out */}
+          <Menu.Root positioning={{ placement: "bottom-end" }}>
+            <Menu.Trigger asChild>
+              <Box cursor="pointer" title={email || "Account"}>
+                <UserAvatar seed={email} size={30} />
+              </Box>
+            </Menu.Trigger>
+            <Menu.Positioner>
+              <Menu.Content minWidth="220px">
+                {user ? (
+                  <>
+                    {!LOCAL_AUTH && (
+                      <Flex direction="column" gap={0} px={3} py={2.5} w="full" minW={0}>
+                        <Text textStyle="xs" color="fg.muted">Signed in as</Text>
+                        <Text fontSize="sm" color="fg" w="full" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
+                          {email}
+                        </Text>
+                      </Flex>
+                    )}
+                    {!LOCAL_AUTH && <Menu.Separator />}
+                    <Menu.Item value="settings" onClick={() => navigate("/settings")}>
+                      <Bolt size={15} />
+                      <Text fontSize="sm">Settings</Text>
+                    </Menu.Item>
+                    {!LOCAL_AUTH && (
+                      <Menu.Item value="signout" onClick={() => signOut()}>
+                        <LogOut size={15} />
+                        <Text fontSize="sm">Sign out</Text>
+                      </Menu.Item>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <Menu.Item value="login" onClick={() => navigate("/login")}>
+                      <SquareArrowRightEnter size={15} />
+                      <Text fontSize="sm">Log in</Text>
+                    </Menu.Item>
+                    <Menu.Item value="settings" onClick={() => navigate("/settings")}>
+                      <Bolt size={15} />
+                      <Text fontSize="sm">Settings</Text>
+                    </Menu.Item>
+                  </>
+                )}
+              </Menu.Content>
+            </Menu.Positioner>
+          </Menu.Root>
 
           {/* Mobile hamburger */}
           <button

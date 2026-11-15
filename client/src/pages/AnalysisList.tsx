@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { MdArrowUpward, MdArrowDownward, MdExpandMore, MdChevronRight } from "react-icons/md";
 import { AnalysisService, AgentService, SkillService } from "@/db";
 import { agentDisplayName } from "@/utils";
-import SkillAvatar from "@/components/shared/SkillAvatar";
+import AgentAvatar from "@/components/shared/AgentAvatar";
 import { HarnessAgentService } from "@/lib/harnessAgents";
 import { ModelLogo } from "@/lib/modelLogos";
 import { SourceMark, TickerLogo } from "@/lib/sourceLogos";
@@ -529,7 +529,7 @@ export default function AnalysisList() {
              */}
             <div className="flex w-full flex-col gap-6 py-6">
                 <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-                    <h1 className="font-app-display text-[26px] leading-[1.1] font-normal tracking-[-0.02em] text-[var(--ink-primary)] md:text-[30px]">
+                    <h1 className="font-app-body text-[26px] leading-[1.1] font-light tracking-[-0.02em] text-[var(--ink-primary)] md:text-[30px]">
                         Past Runs
                     </h1>
                     <motion.div whileHover={{ y: -1 }} whileTap={{ scale: 0.97 }} className="shrink-0">
@@ -555,7 +555,6 @@ export default function AnalysisList() {
                     animate="animate"
                     className="flex flex-col gap-3"
                 >
-                    <SectionLabel>Insights</SectionLabel>
                     <div className="grid grid-cols-1 items-start gap-x-8 gap-y-7 sm:grid-cols-2 lg:grid-cols-3">
                         {/* Most run stocks — headline insight */}
                         <motion.div variants={staggerItem} className="flex min-w-0 flex-col gap-3">
@@ -768,7 +767,7 @@ export default function AnalysisList() {
                                                             key={`h-${sec.key}`}
                                                             avatar={
                                                                 viewMode === "agent" ? (
-                                                                    <SkillAvatar skill={sec.key} size={18} round />
+                                                                    <AgentAvatar agent={sec.key} size={24} />
                                                                 ) : viewMode === "model" ? (
                                                                     <ModelLogo model={sec.key} size={14} />
 ) : viewMode === "stock" ? (
@@ -830,22 +829,12 @@ export default function AnalysisList() {
                                                                 +new Date(item.created_at)) /
                                                             1000
                                                           : null;
-                                                // Skills the run used: harness runs
-                                                // persist skill_ids (migration 021);
-                                                // legacy skill-era rows carry skill_id.
-                                                const runSkillIds: string[] =
-                                                    Array.isArray(item.skill_ids) && item.skill_ids.length
-                                                        ? item.skill_ids
-                                                        : item.skill_id
-                                                          ? [item.skill_id]
-                                                          : [];
-                                                const runSkillLabel = runSkillIds
-                                                    .map(skillName)
-                                                    .join(", ");
                                                 // The system prompt the run read
                                                 // (New Run's "Agent" pick,
                                                 // persisted as system_prompt).
                                                 const promptLabel = promptName(item.system_prompt);
+                                                // The run's agent when it resolved; the prompt name otherwise.
+                                                const agentLabel = agentName(item.agent_name || item.agent) || promptLabel;
 
                                                 return (
                                                     <motion.tr
@@ -892,24 +881,16 @@ export default function AnalysisList() {
                                                             </div>
                                                         </td>
 
-                                                        {/* System prompt + skills */}
-                                                        <td className="max-w-[140px] overflow-hidden px-4 py-3">
+                                                        {/* Agent */}
+                                                        <td className="max-w-[220px] overflow-hidden px-4 py-3">
                                                             <div className="flex min-w-0 items-center gap-2">
-                                                                <SkillAvatar
-                                                                    skill={
-                                                                        runSkillIds.length
-                                                                            ? { id: runSkillIds[0], name: skillName(runSkillIds[0]) }
-                                                                            : { id: item.system_prompt, name: promptLabel }
-                                                                    }
-                                                                    size={24}
-                                                                    round
+                                                                <AgentAvatar
+                                                                    agent={item.agent_name || item.agent || item.system_prompt}
+                                                                    size={26}
                                                                 />
                                                                 <span className="min-w-0">
-                                                                    <span className="block truncate text-[13px] text-[var(--ink-secondary)]" title={promptLabel}>
-                                                                        {promptLabel}
-                                                                    </span>
-                                                                    <span className="block truncate text-[11px] text-[var(--ink-tertiary)]" title={runSkillLabel || "All skills"}>
-                                                                        {runSkillLabel || "All skills"}
+                                                                    <span className="block truncate text-[13px] text-[var(--ink-secondary)]" title={agentLabel}>
+                                                                        {agentLabel}
                                                                     </span>
                                                                     {item.run_mode !== "agent" && (
                                                                         <span className="block text-[10px] font-medium uppercase tracking-wide text-[var(--accent-primary)]">
@@ -1007,11 +988,11 @@ export default function AnalysisList() {
                                                                     setDeleteTarget(item);
                                                                 }}
                                                                 aria-label="Delete run"
-                                                                className="flex h-11 w-11 items-center justify-center text-[var(--ink-tertiary)] opacity-100 transition-[color,opacity] hover:text-[var(--signal-negative)] focus-visible:ring-[1px] focus-visible:ring-ring focus-visible:outline-none md:h-auto md:w-auto md:opacity-40 md:[tr:hover_&]:opacity-100"
+                                                                className="flex size-9 shrink-0 items-center justify-center rounded-[4px] text-[var(--ink-tertiary)] opacity-70 transition-[color,opacity,background-color] hover:bg-[var(--surface-recessed)] hover:text-[var(--signal-negative)] focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none md:opacity-60 md:[tr:hover_&]:opacity-100"
                                                             >
                                                                 <svg
-                                                                    width="14"
-                                                                    height="14"
+                                                                    width="16"
+                                                                    height="16"
                                                                     viewBox="0 0 24 24"
                                                                     fill="none"
                                                                     stroke="currentColor"

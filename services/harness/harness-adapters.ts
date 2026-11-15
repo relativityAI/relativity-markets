@@ -1,5 +1,8 @@
 /**
- * Supabase adapters for the harness persistence ports.
+ * Legacy Supabase adapters for the harness persistence ports.
+ * The local-first server installs the SQLite adapters instead
+ * (see ./sqlite-adapters.ts); this file is kept untouched for the
+ * legacy cloud path.
  *
  * The harness defines AgentRepository / SkillRepository (see
  * harness/agents/store.ts and harness/skills/catalog.ts) and ships

@@ -14,7 +14,7 @@
 import { parseMd, serializeMd, type AgentConfig, type MdIssue } from "./mdconfig.js";
 import { parseAgentMd, serializeAgentMd, validateAgentV3, type AgentConfigV3 } from "./agentmd.js";
 import { normalizeQuantRules } from "../api/metrics.js";
-import { getDb } from "../db/db.js";
+import { updateAgentRow, getAgentRowByNameOrId } from "../db/repo.js";
 import { saveCustomSkill } from "./skills/store.js";
 import { log } from "../api/logger.js";
 
@@ -247,8 +247,7 @@ export async function agentFromRow(row: AgentRow): Promise<{ config: AgentConfig
         if (check.ok) {
           // Persist the v3 md back to the row (legacy columns untouched).
           try {
-            const db = getDb();
-            await db.from("agents").update({ md_config: migrated.md }).eq("id", row.id);
+            await updateAgentRow(row.user_id, row.id, { md_config: migrated.md });
           } catch (e: any) {
             log.warn("agentstore", `migration: md write-back failed (run continues on migrated md): ${e?.message}`);
           }
@@ -264,15 +263,8 @@ export async function agentFromRow(row: AgentRow): Promise<{ config: AgentConfig
 
 /** Shared agent lookup for the analysis orchestrators (name-or-id, md-first). */
 export async function loadAgent(userId: string, nameOrId: string): Promise<LoadedAgent> {
-  const db = getDb();
-  const { data, error } = await db
-    .from("agents")
-    .select("*")
-    .eq("user_id", userId)
-    .or(`name.eq.${nameOrId},id.eq.${nameOrId}`)
-    .single();
-  if (error || !data) throw new Error(`Agent not found: ${nameOrId}`);
-  const row = data as AgentRow;
+  const row = await getAgentRowByNameOrId(userId, nameOrId);
+  if (!row) throw new Error(`Agent not found: ${nameOrId}`);
   const res = await agentFromRow(row);
   return { row, ...res };
 }

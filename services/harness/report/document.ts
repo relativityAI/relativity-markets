@@ -44,6 +44,7 @@ export const ChartSpecSchema = z.object({
     "bar",
     "vbar",
     "hbar",
+    "gbar",
     "pie",
     "donut",
     "area",
@@ -68,6 +69,11 @@ export const ChartSpecSchema = z.object({
   series: z.array(SeriesSchema).optional(),
   categories: z.array(z.string()).optional(),
   values: z.array(z.number()).optional(),
+  /**
+   * kind:"gbar" — grouped columns: named series aligned to `categories`
+   * (2–4 groups; e.g. returns by period across several indices).
+   */
+  groups: z.array(z.object({ name: z.string(), values: z.array(z.number()) })).optional(),
   /**
    * Plot ink (hex) — the channel for skill report-structures that prescribe a
    * colour palette. Hex-only: this string is interpolated into SVG styles.
@@ -116,8 +122,8 @@ const FigureSourceSchema = z.string().min(1, "figure requires a sourceId");
 
 /**
  * Text block. level 1 = the section's claim / lead (carries the inline
- * sources); level 2 = the supporting detail. Contract: a level-1 text must be
- * IMMEDIATELY followed by a level-2 text (enforced in SectionSchema).
+ * sources); level 2 = the supporting detail (optional — figures may follow
+ * level 1 directly).
  */
 export const TextBlockSchema = z.object({
   type: z.literal("text"),
@@ -132,6 +138,8 @@ export const BlockSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("chart"),
     title: z.string().optional(),
+    /** 3–5 word coloured strapline — required on stat cards. */
+    tagline: z.string().optional(),
     spec: ChartSpecSchema,
     panels: z.array(ChartSpecSchema).optional(),
     caption: z.string().optional(),
@@ -177,30 +185,17 @@ export const BlockSchema = z.discriminatedUnion("type", [
 ]);
 
 /** A full section: exactly one heading + its inner blocks. */
-export const SectionSchema = z
-  .object({
-    heading: z.object({
-      level: z.union([z.literal(1), z.literal(2), z.literal(3)]),
-      text: z.string().min(1),
-    }),
-    blocks: z.array(BlockSchema),
-  })
-  .superRefine((sec, ctx) => {
-    // Contract: a level-1 text is a claim; its level-2 detail must follow
-    // immediately — no figure, callout or anything else between the pair.
-    for (let i = 0; i < sec.blocks.length; i++) {
-      const b = sec.blocks[i];
-      if (b.type !== "text" || b.level !== 1) continue;
-      const next = sec.blocks[i + 1];
-      if (!next || next.type !== "text" || next.level !== 2) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["blocks", i],
-          message: "level-1 text must be immediately followed by a level-2 text",
-        });
-      }
-    }
-  });
+export const SectionSchema = z.object({
+  heading: z.object({
+    level: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    text: z.string().min(1),
+    /** 3–5 word coloured answer under the title. */
+    tagline: z.string().optional(),
+  }),
+  blocks: z.array(BlockSchema),
+  // No pairing rule: level-2 detail is optional and figures may follow level-1
+  // directly — the old "must pair" contract is what forced padded prose.
+});
 
 export const ReportDocumentSchema = z.object({
   schema: z.literal(SCHEMA_VERSION),

@@ -39,6 +39,12 @@ export const AgentService = {
         return response.data;
     },
 
+    /** File-defined default agents (services/harness/agents/defaults/*.md). */
+    async listDefaultAgents() {
+        const response = await axios.get(`${API_BASE}/agents/defaults`);
+        return response.data;
+    },
+
     async readAgent(id: string) {
         const response = await axios.get(`${API_BASE}/agents/${encodeURIComponent(id)}`);
         return response.data;
