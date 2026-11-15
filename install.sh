@@ -16,7 +16,7 @@ DIR="${RELATIVITY_DIR:-relativity}"
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   echo "==> Docker found — starting Relativity (includes web search)"
-  mkdir -p "$DIR/services/searxng"
+  mkdir -p "$DIR/services/searxng" "$DIR/services/data"
   cd "$DIR"
   curl -fsSL "${RELATIVITY_COMPOSE_URL:-$BASE/docker-compose.yml}" -o docker-compose.yml
   curl -fsSL "$BASE/services/searxng/settings.yml" -o services/searxng/settings.yml

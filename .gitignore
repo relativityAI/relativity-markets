@@ -102,8 +102,10 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
-# Local-first app state (SQLite + generated key file)
-services/data/
+# Local-first app state (SQLite + generated key file) — kept out of git, but
+# the directory ships (with .gitkeep) so docker bind-mounts are user-owned.
+services/data/*
+!services/data/.gitkeep
 
 # Flask stuff:
 instance/
