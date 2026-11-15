@@ -1,13 +1,25 @@
 name: release
 
-# Runs when release-please pushes a vX.Y.Z tag (on merging the release PR).
+# Runs when release-please pushes a version tag (on merging the release PR).
+# release-please tags look like "relativity-portfolio-v0.1.0"; plain "v0.1.0"
+# is accepted too. Can also be run manually with a tag input to (re)publish
+# artifacts for an existing release.
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "*-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (e.g. relativity-portfolio-v0.1.0)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
   packages: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   publish:
@@ -26,13 +38,14 @@ jobs:
         working-directory: client
 
       - name: Zip client bundle
-        run: zip -r "relativity-client-${{ github.ref_name }}.zip" dist
+        run: zip -r "relativity-client-${{ env.TAG }}.zip" dist
         working-directory: client
 
       - name: Attach bundle to the GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: relativity-client-${{ github.ref_name }}.zip
+          tag_name: ${{ env.TAG }}
+          files: relativity-client-${{ env.TAG }}.zip
 
       - name: Lowercase image name
         id: img
@@ -51,5 +64,5 @@ jobs:
           context: ./services
           push: true
           tags: |
-            ${{ steps.img.outputs.name }}:${{ github.ref_name }}
+            ${{ steps.img.outputs.name }}:${{ env.TAG }}
             ${{ steps.img.outputs.name }}:latest
