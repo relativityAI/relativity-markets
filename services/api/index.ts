@@ -1,6 +1,8 @@
 import express from "express";
 import cors from "cors";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { config } from "./config.js";
 import { encrypt, decrypt } from "./crypto.js";
 import { getUserSettings, upsertUserSettings } from "../db/settings.js";
@@ -105,6 +107,16 @@ installHarnessAdapters();
 
 const app = express();
 app.set("trust proxy", 1);
+// Clients call /api/... — in dev vite's proxy and in docker nginx stripped the
+// prefix. With UI+API in one process nothing else does, so strip it here.
+// (req as any).apiPath marks stripped requests so the SPA fallback can skip them.
+app.use(((req, _res, next) => {
+  if (req.url === "/api" || req.url.startsWith("/api/")) {
+    req.url = req.url.slice(4);
+    (req as unknown as { apiPath?: boolean }).apiPath = true;
+  }
+  next();
+}) as express.RequestHandler);
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
@@ -1463,6 +1475,22 @@ app.post("/agents/draft-parameters", requireAuth, async (req, res) => {
     res.status(502).json({ error: e?.message || "Draft generation failed" });
   }
 });
+
+// Serve the built web app when present — the docker image ships UI+API as one
+// process on :8080. Bare dev (vite:5173 + `npm run dev`) is unaffected: this is
+// a no-op unless client/dist exists.
+const clientDist = path.resolve(process.cwd(), process.env.CLIENT_DIST || "../client/dist");
+if (existsSync(path.join(clientDist, "index.html"))) {
+  app.use(express.static(clientDist));
+  // SPA fallback: client-side routes get index.html; API paths keep their own 404s.
+  app.use((req, res, next) => {
+    if (req.method === "GET" && !(req as unknown as { apiPath?: boolean }).apiPath) {
+      res.sendFile(path.join(clientDist, "index.html"));
+    } else {
+      next();
+    }
+  });
+}
 
 const server = app.listen(config.port, async () => {
   log.info("[api]", `listening on :${config.port}`);

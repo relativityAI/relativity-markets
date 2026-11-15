@@ -1,127 +1,83 @@
 <a id="readme-top"></a>
 
-[![Contributors][contributors-shield]][contributors-url]
-[![Forks][forks-shield]][forks-url]
-[![Stargazers][stars-shield]][stars-url]
-[![Issues][issues-shield]][issues-url]
-[![UNLICENSED License][license-shield]][license-url]
+<p align="center">
+  <img src="assets/header.svg" alt="Relativity — Agents watch the market, you watch the agents." width="100%">
+</p>
 
-
+<h3 align="center">Create custom Agents to analyze, track, monitor the stock market</h3>
 
 <div align="center">
-  <img src="assets/header.svg" alt="Relativity — Agents watch the market, you watch the agents." width="100%">
 
-  <p>
-    AI powered stock market research.
-    <br />
-    <a href="https://github.com/relativityAI/relativity-markets"><strong>Explore the repo »</strong></a>
-    <br />
-    <br />
-    <a href="https://github.com/relativityAI/relativity-markets/issues/new?labels=bug&template=bug-report---.md">Report Bug</a>
-    &middot;
-    <a href="https://github.com/relativityAI/relativity-markets/issues/new?labels=enhancement&template=feature-request---.md">Request Feature</a>
-  </p>
+  [![Tweet](https://img.shields.io/twitter/url/https/shields.io.svg?style=social)](https://twitter.com/intent/tweet?text=%F0%9F%93%A2%20Create%20custom%20Agents%20to%20analyze%2C%20track%2C%20monitor%20the%20stock%20market&url=https://github.com/relativityAI/relativity-markets)
+  [![Status](https://img.shields.io/badge/status-active-success.svg)]()
+  [![GitHub Issues](https://img.shields.io/github/issues/relativityAI/relativity-markets.svg)](https://github.com/relativityAI/relativity-markets/issues)
+  [![GitHub Pull Requests](https://img.shields.io/github/issues-pr/relativityAI/relativity-markets.svg)](https://github.com/relativityAI/relativity-markets/pulls)
+  [![License](https://img.shields.io/badge/license-UNLICENSED-blue.svg)](https://github.com/relativityAI/relativity-markets/blob/main/LICENSE)
+
 </div>
 
+<div align="center">
+  Built by <a href="https://github.com/avishkarArjan/"><img src="https://github.com/avishkarArjan.png" alt="avishkarArjan" width="28" style="border-radius: 50%"></a>
+</div>
 
+---
 
-<details>
-  <summary>Table of Contents</summary>
-  <ol>
-    <li>
-      <a href="#about-the-project">About The Project</a>
-      <ul>
-        <li><a href="#built-with">Built With</a></li>
-      </ul>
-    </li>
-    <li><a href="#getting-started">Getting Started</a></li>
-    <li><a href="#usage">Usage</a></li>
-    <li><a href="#skill-creation">Skill Creation</a></li>
-    <li><a href="#roadmap">Roadmap</a></li>
-    <li><a href="#contributing">Contributing</a></li>
-    <li><a href="#license">License</a></li>
-    <li><a href="#contact">Contact</a></li>
-    <li><a href="#acknowledgments">Acknowledgments</a></li>
-  </ol>
-</details>
+## Table of Contents
+
+1. [Installation](#installation)
+2. [Usage](#usage)
+3. [Top contributors:](#top-contributors)
+4. [License](#license)
 
 
 
-## About The Project
+## Installation
 
-Every investor has a style. We capture it.
-
-Relativity AI Portfolio turns an investing style into an *investor agent* — a set of rules and guidelines that dictate how a stock should be evaluated. Once the agent is configured, the system delegates the research to AI and algorithms. No more endless screen time. No more scattered data. The portfolio does the digging. You do the deciding.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-
-
-### Built With
-
-* [![React][React.js]][React-url]
-* [![Vite][Vite]][Vite-url]
-* [![Chakra UI][Chakra]][Chakra-url]
-* [![Express][Express]][Express-url]
-* [![Supabase][Supabase]][Supabase-url]
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-
-
-## Getting Started
-
-You need [Node.js](https://nodejs.org) **22.13 or newer** and npm. Docker is needed for web search — everything else works without it.
-
-**1. Get the code**
+**Option 1 — Docker** ([get Docker](https://docs.docker.com/get-docker/))
 
 ```bash
 git clone https://github.com/relativityAI/relativity-markets.git
 cd relativity-markets
+docker compose up -d
 ```
 
-**2. Install the dependencies** (the app has two parts, each with its own)
+Open http://localhost:8080. Web search is included and runs automatically. Stop with `docker compose down`.
+
+**Option 2 — From source** (needs [Node.js](https://nodejs.org) 22.13+)
 
 ```bash
-cd services && npm install
-cd ../client && npm install
-cd ..
-```
-
-**3. Create the web app's settings file** (defaults are fine to start)
-
-```bash
-cp client/.env.example client/.env
-```
-
-**4. Start the app**
-
-```bash
+git clone https://github.com/relativityAI/relativity-markets.git
+cd relativity-markets
+npm install
 npm run dev
 ```
 
-This starts both parts together:
-- web app → [http://localhost:5173](http://localhost:5173)
-- API → http://localhost:8080
+Open http://localhost:5173. Stop with Ctrl+C. Optional web search needs Docker: `cd services && npm run searxng`.
 
-Stop with `Ctrl+C`.
-
-**5. First visit**
-
-Open http://localhost:5173. There's no sign-up — a local default user is created automatically. Go to **Settings** and paste your LLM API keys (OpenAI, Gemini, Anthropic, and others). They are stored encrypted on your machine. All your data lives in one file (`services/data/relativity.db`) — nothing is sent to a cloud.
-
-**Optional: turn on web search**
-
-Analyses that search the web need [SearXNG](https://searxng.org) running locally (requires [Docker](https://docs.docker.com/get-docker/)):
+**Option 3 — One command, no clone**
 
 ```bash
-cd services
-npm run searxng
+curl -fsSL https://raw.githubusercontent.com/relativityAI/relativity-markets/main/install.sh | sh
 ```
+
+Uses Docker if you have it (same as Option 1), otherwise downloads the source and starts it (same as Option 2).
+
+**First visit**
+
+There's no sign-up — a local default user is created automatically. Go to **Settings** and paste your LLM API keys (OpenAI, Gemini, Anthropic, and others). They are stored encrypted on your machine. All your data lives in one file (`services/data/relativity.db`) — nothing is sent to a cloud.
 
 ## Usage
 
-Open [http://localhost:5173](http://localhost:5173).
+Run the tool:
+
+- **Docker:** `docker compose up -d` → open http://localhost:8080
+- **From source:** `npm run dev` → open http://localhost:5173
+
+(see [Installation](#installation) for the full setup)
+
+**First visit:** open **Settings** and paste your LLM API keys — the tool won't run without one.
+
+Then in the web app:
 
 - **`/new-analysis`** — Pick a source, company, skill, and model, then run an analysis.
 - **`/analysis-list`** — Browse saved analysis runs.
@@ -129,9 +85,7 @@ Open [http://localhost:5173](http://localhost:5173).
 - **`/my-workspace`** — My Workspace: agent library, skills, builder, and tools.
 - **`/settings`** — Store LLM and Voyager API keys, encrypted at rest server-side.
 
-### Example run
-
-Run the harness CLI directly (from `services/`, with `npm run searxng` up and an `OPENCODE_API_KEY` set):
+Or run the CLI directly (from `services/`, with `npm run searxng` up and an `OPENCODE_API_KEY` set):
 
 ```bash
 npx tsx harness/cli.ts --real --symbol AAPL --model opencode/deepseek-v4.1-flash --max-steps 20 --max-tokens 30000 --skill chartist-technical-analysis --save-workspace
@@ -140,39 +94,6 @@ npx tsx harness/cli.ts --real --symbol AAPL --model opencode/deepseek-v4.1-flash
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 
-
-## Skill Creation
-
-Coming soon.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-
-
-## Roadmap
-
-- [ ] Agent runs (multi-skill orchestrated research)
-- [ ] Public skill library sharing
-- [ ] Portfolio tracking
-
-See the [open issues](https://github.com/relativityAI/relativity-markets/issues) for a full list of proposed features (and known issues).
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-
-
-## Contributing
-
-Contributions are what make the open source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
-
-If you have a suggestion that would make this better, please fork the repo and create a pull request. You can also simply open an issue with the tag "enhancement".
-Don't forget to give the project a star! Thanks again!
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
 
 ### Top contributors:
 
@@ -189,47 +110,3 @@ Don't forget to give the project a star! Thanks again!
 Distributed under the UNLICENSED license. All rights reserved.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-
-
-## Contact
-
-Relativity AI - [@relativityAI](https://github.com/relativityAI)
-
-Project Link: [https://github.com/relativityAI/relativity-markets](https://github.com/relativityAI/relativity-markets)
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-
-
-## Acknowledgments
-
-* [Best-README-Template](https://github.com/othneildrew/Best-README-Template)
-* [Google Fonts](https://fonts.google.com) — Newsreader, Anek Latin
-* [Vercel AI SDK](https://sdk.vercel.ai)
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-
-
-<!-- MARKDOWN LINKS & IMAGES -->
-[contributors-shield]: https://img.shields.io/github/contributors/relativityAI/relativity-markets.svg?style=for-the-badge
-[contributors-url]: https://github.com/relativityAI/relativity-markets/graphs/contributors
-[forks-shield]: https://img.shields.io/github/forks/relativityAI/relativity-markets.svg?style=for-the-badge
-[forks-url]: https://github.com/relativityAI/relativity-markets/network/members
-[stars-shield]: https://img.shields.io/github/stars/relativityAI/relativity-markets.svg?style=for-the-badge
-[stars-url]: https://github.com/relativityAI/relativity-markets/stargazers
-[issues-shield]: https://img.shields.io/github/issues/relativityAI/relativity-markets.svg?style=for-the-badge
-[issues-url]: https://github.com/relativityAI/relativity-markets/issues
-[license-shield]: https://img.shields.io/badge/license-UNLICENSED-blue.svg?style=for-the-badge
-[license-url]: https://github.com/relativityAI/relativity-markets/blob/main/LICENSE
-[React.js]: https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB
-[React-url]: https://reactjs.org/
-[Vite]: https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white
-[Vite-url]: https://vitejs.dev/
-[Chakra]: https://img.shields.io/badge/Chakra%20UI-319795?style=for-the-badge&logo=chakraui&logoColor=white
-[Chakra-url]: https://chakra-ui.com/
-[Express]: https://img.shields.io/badge/Express-000000?style=for-the-badge&logo=express&logoColor=white
-[Express-url]: https://expressjs.com/
-[Supabase]: https://img.shields.io/badge/Supabase-3FCF8E?style=for-the-badge&logo=supabase&logoColor=white
-[Supabase-url]: https://supabase.com/

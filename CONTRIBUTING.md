@@ -48,7 +48,8 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
    `package.json` versions and writes `CHANGELOG.md`.
 3. Merging that PR tags `vX.Y.Z`, which:
    - publishes the GitHub Release (notes + zipped client bundle),
-   - pushes the API Docker image to `ghcr.io/<owner>/relativity-api:vX.Y.Z`.
+   - pushes the Docker image to `ghcr.io/<owner>/relativity-markets:vX.Y.Z`
+     (built by the `docker` workflow, multi-arch).
 
 To deploy a release self-hosted: `docker compose pull && docker compose up -d`.
 
