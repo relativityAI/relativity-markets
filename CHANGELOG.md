@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.3.0...relativity-markets-v0.3.1) (2026-11-15)
+
+
+### Bug Fixes
+
+* **docker:** share the local-first SQLite file instead of a per-project volume ([#155](https://github.com/relativityAI/relativity-markets/issues/155)) ([2e5e7ca](https://github.com/relativityAI/relativity-markets/commit/2e5e7caee44f0c89313ba387b5a76f1dae574ea4))
+
 ## [0.3.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.2.0...relativity-markets-v0.3.0) (2026-11-15)
 
 
