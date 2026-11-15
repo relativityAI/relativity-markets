@@ -1,42 +1,35 @@
+# One prebuilt image: web app + API on :8080. SearXNG (web search) is included
+# and runs automatically. Postgres is the legacy cloud path (AUTH_MODE=supabase)
+# — not used in local-first mode.
 services:
-  client:
-    container_name: relativity-client
-    build:
-      context: ./client
-      dockerfile: Dockerfile
-    ports:
-      - "5173:80"
-    depends_on:
-      - services
-
-  services:
-    container_name: relativity-services
-    build:
-      context: ./services
-      dockerfile: Dockerfile
+  app:
+    image: ghcr.io/relativityai/relativity-markets:latest
+    # Uncomment to build the image locally instead of pulling it:
+    # build: .
     ports:
       - "8080:8080"
-    env_file: ./services/.env
+    env_file:
+      - path: ./services/.env
+        required: false
     environment:
-      PORT: 8080
       SEARXNG_URL: http://searxng:8080
-      # Local-first: state is a SQLite file inside the container (mount to keep it).
+      # Local-first: state is a SQLite file (mount to keep it).
       SQLITE_PATH: /app/data/relativity.db
     volumes:
       - relativity-sqldata:/app/data
+    depends_on:
+      - searxng
 
   searxng:
     image: docker.io/searxng/searxng:latest
-    container_name: searxng
     ports:
       - "8888:8080"
     volumes:
-      - ./services/searxng/settings.yml:/etc/searxng/settings.yml
+      - ./services/searxng/settings.yml:/etc/searxng/settings.yml:ro
 
-  # Legacy cloud path — kept for AUTH_MODE=supabase; unused in local-first mode.
   postgres:
+    profiles: [legacy]
     image: postgres:16-alpine
-    container_name: relativity-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
