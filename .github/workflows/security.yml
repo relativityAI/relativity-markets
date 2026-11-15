@@ -21,13 +21,11 @@ jobs:
 
   audit:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        dir: [client, services]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      # Workspace repo: audit all workspaces from the root lockfile.
       - run: npm audit --omit=dev --audit-level=high
-        working-directory: ${{ matrix.dir }}
+        working-directory: .

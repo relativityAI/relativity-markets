@@ -19,7 +19,9 @@ jobs:
           cache: npm
           cache-dependency-path: client/package-lock.json
       - run: npm ci
-      # ponytail: typecheck/lint NOT gated here yet — client has ~170 legacy
+        # Workspace repo: install resolves against the ROOT lockfile.
+        working-directory: .
+        # ponytail: typecheck/lint NOT gated here yet — client has ~170 legacy
       # tsc errors and ~420 lint errors (vite build never ran tsc). Keep CI
       # green on tests + build; re-enable `npm run typecheck` and
       # `npm run lint` steps once those counts hit zero.
@@ -39,6 +41,8 @@ jobs:
           cache: npm
           cache-dependency-path: services/package-lock.json
       - run: npm ci
+        # Workspace repo: install resolves against the ROOT lockfile.
+        working-directory: .
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
@@ -55,7 +59,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # client/Dockerfile refuses to build without an .env — use the example.
-      - run: cp client/.env.example client/.env
-      - run: docker build ./services
-      - run: docker build ./client
+      # One combined image (UI + API). Needs no .env: .dockerignore strips it
+      # and the build falls back to /api defaults.
+      - run: docker build .
