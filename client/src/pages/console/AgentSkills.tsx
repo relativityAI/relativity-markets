@@ -29,7 +29,9 @@ type Mode = "inspect" | "create" | "download";
 const SECTION_BOX = "rounded-xl border-[0.5px] border-[color:var(--hairline)] bg-console-surface/60 p-5";
 
 /** Fixed height: filtering never grows or shrinks the section. */
-const SECTION_LIST = "h-[22rem] overflow-x-hidden overflow-y-auto pr-1";
+/** Mobile: hug the listed rows, capped. Laptop (md+): the original fixed
+ *  height. */
+const SECTION_LIST = "max-h-[22rem] overflow-x-hidden overflow-y-auto pr-1 md:h-[22rem]";
 
 function matches(s: SkillSummary, q: string): boolean {
     if (!q) return true;
@@ -139,7 +141,7 @@ export default function AgentSkills() {
         // Two lists side by side: shipped defaults, then the user's own.
         if (loading) {
             return (
-                <div className="mt-6 flex h-[27rem] flex-col gap-4" role="status" aria-label="Loading skills">
+                <div className="mt-6 flex max-h-[27rem] flex-col gap-4 overflow-hidden md:h-[27rem]" role="status" aria-label="Loading skills">
                     {Array.from({ length: 6 }).map((_, i) => (
                         <div key={i} className="h-14 animate-pulse rounded-none bg-console-recessed/30" />
                     ))}
@@ -148,7 +150,7 @@ export default function AgentSkills() {
         }
         if (libraryError) {
             return (
-                <p className="mt-6 flex h-[27rem] items-center justify-center font-app-body text-[13px] text-console-negative">
+                <p className="mt-6 flex items-center justify-center py-12 font-app-body text-[13px] text-console-negative md:h-[27rem] md:py-0">
                     The skill library could not be loaded. Reload to retry.
                 </p>
             );

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { Session, User } from "@supabase/supabase-js";
-import { supabase } from "@/lib/supabase";
+import { supabase, SUPABASE_AUTH } from "@/lib/supabase";
 import { AuthContext, type AuthContextValue } from "./context";
 
 /**
@@ -11,7 +11,6 @@ import { AuthContext, type AuthContextValue } from "./context";
  *  - supabase (VITE_AUTH_MODE=supabase): the legacy Google login path, kept
  *    working verbatim for the cloud deployment.
  */
-const SUPABASE_AUTH = import.meta.env.VITE_AUTH_MODE === "supabase";
 
 const LOCAL_USER: User = {
   id: "local",
