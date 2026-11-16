@@ -7,12 +7,6 @@ import { config } from "./config.js";
 import { encrypt, decrypt } from "./crypto.js";
 import { getUserSettings, upsertUserSettings } from "../db/settings.js";
 import {
-  listAgentRows,
-  searchAgentRows,
-  getAgentRow,
-  getAgentRowByNameOrId,
-  updateAgentRow,
-  deleteAgentRow,
   insertScheduleRow,
   listScheduleRows,
   deleteScheduleRow,
@@ -30,27 +24,27 @@ import { getAgentCategories, isValidAgentCategory } from "./categories.js";
 import { getSources, searchStocks } from "./discovery.js";
 import { tickerLogoUrl } from "./tickerLogos.js";
 import { getPriceHistory, toYahooSymbol } from "../harness/marketdata.js";
-import { yf } from "../harness/tools/builtins/yahoo.js";
+import { yf } from "../harness/tools/yahoo.js";
 import { getMetricsCatalog, buildFieldList, getFlatCatalog, mergeCatalogFields, normalizeQuantRules, type MetricDef } from "./metrics.js";
 import { keyPool } from "./keypool.js";
-import { buildModel, draftParameters, type LlmKeys } from "../harness/agent.js";
+import { buildModel, type LlmKeys } from "../harness/model.js";
+import { draftParameters } from "../harness/drafts.js";
 import { classifyModelError } from "./modelcheck.js";
-import { processBuilderTurn, extractDocumentSignals, type BuilderRequest } from "../harness/builder.js";
+import { processBuilderTurn, extractDocumentSignals, skillDraftTurn, type BuilderRequest, type SkillDraftRequest } from "../harness/drafts.js";
 import { getSchemaDescriptor } from "../harness/schema.js";
-import { getToolCatalog } from "../harness/tools.js";
-// Artifact files (src/skills/artifacts/{index,xlsx}.ts) are mid-write by a
-// sibling session; import them lazily so a missing builder can't take the
-// whole server down. Restore static imports when they land.
-// ponytail: per-call dynamic import (uncached, unbundled) only on the two
-// artifact paths — loader runs once per request, not in a hot loop.
-import type { WorkbookRecipe } from "../harness/skills/artifacts/types.js";
+import { getToolCatalog } from "../harness/tools/voyager.js";
+// Artifact files render workbooks per request — lazy so a bad workbook can't
+// take the whole server down.
+import type { WorkbookRecipe } from "../harness/artifacts/types.js";
 import { getPreset, listPresets } from "./presets.js";
-import { agentFromRow, buildAgentConfigV3, type AgentRow } from "../harness/agentstore.js";
 import { fixAgentMarkdown, parseAgentMd, serializeAgentMd, validateAgentV3 } from "../harness/agentmd.js";
-import { listAllSkillsForUser, saveCustomSkill, deleteCustomSkill, loadBuiltinSkills, serializeSkill, normalizeSkillFiles, getBuiltinSkillFiles, getCustomSkillFiles, type SkillFiles } from "../harness/skills/store.js";
-import { fixSkillMarkdown, parseSkillMarkdown, slugifySkillName } from "../harness/skills/parse.js";
-import { fetchSkillMarkdown, listRepoSkills, listSkillRepos, resolveSkillPath } from "../harness/skills/repos.js";
-import { skillDraftTurn, type SkillDraftRequest } from "../harness/skills/draft.js";
+import {
+  listAllSkillsForUser, saveCustomSkill, deleteCustomSkill, loadBuiltinSkills,
+  normalizeSkillFiles, getBuiltinSkillFiles, getCustomSkillFiles, fixSkillMarkdown,
+  parseSkillMarkdown, slugifySkillName,
+  type SkillFiles,
+} from "../harness/skills.js";
+import { fetchSkillMarkdown, listRepoSkills, listSkillRepos, resolveSkillPath } from "../harness/skill-repos.js";
 import {
   // Harness module — one interface (see harness/index.ts).
   listAgents as listHarnessAgents,
@@ -60,12 +54,13 @@ import {
   getAgent as getHarnessAgent,
   DEFAULT_AGENTS,
   DEFAULT_HARNESS_AGENT,
+  harnessToView,
+  viewToHarnessPatch,
   loadSystemPrompts,
   type ReportDocument,
   type Verdict,
 } from "../harness/index.js";
-import { installHarnessAdapters, harnessToView, viewToHarnessPatch } from "../harness/sqlite-adapters.js";
-import { runHarnessSymbol, startAnalysisRun, startStaleRunSweeper } from "./runs.js";
+import { runHarnessSymbol, resumePausedRun, startAnalysisRun, startStaleRunSweeper } from "./runs.js";
 import { startScheduleTicker, isValidTime, isValidTimeZone, isValidFrequency, todayInTz } from "./schedule.js";
 import { extractText } from "./upload.js";
 import { VoyagerClient, toCountrySource } from "./voyager.js";
@@ -74,10 +69,12 @@ import { isDataFresh, FRESHNESS_FUNDAMENTAL_MS } from "./freshness.js";
 import { requireAuth, type AuthedRequest } from "./auth.js";
 import { log, paint } from "./logger.js";
 import { buildReportPdf, isUuid } from "./pdf.js";
-import { initTelemetry } from "./telemetry.js";
-import { traceHub, nextSeq, type TraceEvent } from "../harness/trace.js";
-// Initialize Langfuse telemetry before any AI SDK calls.
-await initTelemetry();
+import { traceHub, nextSeq } from "../harness/trace.js";
+import type { TraceRowEvent } from "../harness/trace.js";
+import { bootTracing } from "../harness/index.js";
+
+// Langfuse tracing (callback handler) — no-op without env keys.
+await bootTracing();
 
 const METHOD_COLORS: Record<string, string> = {
   GET: "1;32",
@@ -102,9 +99,8 @@ function statusColor(code: number): string {
   return "1;32";
 }
 
-// Harness persistence: install the SQLite adapters (agent/skill
-// repositories) before any route can serve a request.
-installHarnessAdapters();
+// Harness persistence: agents and skills live as markdown on the filesystem
+// (data/agents/**, data/skills/**) — no adapter installation needed.
 
 const app = express();
 app.set("trust proxy", 1);
@@ -262,8 +258,12 @@ app.get("/user/settings", requireAuth, async (req, res) => {
       for (const [k, v] of Object.entries(data.llm_keys_encrypted)) {
         try {
           const raw = decrypt(v);
-          llmKeysMasked[k] = raw.length > 8 ? raw.slice(0, 3) + "****" + raw.slice(-4) : "****";
-        } catch { llmKeysMasked[k] = "****"; }
+          // An empty stored value is not a key — don't mask it into a truthy string.
+          if (raw.trim()) llmKeysMasked[k] = raw.length > 8 ? raw.slice(0, 3) + "****" + raw.slice(-4) : "****";
+        } catch {
+          // Not valid ciphertext — a legacy plaintext value was stored; still counts as set.
+          if (String(v).trim()) llmKeysMasked[k] = "****";
+        }
       }
     }
 
@@ -348,13 +348,11 @@ app.get("/agents", requireAuth, async (req, res) => {
 app.get("/agents/search", requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
-    const q = String(req.query.query || "");
-    const rows = await searchAgentRows(userId, q);
-    const out = [];
-    for (const row of rows) {
-      const { config } = await agentFromRow(row);
-      out.push({ ...row, ...(config || {}) });
-    }
+    const q = String(req.query.query || "").toLowerCase();
+    const agents = await listHarnessAgents(userId);
+    const out = agents
+      .filter((a) => !q || a.name.toLowerCase().includes(q) || a.soulPrompt.toLowerCase().includes(q))
+      .map(harnessToView);
     res.json(out);
   } catch (e: any) {
     res.status(503).json({ error: e.message });
@@ -440,11 +438,7 @@ app.get("/agents/:id", requireAuth, async (req, res) => {
     const userId = (req as AuthedRequest).user.id;
     const harness = await getHarnessAgent(userId, String(req.params.id));
     if (harness) return res.json(harnessToView(harness));
-    // Legacy fallback: markdown-first v3 config for pre-harness rows.
-    const row = await getAgentRow(userId, String(req.params.id));
-    if (!row) return res.status(404).json({ error: "Agent not found" });
-    const { config, issues, md } = await agentFromRow(row);
-    res.json({ ...row, ...(config || {}), md, md_issues: issues });
+    return res.status(404).json({ error: "Agent not found" });
   } catch (e: any) {
     res.status(503).json({ error: e.message });
   }
@@ -454,49 +448,14 @@ app.put("/agents/:id", requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
     const id = String(req.params.id);
-
-    // Harness rows write straight back into `configuration`.
-    const harness = await getHarnessAgent(userId, id);
-    if (harness) {
-      const patch = viewToHarnessPatch(req.body || {});
-      // Category optional on update (legacy agents have none) but never invalid.
-      if (patch.category !== undefined && !isValidAgentCategory(patch.category)) {
-        return res.status(400).json({ error: `category must be one of: ${getAgentCategories().join(", ")}` });
-      }
-      const updated = await updateHarnessAgent(userId, id, patch);
-      if (!updated) return res.status(404).json({ error: "Agent not found" });
-      return res.json(harnessToView(updated));
+    const patch = viewToHarnessPatch(req.body || {});
+    // Category optional on update (legacy agents have none) but never invalid.
+    if (patch.category !== undefined && !isValidAgentCategory(patch.category)) {
+      return res.status(400).json({ error: `category must be one of: ${getAgentCategories().join(", ")}` });
     }
-
-    const existing = await getAgentRow(userId, id);
-    if (!existing) return res.status(404).json({ error: "Agent not found" });
-
-    let built;
-    try {
-      built = buildAgentConfigV3(req.body || {}, existing as AgentRow);
-    } catch (e: any) {
-      if (e.issues) {
-        console.error("[PUT /agents] 400 – body:", JSON.stringify(req.body, null, 2));
-        console.error("[PUT /agents] 400 – issues:", JSON.stringify(e.issues, null, 2));
-        return res.status(400).json({ error: e.message, issues: e.issues });
-      }
-      throw e;
-    }
-    const { config, issues, md } = built;
-
-    // Pick ONLY valid table columns to prevent PostgREST unknown column errors (503)
-    const doc: Record<string, any> = {
-      id: existing.id,
-      user_id: userId,
-      name: config.name,
-      persona: config.persona,
-      md_config: md,
-      created_at: existing.created_at || new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    await updateAgentRow(userId, id, doc);
-    res.json({ ...doc, ...config, md, md_issues: issues });
+    const updated = await updateHarnessAgent(userId, id, patch);
+    if (!updated) return res.status(404).json({ error: "Agent not found" });
+    return res.json(harnessToView(updated));
   } catch (e: any) {
     res.status(503).json({ error: e.message });
   }
@@ -505,29 +464,7 @@ app.put("/agents/:id", requireAuth, async (req, res) => {
 app.delete("/agents/:id", requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
-    const id = String(req.params.id);
-    // Remember if the user deletes a default profile so it doesn't get
-    // re-seeded on the next list fetch ("unless they chose to delete it").
-    const existing = await getAgentRow(userId, id);
-    await deleteAgentRow(userId, id);
-    if (existing?.source === "default") {
-      // Scope the suppression to the deleted preset only. The old boolean flag
-      // nuked ALL four presets on any single delete — irreversible and
-      // undisclosed. Re-seeding is per-preset below; this just records intent.
-      const presetKey = String((existing as any).preset_key || "");
-      const settings = await getUserSettings(userId);
-      const prior: string[] = Array.isArray(settings?.deleted_preset_keys) ? settings!.deleted_preset_keys! : [];
-      const deletedKeys = prior.includes(presetKey) && presetKey ? prior : [...prior, presetKey].filter(Boolean);
-      const patch: Record<string, unknown> = { deleted_preset_keys: deletedKeys };
-      // Back-compat: also set the legacy boolean once every preset is gone, so
-      // a pre-migration server reading only `defaults_deleted` still behaves.
-      if (deletedKeys.length >= 4) patch.defaults_deleted = true;
-      try {
-        await upsertUserSettings(userId, patch as any);
-      } catch (setErr: any) {
-        log.error("[agents]", `failed to record deleted preset for ${userId}: ${setErr.message}`);
-      }
-    }
+    await deleteHarnessAgent(userId, String(req.params.id));
     res.json({ deleted: true });
   } catch (e: any) {
     res.status(503).json({ error: e.message });
@@ -601,11 +538,10 @@ app.get("/skills/:id", requireAuth, async (req, res) => {
     const skills = await listAllSkillsForUser(userId);
     const skill = skills.find((s) => s.id === req.params.id);
     if (!skill) return res.status(404).json({ error: "Skill not found" });
-    const markdown = skill.markdown || serializeSkill(skill);
-    const files = (skill.source === "custom"
-      ? await getCustomSkillFiles(userId, skill.id)
-      : getBuiltinSkillFiles(skill.id)) ?? { "SKILL.md": markdown };
-    res.json({ ...skill, markdown, files });
+    const record = (skill.source === "custom"
+      ? getCustomSkillFiles(userId, skill.id)
+      : getBuiltinSkillFiles(skill.id)) ?? { skillId: skill.id, markdown: "", files: {} };
+    res.json({ ...skill, markdown: record.markdown, files: record.files });
   } catch (e: any) {
     res.status(503).json({ error: e.message });
   }
@@ -743,9 +679,6 @@ app.post("/analysis", requireAuth, async (req, res) => {
     // Request contract: 1 prompt (optional) + ONE skill (optional id).
     const prompt = typeof body.prompt === "string" && body.prompt.trim() ? body.prompt.trim() : undefined;
     const skillIds = Array.isArray(body.skills) && body.skills.length ? body.skills.map(String).slice(0, 1) : undefined;
-    const engine = body.engine == null || body.engine === "" ? undefined : String(body.engine);
-    if (engine && engine !== "v1" && engine !== "v2") return res.status(400).json({ error: 'engine must be "v1" or "v2"' });
-    const engineId = engine as "v1" | "v2" | undefined; // narrowed by the check above
 
     const userId = (req as AuthedRequest).user.id;
     // agent_id is optional: no agent → the seeded default agent (the CLI
@@ -773,12 +706,30 @@ app.post("/analysis", requireAuth, async (req, res) => {
       prompt,
       skillIds,
       budget: budgetOverride,
-      engine: engineId,
     });
     res.json({ id: runId, status: "RUNNING" });
   } catch (e: any) {
     console.error("POST /analysis ERROR:", e);
     res.status(503).json({ error: e?.message || "Analysis failed" });
+  }
+});
+
+// Human-in-the-loop: apply approval decisions to a paused run and continue it.
+// decisions: one per pending actionRequest, in order —
+//   { type: "approve" } | { type: "reject", message? } | { type: "edit", editedAction: { name, args } }
+app.post("/analysis/:id/resume", requireAuth, async (req, res) => {
+  try {
+    const userId = (req as AuthedRequest).user.id;
+    const decisions = req.body?.decisions;
+    if (!Array.isArray(decisions) || !decisions.length) {
+      return res.status(400).json({ error: "decisions array is required (one per pending action request)" });
+    }
+    const result = await resumePausedRun(userId, String(req.params.id), decisions as any[]);
+    if (!result) return res.status(404).json({ error: "Run not found" });
+    res.json({ id: result.runId, status: result.status, document: result.document, errors: result.errors });
+  } catch (e: any) {
+    console.error("POST /analysis/:id/resume ERROR:", e);
+    res.status(503).json({ error: e?.message || "Resume failed" });
   }
 });
 
@@ -963,8 +914,8 @@ app.get("/analysis/:id/pdf", requireAuth, async (req, res) => {
     // agent name for the report header/footer (and fall back to the masked
     // label inside the PDF builder if the agent no longer exists).
     if (data.agent_name && isUuid(data.agent_name)) {
-      const agentRow = await getAgentRowByNameOrId(userId, data.agent_name);
-      (data as any).agent_display_name = agentRow?.name || "";
+      const agents = await listHarnessAgents(userId);
+      (data as any).agent_display_name = agents.find((a) => a.id === data.agent_name)?.name || "";
     }
     const pdf = await buildReportPdf(data);
     res.setHeader("Content-Type", "application/pdf");
@@ -995,7 +946,7 @@ app.get("/analysis/:id/artifact/:artifactId", requireAuth, async (req, res) => {
       return res.status(409).json({ error: artifact.note || "This workbook could not be built" });
     }
 
-    const { renderXlsx } = await import("../harness/skills/artifacts/xlsx.js");
+    const { renderXlsx } = await import("../harness/artifacts/xlsx.js");
     const buffer = await renderXlsx(artifact.recipe as WorkbookRecipe);
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Length", String(buffer.length));
@@ -1093,16 +1044,10 @@ app.post("/models/validate", requireAuth, async (req, res) => {
     // Resolve the key (user key, else server pool) — rejects when no key exists.
     const { apiKey } = keyPool.pickKey(modelId, llmKeys);
 
-    // Try a minimal generateText call to validate the key + model access
-    const { buildModel } = await import("../harness/agent.js");
-    const { generateText } = await import("ai");
+    // Try a minimal model call to validate the key + model access.
+    const { buildModel } = await import("../harness/model.js");
     const model = buildModel(modelId, llmKeys as any, apiKey);
-    await generateText({
-      model,
-      prompt: "Hi",
-      maxOutputTokens: 1,
-      abortSignal: AbortSignal.timeout(15_000),
-    });
+    await model.invoke("Hi", { signal: AbortSignal.timeout(15_000) });
 
     res.json({ valid: true });
   } catch (e: any) {
@@ -1357,9 +1302,6 @@ app.post("/harness/agents/:id/run", requireAuth, async (req, res) => {
     if (!symbol) return res.status(400).json({ error: "symbol is required" });
     const prompt = typeof body.prompt === "string" && body.prompt.trim() ? body.prompt.trim() : undefined;
     const skillIds = Array.isArray(body.skills) && body.skills.length ? body.skills.map(String).slice(0, 1) : undefined;
-    const engine = body.engine == null || body.engine === "" ? undefined : String(body.engine);
-    if (engine && engine !== "v1" && engine !== "v2") return res.status(400).json({ error: 'engine must be "v1" or "v2"' });
-    const engineId = engine as "v1" | "v2" | undefined; // narrowed by the check above
     const result = await runHarnessSymbol(
       userId,
       String(req.params.id),
@@ -1367,11 +1309,7 @@ app.post("/harness/agents/:id/run", requireAuth, async (req, res) => {
       String(body.source || "NSE").toUpperCase(),
       body.model ? String(body.model) : undefined,
       body.system_prompt ? String(body.system_prompt) : undefined,
-      undefined,
-      prompt,
-      skillIds,
-      undefined,
-      engineId,
+      { promptOverride: prompt, skillIdsOverride: skillIds },
     );
     if (!result) return res.status(404).json({ error: "Agent not found" });
     res.json({ id: result.runId, status: result.status, document: result.document, errors: result.errors });
@@ -1440,7 +1378,7 @@ app.post("/builder/draft", requireAuth, async (req, res) => {
       onTrace: (ev) => {
         if (!builderSessionKey) return;
         const base = { seq: nextSeq(), ts: Date.now(), key: "builder" } as const;
-        const emit = (event: TraceEvent) => traceHub.publish(builderSessionKey, event);
+        const emit = (event: TraceRowEvent) => traceHub.publish(builderSessionKey, event);
         switch (ev.type) {
           case "thought":
             emit({ ...base, type: "thought", text: ev.text });
@@ -1449,10 +1387,7 @@ app.post("/builder/draft", requireAuth, async (req, res) => {
             emit({ ...base, type: "tool_call", tool: ev.tool, args: ev.args });
             break;
           case "tool_result":
-            emit({ ...base, type: "tool_result", tool: ev.tool, status: ev.status, result: ev.result, duration_ms: ev.duration_ms });
-            break;
-          case "decision":
-            emit({ ...base, type: "decision", score: ev.score, text: ev.text });
+            emit({ ...base, type: "tool_result", tool: ev.tool, status: ev.status === "ok" ? "OK" : "ERR", result: ev.result, duration_ms: ev.durationMs });
             break;
         }
       },

@@ -70,7 +70,7 @@ const PHASE_META: Record<string, { Icon: LucideIcon; label: string }> = {
     assemble: { Icon: Layers, label: "Assembling" },
 };
 
-function toolMeta(tool: string, summary?: string): { Icon: LucideIcon; label: string } {
+export function toolMeta(tool: string, summary?: string): { Icon: LucideIcon; label: string } {
     if (tool.startsWith("fs_write")) return { Icon: NotebookPen, label: summary || "Writing to the workspace" };
     if (tool.startsWith("fs_read")) return { Icon: FileText, label: summary || "Reading workspace file" };
     if (tool.startsWith("fs_grep")) return { Icon: Search, label: summary || "Searching the workspace" };

@@ -17,19 +17,10 @@ import {
   BarChart,
   Cell,
   Legend,
-  Pie,
-  PieChart,
-  PolarAngleAxis,
-  PolarGrid,
-  Radar,
-  RadarChart,
   ResponsiveContainer,
-  Scatter,
-  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
-  ZAxis,
 } from "recharts";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MarketChart } from "@/components/builder/MarketChart";
@@ -83,12 +74,6 @@ function toMarketRows(spec: ChartSpec): Record<string, string | number>[] {
   for (const s of spec.series ?? []) {
     for (const p of s.points) {
       const row = rows.get(p.t) ?? { date: epochToDate(p.t) };
-      if (spec.kind === "candle" && p.o != null) {
-        row.open = p.o;
-        row.high = p.h ?? p.v;
-        row.low = p.l ?? p.v;
-        row.close = p.v;
-      }
       // Series label stays on the row: MarketChart reads it as an overlay,
       // the volume pane, or the sole line — reserved keys are filtered there.
       row[s.label] = p.v;
@@ -100,7 +85,7 @@ function toMarketRows(spec: ChartSpec): Record<string, string | number>[] {
 
 const SERIES_COLORS = ["#5B7FDE", "#4C8B6B", "#B8935A", "#8FA0C8", "#B85C5C"];
 
-/** area/scatter/radar — recharts, the same way the legacy builder draws them. */
+/** area (no-svg fallback) — recharts AreaChart, the same way the legacy builder draws it. */
 function SeriesRechartsBlock({ spec, title }: { spec: ChartSpec; title?: string }) {
   const rows = toMarketRows(spec);
   const labels = (spec.series ?? []).map((s) => s.label);
@@ -108,34 +93,15 @@ function SeriesRechartsBlock({ spec, title }: { spec: ChartSpec; title?: string 
     <Box data-testid="report-chart" data-kind={spec.kind} my={4}>
       {title && <Text fontWeight="light" mb={2}>{title}</Text>}
       <ResponsiveContainer width="100%" height={280}>
-        {spec.kind === "area" ? (
-          <AreaChart data={rows}>
-            <XAxis dataKey="date" />
-            <YAxis />
-            <Tooltip />
-            <Legend />
-            {labels.map((l, i) => (
-              <Area key={l} type="monotone" dataKey={l} stroke={SERIES_COLORS[i % SERIES_COLORS.length]} fill={SERIES_COLORS[i % SERIES_COLORS.length]} fillOpacity={0.25} />
-            ))}
-          </AreaChart>
-        ) : spec.kind === "scatter" ? (
-          <ScatterChart>
-            <XAxis dataKey="date" name="Date" />
-            <YAxis dataKey={labels[0]} name={labels[0] ?? "value"} />
-            <ZAxis range={[40, 40]} />
-            <Tooltip cursor={{ strokeDasharray: "3 3" }} />
-            <Legend />
-            {labels.map((l, i) => (
-              <Scatter key={l} name={l} data={rows} dataKey={l} fill={SERIES_COLORS[i % SERIES_COLORS.length]} />
-            ))}
-          </ScatterChart>
-        ) : (
-          <RadarChart data={labels.map((l, i) => ({ subject: l, value: rows[rows.length - 1]?.[l] ?? 0, fill: SERIES_COLORS[i % SERIES_COLORS.length] }))}>
-            <PolarGrid />
-            <PolarAngleAxis dataKey="subject" />
-            <Radar dataKey="value" stroke="#5B7FDE" fill="#5B7FDE" fillOpacity={0.4} />
-          </RadarChart>
-        )}
+        <AreaChart data={rows}>
+          <XAxis dataKey="date" />
+          <YAxis />
+          <Tooltip />
+          <Legend />
+          {labels.map((l, i) => (
+            <Area key={l} type="monotone" dataKey={l} stroke={SERIES_COLORS[i % SERIES_COLORS.length]} fill={SERIES_COLORS[i % SERIES_COLORS.length]} fillOpacity={0.25} />
+          ))}
+        </AreaChart>
       </ResponsiveContainer>
     </Box>
   );
@@ -209,9 +175,11 @@ function ChartBlock({ spec, title }: { spec: ChartSpec; title?: string }) {
     );
   }
   const cat = spec.categories?.length && spec.values?.length;
-  if (cat && (spec.kind === "pie" || spec.kind === "donut" || spec.kind === "hbar" || spec.kind === "vbar" || spec.kind === "bar" || spec.kind === "movers")) {
+  if (cat) {
     const data = (spec.categories ?? []).map((name, i) => ({ name, value: spec.values?.[i] ?? 0 }));
-    if (spec.kind === "hbar" || spec.kind === "movers") {
+    if (spec.kind !== "vbar" && spec.kind !== "gbar") {
+      // hbar (and the honest fallback for any unknown categorical shape):
+      // magnitude bars inked by sign, value on hover
       return (
         <Box data-testid="report-chart" data-kind={spec.kind} my={4}>
           {title && <Text fontWeight="light" mb={2}>{title}</Text>}
@@ -232,35 +200,45 @@ function ChartBlock({ spec, title }: { spec: ChartSpec; title?: string }) {
       <Box data-testid="report-chart" data-kind={spec.kind} my={4}>
         {title && <Text fontWeight="light" mb={2}>{title}</Text>}
         <ResponsiveContainer width="100%" height={280}>
-          {spec.kind === "pie" || spec.kind === "donut" ? (
-            <PieChart>
-              <Pie data={data} dataKey="value" nameKey="name" outerRadius={100} innerRadius={spec.kind === "donut" ? 62 : 0}>
-                {data.map((_, i) => (
-                  <Cell key={i} fill={["#3182ce", "#38a169", "#d69e2e", "#e53e3e", "#805ad5"][i % 5]} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          ) : (
-            <BarChart data={data}>
-              <XAxis dataKey="name" />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="value" fill="#3182ce" />
-            </BarChart>
-          )}
+          <BarChart data={data}>
+            <XAxis dataKey="name" />
+            <YAxis />
+            <Tooltip />
+            <Bar dataKey="value" fill="#3182ce" />
+          </BarChart>
         </ResponsiveContainer>
       </Box>
     );
   }
-  if (spec.kind === "area" || spec.kind === "scatter" || spec.kind === "radar") {
+  // Grid specs (table/matrix) without a stored SVG render as a plain HTML
+  // table — the honest fallback for legacy documents.
+  if (spec.columns?.length && spec.rows?.length) {
+    return (
+      <Box data-testid="report-chart" data-kind={spec.kind} my={4} overflowX="auto">
+        {title && <Text fontWeight="light" mb={2}>{title}</Text>}
+        <Table>
+          <TableHeader>
+            <TableRow>{spec.columns.map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow>
+          </TableHeader>
+          <TableBody>
+            {spec.rows.map((row, ri) => (
+              <TableRow key={ri}>
+                {row.map((cell, ci) => (
+                  <TableCell key={ci}>{typeof cell === "object" ? cell.text : String(cell ?? "")}</TableCell>
+                ))}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Box>
+    );
+  }
+  if (spec.kind === "area") {
     return <SeriesRechartsBlock spec={spec} title={title} />;
   }
-  // Candles need o/h/l on the points; without them the chart draws a line.
-  const variant = spec.kind === "candle" && rows[0]?.open != null ? "candle" : spec.kind === "bar" ? "volume" : "line";
   return (
     <Box data-testid="report-chart" data-kind={spec.kind} my={4}>
-      <MarketChart data={rows} variant={variant} title={title} />
+      <MarketChart data={rows} variant="line" title={title} />
     </Box>
   );
 }
@@ -340,12 +318,10 @@ function FigureBlock({
   section,
   sources,
   figN,
-  interactive = false,
 }: {
   section: Extract<Section, { type: "chart" }>;
   sources: Source[];
-  figN: number;
-  interactive?: boolean;
+  figN?: number;
 }) {
   const svgs = section.svgs ?? [];
   const src = section.sourceId ? sources.find((s) => s.id === section.sourceId) : undefined;
@@ -353,20 +329,13 @@ function FigureBlock({
   return (
     <Box data-testid="report-figure" data-fig={figN} className="fig-frame">
       <Flex className="fig-head">
-        <Text as="span" className="fig-n">Fig. {figN}</Text>
+        {figN != null && <Text as="span" className="fig-n">Fig. {figN}</Text>}
         <Text className="fig-title">{section.title}</Text>
         {section.measure && <Text className="fig-measure">{section.measure}</Text>}
       </Flex>
-      {interactive ? (
-        <Box className="fig-body">
-          <ChartBlock spec={section.spec} title={undefined} />
-          {section.panels?.map((p, i) => <ChartBlock key={i} spec={p} title={undefined} />)}
-        </Box>
-      ) : (
-        svgs.map((svg, i) => (
-          <Box key={i} className="fig-body" dangerouslySetInnerHTML={{ __html: svg }} />
-        ))
-      )}
+      {svgs.map((svg, i) => (
+        <Box key={i} className="fig-body" dangerouslySetInnerHTML={{ __html: svg }} />
+      ))}
       {section.caption && <Text className="fig-cap">{section.caption}</Text>}
       <Flex className="fig-foot">
         {src ? (
@@ -386,17 +355,21 @@ function FigureBlock({
   );
 }
 
-/** Stat kind → KPI card: own title + coloured tagline over the big-number SVG,
- * never a Fig. N plot frame. */
-function StatCard({ section, sources }: { section: Extract<Section, { type: "chart" }>; sources: Source[] }) {
+/** Card kinds (kpi-card / stat-spark) → KPI card: own title + coloured
+ *  tagline over the card SVG, never a Fig. N plot frame. stat-spark panels
+ *  lay out as one card row. */
+function CardBlock({ section, sources }: { section: Extract<Section, { type: "chart" }>; sources: Source[] }) {
   const svgs = section.svgs ?? [];
   const src = section.sourceId ? sources.find((s) => s.id === section.sourceId) : undefined;
+  const row = section.spec.kind === "stat-spark" && svgs.length > 1;
   return (
     <Box data-testid="report-stat" className="stat-card">
       {section.title && <Text className="stat-title">{section.title}</Text>}
       {section.tagline && <Text className="sec-tagline">{section.tagline}</Text>}
       {svgs.length ? (
-        svgs.map((svg, i) => <Box key={i} className="fig-body" dangerouslySetInnerHTML={{ __html: svg }} />)
+        <Flex className={row ? "card-row" : undefined} gap={row ? 3 : 0} wrap={row ? "wrap" : undefined}>
+          {svgs.map((svg, i) => <Box key={i} className="fig-body" dangerouslySetInnerHTML={{ __html: svg }} />)}
+        </Flex>
       ) : (
         <ChartBlock spec={section.spec} title={undefined} />
       )}
@@ -519,26 +492,25 @@ function SectionView({
         </Box>
       );
     case "chart": {
-      // stat kind = a KPI card (own title + tagline), not a Fig. plot frame.
-      if (section.spec.kind === "stat") return <StatCard section={section} sources={sources} />;
-      // Everything else draws live inside the frame (hover readout): lines and
-      // candles on the crosshair chart, categorical on recharts tooltips —
-      // the stored SVG still powers the SVG/PNG downloads. `table`/categorical
-      // radar keep the assembly's static Almanac SVG (no honest hover there).
+      // Cards (kpi-card / stat-spark) render as KPI cards, not Fig. plot frames.
       const k = section.spec.kind;
-      // table / radar: no honest client hover — keep the static Almanac SVG.
-      // movers: live only when it carries categories (its real shape).
-      const interactive = k === "movers" ? !!section.spec.categories?.length : k !== "table" && k !== "radar";
-      if (section.svgs?.length && figN != null)
-        return <FigureBlock section={section} sources={sources} figN={figN} interactive={interactive} />;
-      return (
-        <Box my={4}>
-          <ChartBlock spec={section.spec} title={section.title} />
-          {section.panels?.map((p, i) => <ChartBlock key={i} spec={p} title={section.title} />)}
-          {section.caption && <Text fontSize="sm" color="fg.muted">{section.caption}</Text>}
-          <SourceNote sourceId={section.sourceId} sources={sources} />
-        </Box>
-      );
+      if (k === "kpi-card" || k === "stat-spark")
+        return <CardBlock section={section} sources={sources} />;
+      // Stored SVGs carry the Almanac design AND the hover layer (CSS baked
+      // into the SVG: crosshair readouts, bar values) — prefer them whenever
+      // assembly produced them. ChartBlock (live recharts / MarketChart) is
+      // the fallback for missing SVGs.
+      if (!section.svgs?.length) {
+        return (
+          <Box my={4}>
+            <ChartBlock spec={section.spec} title={section.title} />
+            {section.panels?.map((p, i) => <ChartBlock key={i} spec={p} title={section.title} />)}
+            {section.caption && <Text fontSize="sm" color="fg.muted">{section.caption}</Text>}
+            <SourceNote sourceId={section.sourceId} sources={sources} />
+          </Box>
+        );
+      }
+      return <FigureBlock section={section} sources={sources} figN={figN} />;
     }
     case "diagram":
       return (
@@ -605,16 +577,24 @@ function SectionView({
         </Box>
       );
     case "citations": {
-      // Footnotes, not a sources list: order from assembly (refs = legacy fallback)
-      const ids = footnotes ?? section.refs;
-      const notes = ids
-        .map((id) => ({ id, src: sources.find((s) => s.id === id) }))
-        .filter((n): n is { id: string; src: Source } => !!n.src);
+      // Legacy: refs are source ids (order from doc.footnotes, resolved via the
+      // registry). Current: refs are the agent-written { source, url } pairs.
+      // The cast widens the flat-Section string[] — v2 blocks flow through
+      // flattenSections and may carry objects.
+      const ordered = (footnotes ?? section.refs) as (string | { source: string; url?: string })[];
+      type CitationNote = { key: string; src: { label: string; url?: string; value?: string } };
+      const notes = ordered
+        .map((r): CitationNote | null => {
+          if (typeof r !== "string") return { key: r.source, src: { label: r.source, url: r.url, value: "" } };
+          const src = sources.find((s) => s.id === r);
+          return src ? { key: r, src } : null;
+        })
+        .filter((n): n is CitationNote => !!n);
       if (!notes.length) return null;
       return (
         <Box data-testid="report-footnotes" className="footnotes">
           {notes.map((n, i) => (
-            <Box key={n.id} data-testid="report-footnote" data-source-id={n.id} className="fn">
+            <Box key={n.key} data-testid="report-footnote" data-source-id={n.key} className="fn">
               <sup>{i + 1}</sup>
               <span>
                 {n.src.url ? (
@@ -636,8 +616,7 @@ function SectionView({
 
 /** v2 nested sections → the flat block list SectionView already renders.
  *  text becomes a paragraph carrying its level (1 = claim/lead, 2 = detail);
- *  the section heading becomes a heading block; figure blocks pass through
- *  with sourceId so the Source line prints beneath them. */
+ *  the section heading becomes a heading block; figure blocks pass through. */
 function flattenSections(doc: ReportDocument): Section[] {
   if (!isV2(doc)) return doc.sections as Section[];
   return (doc.sections as ReportSection[]).flatMap((sec): Section[] => [
@@ -656,7 +635,7 @@ export function ReportDocumentRenderer({ document }: { document: ReportDocument 
   const figOf = new Map<number, number>();
   sections.forEach((s, i) => {
     // stat cards are not plots — they never take a Fig. N number
-    if (s.type === "chart" && s.spec.kind !== "stat") figOf.set(i, ++figSeq);
+    if (s.type === "chart" && s.spec.kind !== "kpi-card" && s.spec.kind !== "stat-spark") figOf.set(i, ++figSeq);
   });
   return (
     <Box data-testid="report-document" data-symbol={document.symbol} className="almanac-report dom-economy">

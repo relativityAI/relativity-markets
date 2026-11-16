@@ -19,7 +19,7 @@
  */
 
 import { z } from "zod";
-import type { MdIssue } from "./mdconfig.js";
+import type { MdIssue } from "./md-issue.js";
 
 export interface AgentSkillRef {
   skill_id: string;
@@ -199,15 +199,18 @@ export function fixAgentMarkdown(raw: string): string | null {
   return out.trim() === raw.trim() ? null : out.trimEnd();
 }
 
-/** Serialize an agent config to markdown; opaque sections survive round-trips. */
-export function serializeAgentMd(agent: AgentConfigV3, prevMd?: string): string {
+/** Serialize an agent config to markdown; opaque sections survive round-trips.
+ *  `extraOverride` replaces the previous file's passthrough frontmatter — the
+ *  store uses it to write the machine fields (model, budget, allowed_tools…). */
+export function serializeAgentMd(agent: AgentConfigV3, prevMd?: string, extraOverride?: [string, string][]): string {
   const prev = prevMd ? parseAgentMd(prevMd) : { opaque: [], extraFrontmatter: [] };
+  const extras = extraOverride ?? prev.extraFrontmatter;
   const L: string[] = [];
 
   L.push("---");
   L.push(`name: ${agent.name}`);
   L.push(`description: ${agent.description || ""}`);
-  for (const [k, v] of prev.extraFrontmatter) L.push(`${k}: ${v}`);
+  for (const [k, v] of extras) L.push(`${k}: ${v}`);
   L.push("---", "");
 
   L.push("## Philosophy", "", agent.persona.philosophy || "(no philosophy written)", "");

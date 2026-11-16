@@ -19,10 +19,11 @@ WORKDIR /app
 ENV NODE_ENV=production PORT=8080 SQLITE_PATH=/app/data/relativity.db
 COPY --from=api /src/services/dist ./dist
 # Runtime reads these relative to cwd: skills (config/skills), skill-repos.json,
-# harness defaults/config. See services/harness/skills/store.ts + api/config.ts.
+# harness prompt assets + default agents. See harness/skills.ts + harness/config.ts.
 COPY --from=api /src/services/config ./config
 COPY --from=api /src/services/assets ./assets
-COPY --from=api /src/services/harness ./harness
+COPY --from=api /src/services/harness/assets ./harness/assets
+COPY --from=api /src/services/harness/agent-defaults ./harness/agent-defaults
 COPY services/package*.json ./
 RUN npm ci --omit=dev
 # Container cwd is /app, so the client build sits one level *down* (dev runs

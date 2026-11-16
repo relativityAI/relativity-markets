@@ -8,10 +8,10 @@
 
 import { Resvg } from "@resvg/resvg-js";
 import { createRequire } from "node:module";
-import type { ReportBlock } from "../harness/agent.js";
+import type { ReportBlock } from "../harness/report/legacy-blocks.js";
 import type { ChartSpec, ReportDocument } from "../harness/index.js";
 import { log } from "./logger.js";
-import { agentChipPng, agentSeed } from "../harness/agentIdentity.js";
+import { agentChipPng, agentSeed } from "../harness/identity.js";
 import { LOGO_PNG_DATA_URI } from "./reportLogo.js";
 import { NSE_LOGO_DATA_URI, SEC_LOGO_DATA_URI } from "./exchangeLogos.js";
 import { tickerLogoDataUri } from "./tickerLogos.js";
@@ -1165,12 +1165,6 @@ function chartRows(spec: ChartSpec): { data: Record<string, string | number>[]; 
   for (const series of spec.series ?? []) {
     for (const p of series.points) {
       const row = rows.get(p.t) ?? { date: new Date(p.t < 1e12 ? p.t * 1000 : p.t).toISOString().slice(0, 10) };
-      if (spec.kind === "candle" && p.o != null) {
-        row.open = p.o;
-        row.high = p.h ?? p.v;
-        row.low = p.l ?? p.v;
-        row.close = p.v;
-      }
       row[series.label] = p.v;
       rows.set(p.t, row);
     }
@@ -1180,21 +1174,24 @@ function chartRows(spec: ChartSpec): { data: Record<string, string | number>[]; 
 }
 
 type LegacyChartType = Extract<ReportBlock, { type: "chart" }>["chartType"];
-/** New kinds → the legacy PNG chart families. `table` never reaches here (pushChart handles it). */
+/** New kinds → the legacy PNG chart families. `table`/`matrix` never reach here (pushChart handles them). */
 const CHART_TYPE = (kind: ChartSpec["kind"]): LegacyChartType =>
-  kind === "candle" ? "candlestick"
-  : kind === "stat" || kind === "multiline" ? "line"
-  : kind === "donut" ? "pie"
-  : kind === "vbar" || kind === "hbar" || kind === "bar" || kind === "gbar" || kind === "movers" || kind === "table" ? "bar"
-  : kind;
+  kind === "kpi-card" || kind === "stat-spark" || kind === "multiline" ? "line"
+  : "bar";
 
 /** Typed ReportDocument (v1 flat or v2 nested) → legacy blocks, reusing the existing block renderers. */
 export function documentToBlocks(doc: ReportDocument): ReportBlock[] {
   const out: ReportBlock[] = [];
   const pushChart = (spec: ChartSpec, title?: string) => {
-    // The table figure IS a legacy table — ship it as one, no PNG round-trip.
-    if (spec.kind === "table" && spec.columns?.length && spec.rows?.length) {
-      out.push({ type: "table", title, columns: spec.columns, rows: spec.rows, sourceKeys: [] });
+    // The table/matrix figure IS a legacy table — ship it as one, no PNG round-trip.
+    if ((spec.kind === "table" || spec.kind === "matrix") && spec.columns?.length && spec.rows?.length) {
+      out.push({
+        type: "table",
+        title,
+        columns: spec.columns,
+        rows: spec.rows.map((r) => r.map((c) => (c != null && typeof c === "object" ? c.text : c)) as (string | number)[]),
+        sourceKeys: [],
+      });
       return;
     }
     const { data, sourceKeys } = chartRows(spec);

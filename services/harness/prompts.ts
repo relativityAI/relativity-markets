@@ -1,99 +1,100 @@
 /**
- * Prompt assembly — everything we hand the model, in one place.
+ * System prompts — drop-in markdown presentation specs, selectable per run.
  *
- * Owns the text-only tool set (what the plot reference may promise), the
- * per-turn date prefix, and the v2 planner/drafter system prompts. v1's
- * system assembly stays in canvas/run — it is interleaved with that run's
- * slots, format gaps, and reminders — but it consumes the helpers here.
- *
- * The contract, plot reference, skill activation, and report structure are
- * NOT redefined here: they live in report/reference.ts and skills/activate.ts
- * and get composed into the prompts below.
+ * Storage: `agents/config/prompts/*.md`, one file per named system prompt,
+ * mapped by key in config/agent.yaml `prompts:`. Each file's YAML frontmatter
+ * is the machine-enforceable rules; its prose is the agent's system
+ * instructions. Report structure is NOT defined here — the active skill's
+ * report-structure owns it.
  */
 
-import { asSchema } from "ai";
-import { activateSkill, reportStructureBlock } from "./skills/activate.js";
-import type { HarnessSkill } from "./skills/loader.js";
-import type { ToolDefinition } from "./tools/registry.js";
-import { plotReferenceMarkdown, sectionContractMarkdown } from "./report/reference.js";
-import { SECTION_TOOL } from "./plan/plan.js";
+import { readFileSync } from "node:fs";
+import { parse as parseYaml } from "yaml";
+import { promptDocPath, promptNames } from "./config.js";
 
-// Data tools that only return text — nothing for the harness to plot.
-// ponytail: any other data tool is assumed series-capable (mcp data tools);
-// add it here if a text-only data tool ships. get_price_history stays OUT —
-// it is the series tool whose absence locks the plot reference.
+export interface SystemPrompt {
+  id: string;
+  name: string;
+  description: string;
+  body: string;
+  default?: boolean;
+  required_sections?: string[];
+  min_charts?: number;
+  section_order?: string[];
+  require_sources?: boolean;
+  never_substitute?: string[];
+  allowed_primitives?: string[];
+}
+
+const DEFAULT_ID = "default";
+/** agent.yaml's default system prompt role — its file is the default choice. */
+const DEFAULT_ROLE = "agents";
+
+function titleFrom(id: string, body: string): string {
+  const heading = body.match(/^#\s+(.+)$/m)?.[1]?.trim();
+  return heading || id.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function parsePrompt(id: string, raw: string): SystemPrompt {
+  let frontmatter: Record<string, any> = {};
+  let body = raw;
+  const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  if (m) {
+    frontmatter = (parseYaml(m[1]) as Record<string, any>) ?? {};
+    body = raw.slice(m[0].length);
+  }
+  return {
+    id,
+    name: String(frontmatter.name || titleFrom(id, raw)),
+    description: String(frontmatter.description || ""),
+    body: body.trim(),
+    default: frontmatter.default === true || id === DEFAULT_ID,
+    required_sections: Array.isArray(frontmatter.required_sections) ? frontmatter.required_sections.map(String) : undefined,
+    min_charts: Number.isFinite(frontmatter.min_charts) ? Number(frontmatter.min_charts) : undefined,
+    section_order: Array.isArray(frontmatter.section_order) ? frontmatter.section_order.map(String) : undefined,
+    require_sources: frontmatter.require_sources === true,
+    never_substitute: Array.isArray(frontmatter.never_substitute) ? frontmatter.never_substitute.map(String) : undefined,
+    allowed_primitives: Array.isArray(frontmatter.allowed_primitives) ? frontmatter.allowed_primitives.map(String) : undefined,
+  };
+}
+
+/** Every named system prompt; re-read per call so an edit is live. */
+export function loadSystemPrompts(dir?: string): SystemPrompt[] {
+  const out: SystemPrompt[] = [];
+  for (const name of promptNames(dir)) {
+    const path = promptDocPath(name, dir);
+    if (!path) continue;
+    try {
+      const tpl = parsePrompt(name, readFileSync(path, "utf8"));
+      out.push({ ...tpl, default: tpl.default || name === DEFAULT_ROLE });
+    } catch {
+      // unreadable prompt file = skipped; the run falls back to the default
+    }
+  }
+  return out;
+}
+
+/** The prompt chosen by name; absent/unknown id → the default (`agents`). */
+export function getSystemPrompt(id?: string, dir?: string): SystemPrompt | null {
+  const all = loadSystemPrompts(dir);
+  return (id ? all.find((t) => t.id === id) : null) ?? all.find((t) => t.default) ?? all[0] ?? null;
+}
+
+/** `{{name}}` placeholders → run values (symbol, title, date, source, agent). */
+export function applyVariables(text: string, vars: Record<string, string | undefined>): string {
+  return text.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (whole, key: string) => vars[key.toLowerCase()] ?? whole);
+}
+
+/** Data tools that only return text — nothing for the plot reference to promise. */
 export const TEXT_TOOLS = new Set(["web_search", "search_news", "web_fetch", "get_quote", "get_fundamentals", "search_symbol", "get_insights"]);
 
 /** True when at least one data tool can return series for the plot reference. */
-export function hasSeriesTool(tools: ToolDefinition[]): boolean {
-  return tools.some((t) => !TEXT_TOOLS.has(t.name));
+export function hasSeriesTool(toolNames: Iterable<string>): boolean {
+  for (const n of toolNames) if (!TEXT_TOOLS.has(n)) return true;
+  return false;
 }
 
-/**
- * Date lives per-turn (never in the static system prompt — second-precise
- * stamps in the prefix would bust the provider's prompt cache).
- */
+/** Date lives per-turn (never in the static system prompt — cache killer). */
 export function datedPrompt(text: string): string {
   return `Today's date: ${new Date().toISOString().slice(0, 10)}\n\n${text}`;
-}
-
-// JSON schema goes INTO the prompt (asSchema) because the opencode-compatible
-// gateway rejects response_format/json_schema — the same pattern verdict.ts uses.
-function toolCatalog(tools: ToolDefinition[]): string {
-  return tools
-    .map((t) => `- ${t.name}: ${t.description}\n  input JSON Schema: ${JSON.stringify(asSchema(t.parameters).jsonSchema)}`)
-    .join("\n");
-}
-
-/** Step 1 system prompt — plans data fetches AND one draft task per section. */
-export function plannerSystemPrompt(tools: ToolDefinition[], skill: HarnessSkill): string {
-  return [
-    "You are the PLANNING step of a report-generation pipeline. You do NOT execute anything — you emit ONE JSON plan and nothing else.",
-    "Reply with exactly one JSON object:",
-    '{"version":"1.0.0","planId":"<slug>","target":{"entity":"<TICKER>","domain":"<domain>"},"executionMode":"map_reduce","tasks":[{"id":"<slug>","name":"<2-6 words>","description":"<what and why>","tool":"<name>","input":{...},"dependsOn":[],"status":"pending","outputRef":null,"error":null}]}',
-    "Rules:",
-    `- data tasks: \`tool\` from the catalog below; \`input\` must match its JSON Schema exactly (every argument pre-decided — no placeholders)`,
-    `- section tasks: \`tool\` "${SECTION_TOOL}", \`input\`: {"sectionId":"<slug>","title":"<heading>","figures":[...]}, \`dependsOn\` the data tasks whose evidence it needs`,
-    "- one section task per section of the report structure below, in reading order",
-    "- figures: BEFORE writing tasks, pick the 5 most relevant figures for the WHOLE report and spread them across section tasks as `input.figures` — each entry is a chart block minus `type`/`sourceId`: {\"title\":\"…\",\"measure\":\"…\",\"color\":\"#…\",\"spec\":{\"kind\":\"…\",\"data\":\"price, sma200\"}}. Time-series figures use the data tokens below; categorical figures (hbar/vbar/pie/stat) name `spec.categories` and leave `values` for the drafter to fill from evidence. Each figure lands in EXACTLY one section — no duplicates, no per-section quotas, some sections get none.",
-    "- max 16 tasks total; dependencies must reference existing ids and never form a cycle",
-    "- statuses start \"pending\", outputRef/error are null — the harness fills them",
-    "Tools (data tasks):",
-    toolCatalog(tools),
-    "",
-    "# Skill instructions (body only — references are drafting material, not planning)",
-    `# Skill: ${skill.name} (${skill.id})\n\n${skill.body}`,
-    "",
-    "# Plots — the chart kinds and data tokens `input.figures` may use",
-    plotReferenceMarkdown(hasSeriesTool(tools)),
-    "",
-    reportStructureBlock([skill]),
-  ]
-    .filter((p) => p)
-    .join("\n\n");
-}
-
-/** Step 3 system prompt — one section per call, score included. */
-export function draftSystemPrompt(skill: HarnessSkill, hasSeries: boolean): string {
-  return [
-    "You draft ONE section of an investment report. All collected evidence is pre-loaded in the prompt — you should NOT need to read files at all; the fs tools exist only for a genuinely missing detail (never fs_write/fs_append, and there is NO web search; never ask for one).",
-    "Your FINAL message must be the JSON object itself, nothing else — a reply that is prose, notes, or a file pointer is a failed draft.",
-    "Follow the skill instructions and the report structure below. Every number gets a source highlight; cite evidence as [src:<id>].",
-    "Reply with ONLY one JSON object and nothing else:",
-    '{"sections":[<section per the contract>],"sources":[{"id":"s1","label":"...","tool":"...","value":"..."}],"score":<integer 1-10>}',
-    "`score` = this section's quality out of 10 (completeness, evidence behind claims, figures carrying measure+source, number discipline). Be harsh: 5 = thin, 8 = solid, 10 = nothing to improve.",
-    "",
-    "# Report section contract",
-    sectionContractMarkdown(),
-    "",
-    "# Plots — chart kinds and the data tokens the harness expands at assembly (never invent token names)",
-    plotReferenceMarkdown(hasSeries),
-    "",
-    "# Skill instructions",
-    activateSkill(skill),
-    "",
-    reportStructureBlock([skill]),
-  ]
-    .filter((p) => p)
-    .join("\n\n");
 }

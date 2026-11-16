@@ -9,7 +9,7 @@ import { supabase } from "@/lib/supabase";
 export interface TraceEvent {
     seq: number;
     ts: number;
-    type: "thought" | "tool_call" | "tool_result" | "decision" | "step" | "log" | "phase" | "canvas_block";
+    type: "thought" | "tool_call" | "tool_result" | "decision" | "step" | "log" | "phase" | "canvas_block" | "usage";
     key: string;
     text?: string;
     tool?: string;
@@ -26,6 +26,8 @@ export interface TraceEvent {
     error?: string;
     /** Pipeline phase for grouping (run | assemble). */
     phase?: string;
+    /** usage event — the run's final LLM token tally (harness runs). */
+    value?: { tokens_in?: number; tokens_out?: number; peak_input?: number; tool_calls?: number };
 }
 
 type Segment =

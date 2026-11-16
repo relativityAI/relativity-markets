@@ -1,21 +1,20 @@
 /**
  * Report quality verdict — ONE call after the stitch.
  *
- * generateText + extractJson, NOT generateObject: the opencode-compatible
- * gateway rejects response_format/json_schema ("responseFormat is not
- * supported"), so structured mode silently returns prose and parse fails.
- * extractJson (fence-aware, jsonrepair) is the parse this codebase already
- * trusts; zod picks the band. A failed call yields null — never a fabricated
- * grade — and never touches the report. Outside the loop: zero steps, zero
- * budget tokens (ponytail: not counted into budgetUsed).
+ * Plain text completion + extractJson, NOT structured output: the
+ * opencode-compatible gateway rejects response_format/json_schema
+ * ("responseFormat is not supported"), so structured mode silently returns
+ * prose and parsing fails. extractJson (fence-aware, jsonrepair) is the parse
+ * this codebase already trusts; zod picks the band. A failed call yields
+ * null — never a fabricated grade — and never touches the report. Outside
+ * the loop: zero steps, zero budget tokens.
  */
-import { generateText, type LanguageModel } from "ai";
+import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import { z } from "zod";
-import { retryLlmCall } from "../resilience.js";
-import { log } from "../log.js";
-import { dumpMarkdown } from "../cli/dump.js";
+import { dumpMarkdown } from "../dump.js";
 import { extractJson } from "./builder.js";
 import type { ReportDocument } from "./document.js";
+import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 
 /** Grading input: the report as markdown, SVGs collapsed, capped at 14k. */
 export function reportDigest(document: ReportDocument): string {
@@ -37,32 +36,24 @@ const SYSTEM =
 export async function gradeReport(o: {
   /** Digest of the final document (dumpMarkdown with SVGs stripped). */
   text: string;
-  model: LanguageModel;
+  model: BaseChatModel;
   abortSignal?: AbortSignal;
 }): Promise<Verdict | null> {
   if (o.abortSignal?.aborted) return null;
   try {
-    return await retryLlmCall(
-      "report verdict",
-      async (signal) => {
-        const r = await generateText({
-          model: o.model,
-          system: SYSTEM,
-          prompt: o.text,
-          temperature: 0,
-          // Reasoning models burn the cap on thinking first — 100 tokens left
-          // an empty text and every grade failed. Headroom, not output size.
-          maxOutputTokens: 2_000,
-          abortSignal: signal,
-        });
-        const parsed = VerdictSchema.safeParse(extractJson(r.text ?? ""));
-        if (!parsed.success) throw new Error(`unparseable verdict: ${(r.text ?? "").slice(0, 120)}`);
-        return parsed.data.verdict;
-      },
-      { attempts: 2, timeoutMs: 60_000, check: (v) => !!v },
-    );
+    const model = o.model;
+    const r = await model.invoke([new SystemMessage(SYSTEM), new HumanMessage(o.text)], {
+      // ponytail: maxTokens isn't in the BaseChatModelCallOptions type but every
+      // chat model honors it; the cast keeps the grading cap without threading
+      // another buildModel parameter.
+      maxTokens: 2_000,
+      ...(o.abortSignal ? { signal: o.abortSignal } : {}),
+    } as any);
+    const parsed = VerdictSchema.safeParse(extractJson(typeof r.content === "string" ? r.content : ""));
+    if (!parsed.success) return null;
+    return parsed.data.verdict;
   } catch (e: any) {
-    log.warn("verdict", `grading failed — ${String(e?.message || e).slice(0, 200)}`);
+    console.warn(`[verdict] grading failed — ${String(e?.message || e).slice(0, 200)}`);
     return null;
   }
 }
