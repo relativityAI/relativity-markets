@@ -1,0 +1,7 @@
+# Agent class/category list — shown in the agent-creation popup's Category
+# dropdown and enforced by POST /agents. One category per agent. Edit this
+# file to change the list; no code change needed.
+agent_categories:
+  - equity
+  - industry
+  - commodities

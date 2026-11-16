@@ -200,7 +200,7 @@ export default function NavBar() {
               aria-label="Search stocks"
               aria-expanded={searchOpen}
               aria-haspopup="listbox"
-              className="h-8 w-52 rounded-[4px] border border-[var(--hairline)] bg-[var(--surface-recessed)] pr-2 pl-8 font-[family-name:var(--font-body)] text-sm font-normal text-[var(--ink-primary)] outline-none focus:border-[var(--ink-tertiary)]"
+              className="h-8 w-52 rounded-full border border-[var(--hairline)] bg-[var(--surface-recessed)] pr-3 pl-8 font-[family-name:var(--font-body)] text-sm font-normal text-[var(--ink-primary)] outline-none focus:border-[var(--ink-tertiary)]"
             />
           </div>
           {searchOpen && query.trim() !== "" && (
@@ -308,7 +308,7 @@ export default function NavBar() {
 
       {/* Level 2 — nav links (horizontally scrollable, scrollbar hidden) */}
       <div className="overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div className="px-6 flex items-center justify-between gap-6 h-9 font-[family-name:var(--font-body)] font-light min-w-max">
+        <div className="px-6 flex items-center gap-6 h-9 font-[family-name:var(--font-body)] font-light min-w-max">
           <Link
             to="/"
             className={cn(
@@ -319,8 +319,9 @@ export default function NavBar() {
             )}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-[#C49A6C]" />
-            Overview
+            Home
           </Link>
+          <div className="h-4 w-px bg-[var(--hairline)]" />
           <div className="flex items-center gap-6">
             {[
               { to: "/my-workspace", label: "Agents & Skills", end: true, dot: "#7A8B9E" },

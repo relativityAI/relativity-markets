@@ -266,6 +266,8 @@ export interface ScheduleRow {
   max_tokens: number | null;
   time: string;
   timezone: string;
+  frequency: string;
+  start_date: string | null;
   last_fired_date: string | null;
   created_at: string;
 }

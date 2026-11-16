@@ -26,6 +26,7 @@ import {
 import { fetchUserKeys, ensureUserSettings } from "./provision.js";
 import { getSourceStatuses } from "./datasources.js";
 import { getModelIds, getAvailableModelsForUser } from "./models.js";
+import { getAgentCategories, isValidAgentCategory } from "./categories.js";
 import { getSources, searchStocks } from "./discovery.js";
 import { tickerLogoUrl } from "./tickerLogos.js";
 import { getPriceHistory, toYahooSymbol } from "../harness/marketdata.js";
@@ -65,7 +66,7 @@ import {
 } from "../harness/index.js";
 import { installHarnessAdapters, harnessToView, viewToHarnessPatch } from "../harness/sqlite-adapters.js";
 import { runHarnessSymbol, startAnalysisRun, startStaleRunSweeper } from "./runs.js";
-import { startScheduleTicker, isValidTime, isValidTimeZone } from "./schedule.js";
+import { startScheduleTicker, isValidTime, isValidTimeZone, isValidFrequency, todayInTz } from "./schedule.js";
 import { extractText } from "./upload.js";
 import { VoyagerClient, toCountrySource } from "./voyager.js";
 import multer from "multer";
@@ -395,8 +396,13 @@ app.post("/agents", requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
     const patch = viewToHarnessPatch(req.body || {});
+    // One class/category per agent — required, and only configured ones.
+    if (!isValidAgentCategory(patch.category)) {
+      return res.status(400).json({ error: `category is required and must be one of: ${getAgentCategories().join(", ")}` });
+    }
     const created = await createHarnessAgent(userId, {
       name: patch.name || "Untitled Agent",
+      category: patch.category,
       soulPrompt: patch.soulPrompt,
       skillIds: patch.skillIds,
       allowedTools: patch.allowedTools,
@@ -424,6 +430,11 @@ app.get("/agents/defaults", (_req, res) => {
   );
 });
 
+/** Agent class/category list (services/config/categories.yaml) — static, no auth. */
+app.get("/agents/categories", (_req, res) => {
+  res.json(getAgentCategories());
+});
+
 app.get("/agents/:id", requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
@@ -447,7 +458,12 @@ app.put("/agents/:id", requireAuth, async (req, res) => {
     // Harness rows write straight back into `configuration`.
     const harness = await getHarnessAgent(userId, id);
     if (harness) {
-      const updated = await updateHarnessAgent(userId, id, viewToHarnessPatch(req.body || {}));
+      const patch = viewToHarnessPatch(req.body || {});
+      // Category optional on update (legacy agents have none) but never invalid.
+      if (patch.category !== undefined && !isValidAgentCategory(patch.category)) {
+        return res.status(400).json({ error: `category must be one of: ${getAgentCategories().join(", ")}` });
+      }
+      const updated = await updateHarnessAgent(userId, id, patch);
       if (!updated) return res.status(404).json({ error: "Agent not found" });
       return res.json(harnessToView(updated));
     }
@@ -774,10 +790,14 @@ app.post("/schedules", requireAuth, async (req, res) => {
     const source = String(body.source || "NSE").toUpperCase();
     const time = String(body.time || "").trim();
     const timezone = String(body.timezone || "").trim();
+    const frequency = String(body.frequency || "daily").trim();
     if (!symbol) return res.status(400).json({ error: "symbol is required" });
     if (source !== "NSE" && source !== "SEC") return res.status(400).json({ error: "source must be NSE or SEC" });
     if (!isValidTime(time)) return res.status(400).json({ error: "time must be HH:MM" });
     if (!isValidTimeZone(timezone)) return res.status(400).json({ error: "timezone must be a valid IANA zone" });
+    if (!isValidFrequency(frequency)) return res.status(400).json({ error: "frequency must be daily, weekly, biweekly or monthly" });
+    const startDate = body.start_date ? String(body.start_date).trim() : "";
+    if (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) return res.status(400).json({ error: "start_date must be YYYY-MM-DD" });
     const userId = (req as AuthedRequest).user.id;
     if (agentId && !(await getHarnessAgent(userId, agentId))) return res.status(404).json({ error: "Agent not found" });
 
@@ -797,6 +817,8 @@ app.post("/schedules", requireAuth, async (req, res) => {
       max_tokens: maxTokens,
       time,
       timezone,
+      frequency,
+      start_date: startDate || todayInTz(timezone),
     });
     res.json(data);
   } catch (e: any) {
@@ -1097,6 +1119,60 @@ app.get("/stocks/search", (req, res) => {
   const q = String(req.query.query || "");
   const source = String(req.query.source || "");
   res.json(searchStocks(q, source || undefined));
+});
+
+// Intraday chart closes for a sparkline — /market/chart/^NSEI?range=1d&interval=5m.
+// Yahoo interval rules bind interval to range, so both come from the caller.
+// Open on purpose: public market data, like /stocks/search. Index symbols
+// (^NSEI, ^NDX) pass through raw — no exchange-suffix mapping.
+const sparkCache = new Map<string, { at: number; closes: number[]; prevClose: number | null }>();
+const SPARK_TTL_MS = 60_000;
+
+app.get("/market/chart/:symbol", async (req, res) => {
+  const symbol = String(req.params.symbol || "").trim();
+  const range = String(req.query.range || "1d");
+  const interval = String(req.query.interval || "5m");
+  const source = String(req.query.source || "") || undefined;
+  // Stock symbols map by exchange (NSE → .NS); index symbols pass through.
+  const yahoo = toYahooSymbol(symbol, source);
+  const key = `${yahoo}:${range}:${interval}`;
+  const hit = sparkCache.get(key);
+  if (hit && Date.now() - hit.at < SPARK_TTL_MS) {
+    res.json({ symbol, closes: hit.closes, previous_close: hit.prevClose });
+    return;
+  }
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahoo)}?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}&includePrePost=false`;
+    const out = await fetch(url, {
+      signal: AbortSignal.timeout(15_000),
+      headers: { "user-agent": "Mozilla/5.0 (compatible; RelativityPortfolio/1.0)" },
+    });
+    if (!out.ok) {
+      res.set("Cache-Control", "no-store");
+      res.status(502).json({ error: `yahoo status ${out.status}` });
+      return;
+    }
+    const json: any = await out.json();
+    const result = json?.chart?.result?.[0];
+    const ts: number[] | undefined = result?.timestamp;
+    const closes: (number | null)[] | undefined = result?.indicators?.quote?.[0]?.close;
+    if (!ts?.length || !closes?.length) {
+      res.set("Cache-Control", "no-store");
+      res.status(502).json({ error: "no data" });
+      return;
+    }
+    const clean = ts.map((_, i) => closes[i]).filter((c): c is number => c != null);
+    if (clean.length < 2) {
+      res.set("Cache-Control", "no-store");
+      res.status(502).json({ error: "not enough points" });
+      return;
+    }
+    sparkCache.set(key, { at: Date.now(), closes: clean, prevClose: Number(result.meta?.previousClose ?? result.meta?.chartPreviousClose) || null });
+    res.set("Cache-Control", "no-store");
+    res.json({ symbol: result.meta?.symbol ?? symbol, closes: clean, previous_close: Number(result.meta?.previousClose ?? result.meta?.chartPreviousClose) || null });
+  } catch (e: any) {
+    res.status(502).json({ error: String(e?.message || e) });
+  }
 });
 
 // Stock page overview — one round trip: Yahoo quote (yfinance's source) +

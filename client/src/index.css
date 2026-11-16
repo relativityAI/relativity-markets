@@ -347,6 +347,76 @@ html.dark .sectoral-title {
   opacity: 1;
 }
 
+/* Home-page cards: hover glass, mirrors .agent-cell (fill + body blur +
+   cue overlay). Named class rather than hover:bg utilities — the global
+   no-hover-fill rule would switch those off; data-solid opts the card
+   out of the a:hover brightness tint. */
+.glass-hover {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  transition: background-color 160ms ease, border-radius 160ms ease;
+}
+.glass-hover:hover {
+  background-color: var(--surface-recessed);
+  border-radius: 16px;
+}
+.glass-hover-body {
+  transition: filter 160ms ease;
+}
+.glass-hover:hover .glass-hover-body {
+  filter: blur(4px);
+}
+.glass-hover-cue {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+.glass-hover:hover .glass-hover-cue,
+.glass-hover:focus-visible .glass-hover-cue {
+  opacity: 1;
+}
+
+/* Workspace (console) list rows: slight hover tint with rounded corners.
+   Named class rather than hover:bg utilities — the global no-hover-fill
+   rule would switch those off. */
+.ws-row {
+  transition: background-color 160ms ease;
+}
+.ws-row:hover {
+  background-color: var(--surface-recessed);
+}
+
+/* Box-header search (components/console/SectionSearch.tsx): the field is
+   always rendered and clipped by the wrapper — display:none would kill the
+   fade, since a hidden element has no prior computed style to transition
+   from. The wrapper's width does the expand; ml-auto in the header row
+   keeps the wrapper's right edge (and the pinned icon) in place. */
+.section-search {
+  width: 36px;
+  height: 36px;
+  overflow: hidden;
+  transition: width 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.section-search[data-open="true"] {
+  width: 192px;
+}
+.section-search-field {
+  width: 192px;
+  flex: none;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+.section-search[data-open="true"] .section-search-field {
+  opacity: 1;
+}
+
 /* DiceBear portraits: every SVG carries its own <style> with the same class
    names, so the cascade gives them all one clock and a row of avatars
    animates in lockstep. This rule outranks theirs (two classes) and phases

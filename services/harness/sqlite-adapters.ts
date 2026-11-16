@@ -33,6 +33,7 @@ function rowToDefinition(row: any): AgentDefinition | null {
     id: row.id,
     userId: row.user_id,
     name: row.name,
+    category: c.category ?? "",
     soulPrompt: c.soul_prompt ?? "",
     skillIds: (c.skill_ids ?? []).slice(0, 1),
     allowedTools: c.allowed_tools ?? [],
@@ -47,6 +48,7 @@ function toConfig(input: AgentInput, base?: Record<string, unknown>): Record<str
   return {
     ...(base ?? {}),
     harness_version: HARNESS_VERSION,
+    category: input.category ?? "",
     soul_prompt: input.soulPrompt ?? "",
     skill_ids: (input.skillIds ?? []).slice(0, 1),
     allowed_tools: input.allowedTools ?? [],
@@ -87,6 +89,7 @@ export const sqliteAgentRepository: AgentRepository = {
     const c = existing.configuration ?? {};
     const merged: AgentInput = {
       name: input.name ?? existing.name,
+      category: input.category !== undefined ? input.category : c.category ?? "",
       soulPrompt: input.soulPrompt ?? c.soul_prompt ?? "",
       skillIds: input.skillIds ?? c.skill_ids ?? [],
       allowedTools: input.allowedTools ?? c.allowed_tools ?? [],

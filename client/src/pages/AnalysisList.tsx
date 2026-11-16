@@ -137,15 +137,9 @@ function BarRow({
     return (
         <div className="group relative flex items-center gap-2.5 py-1">
             <span className="flex w-4 shrink-0 justify-center">{logo}</span>
-            <svg
-                className="h-2.5 min-w-0 flex-1 overflow-hidden"
-                viewBox="0 0 100 10"
-                preserveAspectRatio="none"
-                aria-hidden="true"
-            >
-                <rect width="100" height="10" fill="var(--surface-recessed)" />
-                <rect width={pct} height="10" fill="var(--accent-primary)" />
-            </svg>
+            <div className="h-2.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--surface-recessed)]" aria-hidden="true">
+                <div className="h-full rounded-full bg-[var(--accent-primary)]" style={{ width: `${pct}%` }} />
+            </div>
             <span className="w-5 shrink-0 text-right font-app-tabular text-[11px] tabular-nums text-[var(--ink-secondary)]">
                 {value}
             </span>
@@ -446,11 +440,12 @@ export default function AnalysisList() {
     );
 
     const completed = useMemo(() => {
+        // Same status rule the table rows use — verdict-carrying runs with no
+        // numeric score are still completed (the score-based rule painted the
+        // bar all-red).
+        const f = (a: any) => (a.status || "").toLowerCase();
         return uniqueAnalysis.filter(
-            (a) =>
-                a.total_score != null &&
-                (a.status || "").toLowerCase() !== "failed" &&
-                (a.status || "").toLowerCase() !== "error"
+            (a) => f(a) === "complete" || f(a) === "completed" || f(a) === "success",
         );
     }, [uniqueAnalysis]);
 
@@ -596,7 +591,7 @@ export default function AnalysisList() {
                             ) : (
                                 <div>
                                     <svg
-                                        className="h-12 w-full"
+                                        className="h-12 w-full overflow-hidden rounded-full"
                                         viewBox={`0 0 ${healthTotal} 48`}
                                         preserveAspectRatio="none"
                                         role="img"
@@ -661,13 +656,13 @@ export default function AnalysisList() {
                             type="single"
                             value={viewMode}
                             onValueChange={(v) => v && setViewMode(v as GroupMode)}
-                            className="h-auto flex-wrap gap-1 rounded-[3px] border-0 bg-transparent p-0"
+                            className="h-auto flex-wrap gap-1 rounded-full border-0 bg-transparent p-0"
                         >
                             {GROUP_VIEWS.map((v) => (
                                 <ToggleGroupItem
                                     key={v.key}
                                     value={v.key}
-                                    className="h-auto flex-none rounded-[2px] border px-2.5 py-1 text-[11.5px] font-normal whitespace-nowrap hover:bg-transparent hover:text-[var(--ink-primary)] data-[state=on]:border-[var(--hairline)] data-[state=on]:bg-[var(--surface-recessed)] data-[state=on]:font-semibold data-[state=on]:text-[var(--ink-primary)] data-[state=on]:shadow-none"
+                                    className="h-auto flex-none rounded-full border px-2.5 py-1 text-[11.5px] font-normal whitespace-nowrap hover:bg-transparent hover:text-[var(--ink-primary)] data-[state=on]:border-[var(--hairline)] data-[state=on]:bg-[var(--surface-recessed)] data-[state=on]:font-semibold data-[state=on]:text-[var(--ink-primary)] data-[state=on]:shadow-none"
                                 >
                                     {v.label}
                                 </ToggleGroupItem>
@@ -686,7 +681,7 @@ export default function AnalysisList() {
                                 aria-label="Search runs"
                                 value={query}
                                 onChange={(e) => setQuery(e.target.value)}
-                                className="h-9 w-full min-w-0 rounded-none border border-[var(--hairline)] bg-[var(--surface-recessed)] py-1 pr-2 pl-8 font-app-body text-[14px] font-normal text-[var(--ink-primary)] transition-colors outline-none placeholder:text-[var(--ink-tertiary)] focus:border-[var(--ink-secondary)]"
+                                className="h-9 w-full min-w-0 rounded-full border border-[var(--hairline)] bg-[var(--surface-recessed)] py-1 pr-4 pl-8 font-app-body text-[14px] font-normal text-[var(--ink-primary)] transition-colors outline-none placeholder:text-[var(--ink-tertiary)] focus:border-[var(--ink-secondary)]"
                             />
                         </div>
                     </div>

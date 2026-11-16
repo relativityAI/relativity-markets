@@ -23,6 +23,8 @@ export interface AgentDefinition {
   id: string;
   userId: string;
   name: string;
+  /** The agent's one class/category (services/config/categories.yaml). */
+  category: string;
   soulPrompt: string;
   skillIds: string[];
   allowedTools: string[];
@@ -38,6 +40,7 @@ const oneSkill = (ids?: string[]): string[] => (ids ?? []).slice(0, 1);
 
 export interface AgentInput {
   name: string;
+  category?: string;
   soulPrompt?: string;
   skillIds?: string[];
   allowedTools?: string[];
@@ -76,6 +79,7 @@ export function createMemoryAgentRepository(): AgentRepository {
         id: crypto.randomUUID(),
         userId,
         name: input.name,
+        category: input.category ?? "",
         soulPrompt: input.soulPrompt ?? "",
         skillIds: oneSkill(input.skillIds),
         allowedTools: input.allowedTools ?? [],
@@ -93,6 +97,7 @@ export function createMemoryAgentRepository(): AgentRepository {
       const merged: AgentDefinition = {
         ...existing,
         name: input.name ?? existing.name,
+        category: input.category !== undefined ? input.category : existing.category,
         soulPrompt: input.soulPrompt ?? existing.soulPrompt,
         skillIds: input.skillIds ? oneSkill(input.skillIds) : existing.skillIds,
         allowedTools: input.allowedTools ?? existing.allowedTools,

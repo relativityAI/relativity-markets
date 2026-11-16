@@ -85,6 +85,8 @@ CREATE TABLE IF NOT EXISTS schedules (
   max_tokens     INTEGER,
   time           TEXT NOT NULL,
   timezone       TEXT NOT NULL,
+  frequency      TEXT NOT NULL DEFAULT 'daily',
+  start_date     TEXT,
   last_fired_date TEXT,
   created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -179,11 +181,17 @@ function ensureSchema(d: DatabaseSync): void {
  * When the schema changes: append a {version, sql} entry (never edit old
  * ones), bump SCHEMA_VERSION to match, and cover it in db/tests.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
-// ponytail: list stays empty until the first post-v0.1.0 schema change;
-// upgrade coverage lives in services/db/tests/sqlite-migrations.test.ts.
-export const MIGRATIONS: { version: number; sql: string }[] = [];
+// v2: scheduled-run frequencies (daily/weekly/biweekly/monthly) — frequency
+// plus the first-run date the recurrence is anchored to. Existing rows keep
+// firing daily via the defaults.
+export const MIGRATIONS: { version: number; sql: string }[] = [
+  {
+    version: 2,
+    sql: "ALTER TABLE schedules ADD COLUMN frequency TEXT NOT NULL DEFAULT 'daily';\nALTER TABLE schedules ADD COLUMN start_date TEXT;",
+  },
+];
 
 export function migrateSqlite(
   d: DatabaseSync,

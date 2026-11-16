@@ -1,18 +1,21 @@
 import axios from "axios";
-import { supabase } from "@/lib/supabase";
+import { supabase, SUPABASE_AUTH } from "@/lib/supabase";
 import type { ReportDocument } from "@/lib/reportContract";
 
 export const API_BASE = import.meta.env.VITE_RELATIVITY_API || "/api";
 
-// Only attach the Supabase auth token — keys are now stored server-side.
+// Attach the Supabase auth token only in cloud mode — keys are stored server-side.
 axios.interceptors.request.use(async (config) => {
+    if (!SUPABASE_AUTH) return config; // local mode: server treats the request as the default user
     const { data } = await supabase.auth.getSession();
     const token = data.session?.access_token;
     if (token) config.headers.Authorization = `Bearer ${token}`;
     return config;
 });
 
-/** A daily scheduled run (schedules table). `time` is wall clock in `timezone`. */
+/** A scheduled run (schedules table). `time` is wall clock in `timezone`;
+ *  `frequency` picks daily / weekly / biweekly / monthly; `start_date`
+ *  ("YYYY-MM-DD") anchors the recurrence. */
 export interface ScheduleRow {
     id: string;
     symbol: string;
@@ -26,6 +29,8 @@ export interface ScheduleRow {
     max_tokens: number | null;
     time: string;
     timezone: string;
+    frequency: string;
+    start_date: string | null;
     last_fired_date: string | null;
     created_at: string;
 }
@@ -42,6 +47,12 @@ export const AgentService = {
     /** File-defined default agents (services/harness/agents/defaults/*.md). */
     async listDefaultAgents() {
         const response = await axios.get(`${API_BASE}/agents/defaults`);
+        return response.data;
+    },
+
+    /** Agent class/category list (services/config/categories.yaml). */
+    async listCategories() {
+        const response = await axios.get(`${API_BASE}/agents/categories`);
         return response.data;
     },
 
@@ -148,7 +159,8 @@ export const AnalysisService = {
         };
     },
 
-    /** Daily schedule: same run config + wall-clock time in an IANA timezone. */
+    /** Scheduled run: run config + frequency + anchor date + wall-clock time
+     *  in an IANA timezone. */
     async createSchedule(config: {
         symbol: string;
         share_name?: string;
@@ -158,6 +170,8 @@ export const AnalysisService = {
         system_prompt?: string;
         max_steps?: number;
         max_tokens?: number;
+        frequency?: string;
+        start_date?: string;
         time: string;
         timezone: string;
     }) {

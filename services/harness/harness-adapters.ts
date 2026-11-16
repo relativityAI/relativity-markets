@@ -43,6 +43,7 @@ function rowToDefinition(row: any): AgentDefinition {
     id: row.id,
     userId: row.user_id,
     name: row.name,
+    category: c.category ?? "",
     soulPrompt: c.soul_prompt ?? "",
     skillIds: (c.skill_ids ?? []).slice(0, 1),
     allowedTools: c.allowed_tools ?? [],
@@ -57,6 +58,7 @@ function toConfig(input: AgentInput, base?: Record<string, unknown>): Record<str
   return {
     ...(base ?? {}),
     harness_version: HARNESS_VERSION,
+    category: input.category ?? "",
     soul_prompt: input.soulPrompt ?? "",
     skill_ids: (input.skillIds ?? []).slice(0, 1),
     allowed_tools: input.allowedTools ?? [],
@@ -104,6 +106,7 @@ export const supabaseAgentRepository: AgentRepository = {
     const c = existing.configuration ?? {};
     const merged: AgentInput = {
       name: input.name ?? existing.name,
+      category: input.category !== undefined ? input.category : c.category ?? "",
       soulPrompt: input.soulPrompt ?? c.soul_prompt ?? "",
       skillIds: input.skillIds ?? c.skill_ids ?? [],
       allowedTools: input.allowedTools ?? c.allowed_tools ?? [],
@@ -191,6 +194,7 @@ export function harnessToView(d: AgentDefinition) {
     harness: true,
     created_at: d.createdAt,
     persona: { philosophy: d.soulPrompt },
+    category: d.category,
     skills: d.skillIds.map((skill_id) => ({ skill_id, weight: 5 })),
     soul_prompt: d.soulPrompt,
     skill_ids: d.skillIds,
@@ -206,6 +210,9 @@ export function harnessToView(d: AgentDefinition) {
 export function viewToHarnessPatch(body: Record<string, any>) {
   const patch: Record<string, any> = {};
   if (body.name !== undefined) patch.name = String(body.name);
+  // Truthy only — an absent or empty category means "no change", so legacy
+  // agents (and a wiped select) never blank out an existing category.
+  if (body.category) patch.category = String(body.category);
   const phil = body.soulPrompt ?? body.soul_prompt ?? body.philosophy
     ?? body.persona?.philosophy ?? body.persona?.philosophy_and_mindset;
   // A blank soul is never saved — an agent is its prompt; wiping one is almost
