@@ -42,7 +42,16 @@ if up; then
 fi
 
 echo "Starting Relativity: $URL  —  Ctrl+C stops it"
-echo "(first run downloads the Docker images — a few minutes)"
+if ! docker image inspect ghcr.io/relativityai/relativity-markets:latest >/dev/null 2>&1; then
+  echo "(first run downloads the Docker images — a few minutes)"
+fi
+# start NOW on local images; refresh ghcr in the background for the next run
+(
+  out=$(docker compose -f "$DIR/docker-compose.yml" pull 2>&1 || true)
+  case $out in
+  *Pull*) echo "Update downloaded — restart relativity to use it." ;;
+  esac
+) &
 # open the browser once the app answers; dies with this terminal
 (
   n=0

@@ -20,7 +20,10 @@ if not errorlevel 1 (
 )
 
 echo Starting Relativity: http://127.0.0.1:8080 - Ctrl+C stops it
-echo ^(first run downloads the Docker images - a few minutes^)
+docker image inspect ghcr.io/relativityai/relativity-markets:latest >nul 2>&1
+if errorlevel 1 echo ^(first run downloads the Docker images - a few minutes^)
+rem start now on local images; refresh ghcr in the background for the next run
+start "" /b cmd /c "docker compose pull >nul 2>&1"
 start "" /b cmd /c "docker compose up -d >nul 2>&1"
 
 set /a tries=0

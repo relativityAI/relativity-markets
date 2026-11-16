@@ -4,9 +4,6 @@
 services:
   app:
     image: ghcr.io/relativityai/relativity-markets:latest
-    # check ghcr for a newer build on every start (local `latest` would
-    # otherwise be reused forever)
-    pull_policy: always
     # Uncomment to build the image locally instead of pulling it:
     # build: .
     ports:
@@ -31,7 +28,6 @@ services:
 
   searxng:
     image: docker.io/searxng/searxng:latest
-    pull_policy: always
     ports:
       - "127.0.0.1:8888:8080"
     volumes:
