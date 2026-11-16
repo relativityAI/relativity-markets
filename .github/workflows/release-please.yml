@@ -3,10 +3,17 @@ name: release-please
 on:
   push:
     branches: [main]
+  # Backstop: merges made with GITHUB_TOKEN don't emit push events, so a
+  # scheduled run picks up an un-released merged release PR within 30 min.
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: write
+  # approving the release PR's workflow runs
+  actions: write
 
 jobs:
   release-please:
@@ -20,6 +27,33 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # The release PR's CI/security runs start out needing an actor approval,
+      # and the PR itself needs a merge — do both here so releases need zero
+      # human clicks. (If a run needs no approval, the approve loop is a no-op.)
+      - name: Approve + auto-merge the release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          HEAD=release-please--branches--main--components--relativity-markets
+          PR=$(gh pr list --head "$HEAD" --state open --json number -q '.[0].number // empty')
+          [ -n "$PR" ] || exit 0
+          SHA=$(gh pr view "$PR" --json headRefOid -q .headRefOid)
+          for _ in $(seq 1 30); do
+            total=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$SHA" --jq '.workflow_runs | length')
+            [ "$total" -gt 0 ] && break
+            sleep 2
+          done
+          sleep 3 # let the runs settle into their approval state
+          ids=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$SHA" \
+            --jq '[.workflow_runs[] | select(.conclusion == "action_required") | .id] | join(" ")')
+          for id in $ids; do
+            gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$id/approve" >/dev/null || true
+          done
+          if [ -z "$(gh pr view "$PR" --json autoMergeRequest -q '.autoMergeRequest.enabledAt // empty')" ]; then
+            gh pr merge --auto --squash "$PR"
+          fi
 
   # Tag resolution needs `steps`, but a job that CALLS a reusable workflow
   # can't have any (steps.uses needs an action.yml; workflows are called
