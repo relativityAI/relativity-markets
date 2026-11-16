@@ -24,68 +24,51 @@
 
 ## Table of Contents
 
-1. [Installation](#installation)
-2. [Usage](#usage)
-3. [Top contributors:](#top-contributors)
-4. [License](#license)
+1. [Prerequisites](#prerequisites)
+2. [Install](#install)
+3. [Usage](#usage)
+4. [Top contributors:](#top-contributors)
+5. [License](#license)
 
 
 
-## Installation
+## Prerequisites
 
-**Option 1 — Docker** ([get Docker](https://docs.docker.com/get-docker/))
+- **Git** — required
+- **Docker** — required (app + web search run on it)
+- **Windows:** [Git Bash](https://git-scm.com/download/win)
 
-```bash
-git clone https://github.com/relativityAI/relativity-markets.git
-cd relativity-markets
-docker compose up -d
-```
-
-Open http://localhost:8080. Web search is included and runs automatically. Stop with `docker compose down`.
-
-**Option 2 — From source** (needs [Node.js](https://nodejs.org) 22.13+)
+## Install
 
 ```bash
-git clone https://github.com/relativityAI/relativity-markets.git
-cd relativity-markets
-npm install
-npm run dev
+git clone https://github.com/relativityAI/relativity-markets.git && cd relativity-markets && bash install.sh
 ```
-
-Open http://localhost:5173. Stop with Ctrl+C. Optional web search needs Docker: `cd services && npm run searxng`.
-
-**Option 3 — One command, no clone**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/relativityAI/relativity-markets/main/install.sh | sh
-```
-
-Uses Docker if you have it (same as Option 1), otherwise downloads the source and starts it (same as Option 2).
 
 **First visit**
 
-There's no sign-up — a local default user is created automatically. Go to **Settings** and paste your LLM API keys (OpenAI, Gemini, Anthropic, and others). They are stored encrypted on your machine. All your data lives in one file (`services/data/relativity.db`) — nothing is sent to a cloud.
+No sign-up. Local user created automatically. Open **Settings** → paste LLM API keys (OpenAI, Gemini, Anthropic, ...). Encrypted, stored locally in `services/data/relativity.db`.
 
 ## Usage
 
-Run the tool:
+```bash
+relativity
+```
 
-- **Docker:** `docker compose up -d` → open http://localhost:8080
-- **From source:** `npm run dev` → open http://localhost:5173
+Opens http://127.0.0.1:8080. Stop: `Ctrl+C`.
 
-(see [Installation](#installation) for the full setup)
+- Windows: install via Git Bash. Works in cmd, PowerShell, Git Bash.
+- Closing the terminal leaves it running → stop with `docker compose down`
+- Dev mode: `npm install && npm run dev` → http://localhost:5173
 
-**First visit:** open **Settings** and paste your LLM API keys — the tool won't run without one.
+Pages:
 
-Then in the web app:
+- **`/new-analysis`** — start an analysis run
+- **`/analysis-list`** — saved runs
+- **`/agents`** — investor agents
+- **`/my-workspace`** — agent library, skills, builder, tools
+- **`/settings`** — API keys (encrypted)
 
-- **`/new-analysis`** — Pick a source, company, skill, and model, then run an analysis.
-- **`/analysis-list`** — Browse saved analysis runs.
-- **`/agents`** — View and manage your investor agents.
-- **`/my-workspace`** — My Workspace: agent library, skills, builder, and tools.
-- **`/settings`** — Store LLM and Voyager API keys, encrypted at rest server-side.
-
-Or run the CLI directly (from `services/`, with `npm run searxng` up and an `OPENCODE_API_KEY` set):
+CLI (from `services/`, needs `npm run searxng` + `OPENCODE_API_KEY`):
 
 ```bash
 npm run cli -- --symbol AAPL --model opencode/deepseek-v4.1-flash --max-steps 20 --skill chartist-technical-analysis

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx watch api/index.ts",
-    "build": "tsc && cp -r config assets dist/ && cp -r harness/assets dist/harness/ && if [ -d harness/agent-defaults ]; then cp -r harness/agent-defaults dist/harness/; fi",
+    "build": "tsc && node scripts/postbuild.mjs",
     "typecheck": "tsc --noEmit",
     "start": "node --disable-warning=ExperimentalWarning dist/api/index.js",
     "test": "vitest run --passWithNoTests",
