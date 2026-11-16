@@ -5,7 +5,7 @@
  * caches for a minute so a page load can't hammer Yahoo.
  */
 
-import { yf } from "../harness/tools/builtins/yahoo.js";
+import { yf } from "../harness/tools/yahoo.js";
 import { webCfg } from "../harness/tools/search.js";
 
 export interface SourceStatus {

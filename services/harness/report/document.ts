@@ -35,24 +35,19 @@ const SeriesSchema = z.object({
 });
 
 /** A single chart. Time-series kinds use `series`; categorical use `categories`+`values`;
- *  `table` uses `columns`+`rows`. */
+ *  `table`/`matrix` use `columns`+`rows`. */
 export const ChartSpecSchema = z.object({
   kind: z.enum([
     "line",
     "multiline",
-    "candle",
-    "bar",
-    "vbar",
-    "hbar",
-    "gbar",
-    "pie",
-    "donut",
     "area",
-    "scatter",
-    "radar",
-    "stat",
-    "movers",
+    "hbar",
+    "vbar",
+    "gbar",
     "table",
+    "matrix",
+    "kpi-card",
+    "stat-spark",
   ]),
   /**
    * Domain token(s) the harness resolves and expands into `series`
@@ -70,8 +65,8 @@ export const ChartSpecSchema = z.object({
   categories: z.array(z.string()).optional(),
   values: z.array(z.number()).optional(),
   /**
-   * kind:"gbar" — grouped columns: named series aligned to `categories`
-   * (2–4 groups; e.g. returns by period across several indices).
+   * kind:"gbar"/"vbar" — grouped columns: named series aligned to `categories`
+   * (vbar pairs primary totals with a secondary marker series; gbar 2–4 groups).
    */
   groups: z.array(z.object({ name: z.string(), values: z.array(z.number()) })).optional(),
   /**
@@ -80,10 +75,26 @@ export const ChartSpecSchema = z.object({
    * Absent → theme story ink (figure-kit's var(--c) fallback).
    */
   color: z.string().regex(/^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/).optional(),
-  /** kind:"table" — column headers (replaces the markdown table block). */
+  /** kind:"table"/"matrix" — column headers. */
   columns: z.array(z.string()).optional(),
-  /** kind:"table" — one array per row, cells are strings or numbers. */
-  rows: z.array(z.array(z.union([z.string(), z.number()]))).optional(),
+  /**
+   * kind:"table"/"matrix" — one array per row. Cells are strings, numbers, or
+   * (table) { text, sub?, bar? } — a level-1 line, level-2 sub-line and an
+   * optional 0..1 underline gauge.
+   */
+  rows: z
+    .array(
+      z.array(
+        z.union([
+          z.string(),
+          z.number(),
+          z.object({ text: z.string(), sub: z.string().optional(), bar: z.number().min(0).max(1).optional() }),
+        ]),
+      ),
+    )
+    .optional(),
+  /** kind:"matrix" — column headers left UN-shaded (plain values, e.g. "Below peak"). */
+  plain: z.array(z.string()).optional(),
 });
 
 /** Mermaid diagram — the harness renders it to SVG (never raw HTML). */
@@ -115,8 +126,7 @@ const ArtifactRefSchema = z.object({
   url: z.string(),
 });
 
-/** Every figure requires a backing source — rendered under the figure. */
-const FigureSourceSchema = z.string().min(1, "figure requires a sourceId");
+/** Figure `sourceId` is legacy — the agent cites sources in the citations block itself. */
 
 // ── v2 blocks (the contents of a section) ──────────────────────────────────
 
@@ -145,28 +155,20 @@ export const BlockSchema = z.discriminatedUnion("type", [
     caption: z.string().optional(),
     /** Axis unit (×, %, USD bn…) — figure anatomy. */
     measure: z.string().optional(),
-    /** Required — every figure carries a source, printed beneath it. */
-    sourceId: FigureSourceSchema,
-    /** Plot ink (hex) — section-level so it sits beside measure/sourceId where models write it. */
+    /** Legacy (stored docs) — the agent cites sources in the citations block now. */
+    sourceId: z.string().optional(),
+    /** Plot ink (hex) — section-level so it sits beside measure where models write it. */
     color: z.string().regex(/^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/).optional(),
     /** Assembly-rendered, self-contained SVGs, index-aligned with [spec, ...panels]. */
     svgs: z.array(z.string()).optional(),
   }),
-  z.object({ type: z.literal("diagram"), title: z.string().optional(), spec: DiagramSpecSchema, caption: z.string().optional(), sourceId: FigureSourceSchema }),
-  z.object({
-    type: z.literal("table"),
-    title: z.string().optional(),
-    columns: z.array(z.string()),
-    rows: z.array(z.array(z.union([z.string(), z.number()]))),
-    caption: z.string().optional(),
-    sourceId: FigureSourceSchema,
-  }),
+  z.object({ type: z.literal("diagram"), title: z.string().optional(), spec: DiagramSpecSchema, caption: z.string().optional(), sourceId: z.string().optional() }),
   z.object({
     type: z.literal("compare"),
     title: z.string().optional(),
     before: z.union([ChartSpecSchema, DiagramSpecSchema]),
     after: z.union([ChartSpecSchema, DiagramSpecSchema]),
-    sourceId: FigureSourceSchema,
+    sourceId: z.string().optional(),
   }),
   z.object({
     type: z.literal("metrics"),
@@ -181,7 +183,10 @@ export const BlockSchema = z.discriminatedUnion("type", [
     ),
   }),
   z.object({ type: z.literal("code"), language: z.string().optional(), text: z.string() }),
-  z.object({ type: z.literal("citations"), refs: z.array(z.string()) }),
+  z.object({
+    type: z.literal("citations"),
+    refs: z.array(z.union([z.string(), z.object({ source: z.string().min(1), url: z.string().optional() })])),
+  }),
 ]);
 
 /** A full section: exactly one heading + its inner blocks. */
@@ -299,10 +304,10 @@ export function allBlocks(doc: Pick<ReportDocument, "sections">): Block[] {
 
 /**
  * Count the chart blocks a document carries — the single definition every
- * `min_charts` check uses.
+ * `min_charts` check uses. KPI cards (kpi-card, stat-spark) are not plots.
  */
 export function countCharts(doc: Pick<ReportDocument, "sections">): number {
-  return allBlocks(doc).filter((b) => b.type === "chart").length;
+  return allBlocks(doc).filter((b) => b.type === "chart" && b.spec.kind !== "kpi-card" && b.spec.kind !== "stat-spark").length;
 }
 
 /** Headings present in a document (lowercased), for `required_sections` checks. */

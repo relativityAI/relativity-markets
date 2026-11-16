@@ -322,3 +322,11 @@ html.dark {
   --surface-raised: #262626;
   --surface-raised-hover: #303030;
 }
+
+/* ── Assistant-ui chip shape ──────────────────────────────────────────────
+   The tool-call / tool-timeline query chips read fully-rounded here (the
+   app's style override; the vendored element files stay registry-pristine). */
+[data-slot="tool-call"] span.rounded-md,
+[data-slot="tool-timeline"] span.rounded-md {
+  border-radius: 9999px;
+}

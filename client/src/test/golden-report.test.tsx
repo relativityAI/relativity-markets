@@ -63,7 +63,7 @@ const doc: ReportDocument = {
       spec: { kind: "line", series: [{ label: "close", points: [{ t: 1710000000, v: 190 }] }] },
       panels: [
         { kind: "line", series: [{ label: "rsi", points: [{ t: 1710000000, v: 55 }] }] },
-        { kind: "bar", categories: ["Q1", "Q2"], values: [10, 12] },
+        { kind: "vbar", categories: ["Q1", "Q2"], values: [10, 12] },
       ],
     },
     { type: "callout", variant: "key", title: "Thesis", text: "Durable cash generation." },
@@ -104,7 +104,7 @@ describe("ReportDocumentRenderer (golden)", () => {
     const charts = screen.getAllByTestId("report-chart");
     // main spec (1) + momentum panels (2)
     expect(charts.length).toBe(4);
-    expect(charts.some((c) => c.getAttribute("data-kind") === "bar")).toBe(true);
+    expect(charts.some((c) => c.getAttribute("data-kind") === "vbar")).toBe(true);
     expect(screen.getAllByTestId("market-chart").length).toBe(3);
   });
 
@@ -117,19 +117,19 @@ describe("ReportDocumentRenderer (golden)", () => {
     expect(note.querySelector("sup")?.textContent).toBe("1");
   });
 
-  it("renders injected OHLC+volume series as a candlestick", () => {
-    const candleDoc: ReportDocument = {
+  it("renders injected series through MarketChart (the no-svg fallback)", () => {
+    const lineDoc: ReportDocument = {
       ...doc,
       sections: [
         {
           type: "chart",
           title: "Price — daily",
           spec: {
-            kind: "candle",
+            kind: "line",
             series: [
               { label: "close", points: [
-                { t: 1710000000, v: 190, o: 185, h: 192, l: 184 },
-                { t: 1710100000, v: 195, o: 190, h: 197, l: 189 },
+                { t: 1710000000, v: 190 },
+                { t: 1710100000, v: 195 },
               ] },
               { label: "volume", points: [{ t: 1710000000, v: 1000 }, { t: 1710100000, v: 1200 }] },
             ],
@@ -137,9 +137,9 @@ describe("ReportDocumentRenderer (golden)", () => {
         },
       ],
     };
-    render(wrap(<ReportDocumentRenderer document={candleDoc} />));
+    render(wrap(<ReportDocumentRenderer document={lineDoc} />));
     const mc = screen.getByTestId("market-chart");
-    expect(mc.getAttribute("data-variant")).toBe("candle");
+    expect(mc.getAttribute("data-variant")).toBe("line");
     expect(mc.getAttribute("data-rows")).toBe("2");
   });
 });
@@ -166,8 +166,8 @@ const extendedDoc: ReportDocument = {
     { type: "code", language: "text", text: "RSI > 70 ⇒ overbought" },
     { type: "quote", text: "Demand remains resilient.", attribution: "Q3 call", sourceId: "s1" },
     { type: "chart", title: "Momentum", spec: { kind: "area", series: [{ label: "rsi", points: [{ t: 1710000000, v: 55 }, { t: 1710100000, v: 62 }] }] } },
-    { type: "chart", title: "Distribution", spec: { kind: "scatter", series: [{ label: "ret", points: [{ t: 1710000000, v: 1 }, { t: 1710100000, v: -2 }] }] } },
-    { type: "chart", title: "Scorecard", spec: { kind: "radar", categories: ["Trend", "Momentum"], values: [8, 6] } },
+    { type: "chart", title: "Distribution", spec: { kind: "hbar", categories: ["Growth", "Value"], values: [2, -3] } },
+    { type: "chart", title: "Scorecard", spec: { kind: "matrix", columns: ["Factor", "Score"], rows: [["Trend", 8], ["Momentum", 6]] } },
     { type: "citations", refs: ["s1"] },
   ],
 };
@@ -184,12 +184,11 @@ describe("ReportDocumentRenderer (extended primitives)", () => {
     expect(screen.getByTestId("report-artifacts").textContent).toContain("Workbook");
   });
 
-  it("renders area/scatter/radar through recharts (not MarketChart)", () => {
+  it("renders categorical figures through recharts (not MarketChart)", () => {
     render(wrap(<ReportDocumentRenderer document={extendedDoc} />));
     const kinds = screen.getAllByTestId("report-chart").map((c) => c.getAttribute("data-kind"));
     expect(kinds).toContain("area");
-    expect(kinds).toContain("scatter");
-    expect(kinds).toContain("radar");
+    expect(kinds).toContain("hbar");
   });
 });
 
@@ -209,15 +208,15 @@ describe("figure frames (almanac, assembly-rendered svgs)", () => {
         svgs: ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 420"><path d="M0 0"/></svg>'],
         spec: { kind: "line", series: [{ label: "evEbitda", points: [{ t: 1710000000, v: 30.1 }] }] },
       },
-      // candle: no stored svg → legacy interactive path, still counts for Fig. N
-      { type: "chart", title: "Candle board", spec: { kind: "candle", series: [{ label: "close", points: [{ t: 1710000000, v: 190 }] }] } },
+      // no stored svg → live fallback, still counts for Fig. N
+      { type: "chart", title: "Level board", spec: { kind: "line", series: [{ label: "close", points: [{ t: 1710000000, v: 190 }] }] } },
       {
         type: "chart",
         title: "Revenue mix",
         measure: "% of revenue",
         sourceId: "s1",
         svgs: ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 120"><rect width="10" height="10"/></svg>'],
-        spec: { kind: "pie", categories: ["iPhone"], values: [50] },
+        spec: { kind: "hbar", categories: ["iPhone"], values: [50] },
       },
     ],
     sources: [{ id: "s1", label: "AAPL statistics", tool: "web_search", value: "30.1x", url: "https://example.com" }],
@@ -227,8 +226,8 @@ describe("figure frames (almanac, assembly-rendered svgs)", () => {
     render(wrap(<ReportDocumentRenderer document={figureDoc} />));
     const frames = screen.getAllByTestId("report-figure");
     expect(frames).toHaveLength(2); // candle stays on the legacy chart path
-    // line figures draw live inside the frame (hover x+y), not the stored svg
-    expect(frames[0].querySelector("[data-testid='report-chart']")).toBeTruthy();
+    // stored svgs draw in-frame — they carry the Almanac design + hover CSS
+    expect(frames[0].querySelector(".fig-body svg")).toBeTruthy();
     expect(frames[0].textContent).toContain("Fig. 1");
     expect(frames[0].textContent).toContain("The multiple, not the print");
     expect(frames[0].textContent).toContain("× EV/EBITDA");
@@ -238,8 +237,8 @@ describe("figure frames (almanac, assembly-rendered svgs)", () => {
     expect(frames[0].querySelectorAll(".fig-exports button")).toHaveLength(3);
     // numbering counts every chart (candle = Fig. 2), matching the md dump
     expect(frames[1].textContent).toContain("Fig. 3");
-    // every chart now draws live in-frame with hover (line, candle fallback, pie)
-    expect(screen.getAllByTestId("report-chart")).toHaveLength(3);
+    // only charts WITHOUT a stored svg draw live (the candle fixture)
+    expect(screen.getAllByTestId("report-chart")).toHaveLength(1);
   });
 
   it("numbers inline markers from doc.footnotes (highlight sourceIds)", () => {

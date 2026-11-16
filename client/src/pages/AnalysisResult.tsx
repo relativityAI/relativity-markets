@@ -16,7 +16,6 @@ import axios from "axios";
 import { formatSeconds } from "@/utils";
 import SkillAvatar from "@/components/shared/SkillAvatar";
 import AgentActivity from "../components/shared/AgentActivity";
-import RunReasoningTimeline from "../components/report/RunReasoningTimeline";
 import { MdArrowBack, MdInfo } from "react-icons/md";
 import { Download } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
@@ -24,6 +23,12 @@ import { dur, ease } from "@/lib/motion";
 import { ReportBlockRenderer } from "../components/builder/ReportBlockRenderer";
 import { ReportDocumentRenderer } from "../components/report/ReportDocumentRenderer";
 import { WorkspaceExplorer } from "../components/report/WorkspaceExplorer";
+import { AgentStatus } from "@/components/assistant-ui/elements/agent-status";
+import type { TraceSpan } from "@/components/assistant-ui/elements/trace-waterfall";
+import { CostMeter, type CostLine } from "@/components/assistant-ui/elements/cost-meter";
+import { ToolTimeline } from "@/components/assistant-ui/elements/tool-timeline";
+import type { LucideIcon } from "lucide-react";
+import { formatTokenCount } from "@/components/assistant-ui/utils/tokens";
 import type { ReportDocument } from "@/lib/reportContract";
 
 import SkillResultCard from "./sections/SkillResultCard";
@@ -111,38 +116,16 @@ interface MetaRow {
 const TERMINAL = ["complete", "completed", "success", "error", "failed", "budget_exhausted"];
 
 /**
- * Everything the run row actually records, derived from what is stored:
- * tokens from the legacy per-criterion usage, tool data from `trace`, timing
- * from `duration`/`started_at`/`updated_at`. Fields no writer populates render
- * as "—" rather than a guessed number.
+ * The run info tab: tool calls, started, duration, tokens in/out, agent, stock.
+ * Missing fields render as "—" rather than a guessed number.
  */
-export function runMetadata(run: any, skillTags: string[] = []): { rows: MetaRow[]; tools: { name: string; count: number }[] } {
+export function runMetadata(run: any): { rows: MetaRow[] } {
     const trace: any[] = Array.isArray(run?.trace) ? run.trace : [];
     const toolCalls = trace.filter((e) => e?.type === "tool_call");
-    const toolResults = trace.filter((e) => e?.type === "tool_result");
     const status = String(run?.status || "").toLowerCase();
     const terminal = TERMINAL.includes(status);
 
-    // Skills declare the tools they need; the trace records the ones called.
-    const byTool = new Map<string, number>();
-    const skillOutputs: any[] = Array.isArray(run?.skill_outputs) ? run.skill_outputs : [];
-    for (const o of skillOutputs) {
-        for (const t of Array.isArray(o?.tools_used) ? o.tools_used : []) byTool.set(String(t), 0);
-    }
-    for (const t of toolCalls) {
-        const name = t?.tool || "unknown";
-        byTool.set(name, (byTool.get(name) || 0) + 1);
-    }
-    const tools = [...byTool.entries()]
-        .map(([name, count]) => ({ name, count }))
-        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
-
     const tokens = tokensUsed(run?.qualitative_analysis || {});
-    const toolMs = toolResults.reduce((sum, e) => sum + (typeof e?.duration_ms === "number" ? e.duration_ms : 0), 0);
-    const toolErrors = toolResults.filter((e) => e?.status === "error" || e?.status === "failed").length;
-    const steps: any[] = Array.isArray(run?.steps) ? run.steps : [];
-    const stepsDone = steps.filter((st) => ["complete", "completed", "success", "done", "ok"].includes(String(st?.status || "").toLowerCase())).length;
-    const webSources = Array.isArray(run?.web_sources) ? run.web_sources.length : 0;
 
     const started = run?.started_at || run?.created_at || null;
     const wallMs = started ? (terminal ? +new Date(run?.updated_at || started) : Date.now()) - +new Date(started) : null;
@@ -159,66 +142,186 @@ export function runMetadata(run: any, skillTags: string[] = []): { rows: MetaRow
 
     const rows: MetaRow[] = [];
     const push = (label: string, value: string | null | undefined) => {
-        if (value !== null && value !== undefined && value !== "") rows.push({ label, value });
+        rows.push({ label, value: value ?? "—" });
     };
 
-    push("Duration", duration);
-    push("Model", run?.model);
-    push("Tokens", tokens ? `${formatTokens(tokens.total)} net · ${formatTokens(tokens.input)} in / ${formatTokens(tokens.output)} out` : "—");
-    push("Tool calls", trace.length ? `${toolCalls.length}${toolErrors ? ` · ${toolErrors} failed` : ""}` : "—");
-    push("Tool time", toolMs > 0 ? (toolMs < 1000 ? `${toolMs}ms` : formatSeconds(Math.round(toolMs / 1000))) : null);
-    push("Reasoning turns", trace.length ? String(trace.filter((e) => e?.type === "thought").length) : "—");
-    const decisions = trace.filter((e) => e?.type === "decision").length;
-    push("Decisions", decisions > 0 ? String(decisions) : null);
-    push("Trace events", trace.length > 0 ? String(trace.length) : null);
-    push("Steps", steps.length ? `${stepsDone}/${steps.length}` : null);
-    push("Run mode", run?.run_mode || (run?.report ? "harness" : run?.skill_id ? "skill" : null));
-    push("Skill", run?.skill_id);
-    push("Tags", skillTags.length ? skillTags.join(" · ") : null);
-    push("Agent", run?.agent_name);
-    push("Market", run?.source ? String(run.source).toUpperCase() : null);
-    push("Web search", typeof run?.web_search === "boolean" ? (run.web_search ? `on${webSources ? ` · ${webSources} sources` : ""}` : "off") : null);
-    push("Documents", Array.isArray(run?.documents) && run.documents.length ? String(run.documents.length) : null);
+    push("Tool calls", trace.length ? String(toolCalls.length) : "—");
     push("Started", ts(started));
-    push("Finished", terminal ? ts(run?.updated_at) : null);
-    push("Run id", run?.id);
+    push("Duration", duration);
+    push("Tokens in", tokens ? formatTokens(tokens.input) : "—");
+    push("Tokens out", tokens ? formatTokens(tokens.output) : "—");
+    push("Agent", run?.agent_name);
+    push("Stock", run?.symbol);
 
-    return { rows, tools };
+    return { rows };
 }
 
 /** What the run row records — one label/value line each (the Run Info tab). */
-export function RunMetadata({ run, tags }: { run: any; tags?: string[] }) {
-    const { rows, tools } = useMemo(() => runMetadata(run, tags), [run, tags]);
-    if (!rows.length && !tools.length) return null;
+/** Trace → waterfall spans: one per tool call, timed from the event timestamps. */
+function waterfallFor(trace: any[], durationSec?: number): { spans: TraceSpan[]; totalMs: number } {
+    const events = Array.isArray(trace) ? trace : [];
+    if (!events.length) return { spans: [], totalMs: 0 };
+    const t0 = typeof events[0]?.ts === "number" ? events[0].ts : 0;
+    const acc: (TraceSpan & { startTs: number })[] = [];
+    for (const ev of events) {
+        if (ev?.type === "tool_call") {
+            acc.push({
+                id: ev.tool_call_id || `${ev.tool}-${acc.length}`,
+                name: ev.tool || "tool",
+                depth: 0,
+                startTs: typeof ev.ts === "number" ? ev.ts : t0,
+                durationMs: 0,
+                status: "running",
+            });
+        } else if (ev?.type === "tool_result") {
+            for (let i = acc.length - 1; i >= 0; i--) {
+                const s = acc[i];
+                if (s.status === "running" && s.name === (ev.tool || "tool")) {
+                    s.durationMs =
+                        typeof ev.duration_ms === "number"
+                            ? ev.duration_ms
+                            : Math.max(0, (typeof ev.ts === "number" ? ev.ts : s.startTs) - s.startTs);
+                    s.status = ev.status === "ERR" ? "failed" : "completed";
+                    break;
+                }
+            }
+        }
+    }
+    const spans: TraceSpan[] = acc.map(({ startTs, ...s }) => ({ ...s, startMs: Math.max(0, Math.round(startTs - t0)) }));
+    const lastTs = typeof events[events.length - 1]?.ts === "number" ? events[events.length - 1].ts : t0;
+    // ponytail: flat spans (no call nesting in the trace) — depth stays 0 until the trace records parents.
+    const totalMs = Math.max(1, typeof durationSec === "number" && durationSec > 0 ? Math.round(durationSec * 1000) : Math.round(lastTs - t0));
+    return { spans, totalMs };
+}
+
+/** The timeline rows render without icons — a no-op stand-in keeps the
+ *  vendored tool-timeline element untouched. */
+const NO_ICON = (() => null) as unknown as LucideIcon;
+
+export function RunMetadata({ run }: { run: any }) {
+    const { rows } = useMemo(() => runMetadata(run), [run]);
+    const [timelineOpen, setTimelineOpen] = useState(false);
+
+    const { spans, totalMs } = useMemo(() => waterfallFor(run?.trace, typeof run?.duration === "number" ? run.duration : undefined), [run?.trace, run?.duration]);
+
+    // Token usage: harness runs record a final "usage" trace event (the run
+    // table has no token columns); legacy pipeline runs carry per-section
+    // tokens in qualitative_analysis. Either source feeds the CostMeter.
+    const tokens = useMemo(() => {
+        const trace = Array.isArray(run?.trace) ? run.trace : [];
+        for (let i = trace.length - 1; i >= 0; i--) {
+            const ev = trace[i];
+            if (ev?.type === "usage" && ev.value) {
+                const v = ev.value as { tokens_in?: number; tokens_out?: number };
+                const input = Number(v.tokens_in ?? 0);
+                const output = Number(v.tokens_out ?? 0);
+                if (input + output > 0) return { input, output, total: input + output };
+            }
+        }
+        return tokensUsed(run?.qualitative_analysis || {});
+    }, [run?.trace, run?.qualitative_analysis]);
+
+    // ponytail: the harness records no per-model pricing — the meter reads tokens, not dollars; add $ when cost data lands.
+    const costLines: CostLine[] =
+        tokens && run?.model
+            ? [
+                  {
+                      model: String(run.model),
+                      inputTokens: tokens.input,
+                      outputTokens: tokens.output,
+                      cost: `${formatTokenCount(tokens.input + tokens.output)} tok`,
+                      share: 1,
+                  },
+              ]
+            : [];
+
+    if (!rows.length && !spans.length && !costLines.length) return null;
     return (
-        <Flex direction="column" gap={1.5} py={2}>
-            {rows.map((r) => (
-                <Flex key={r.label} gap={3} align="baseline" minW={0}>
-                    <Text w="140px" flexShrink={0} fontSize="12.5px" fontWeight={300} color="var(--ink-tertiary)">
-                        {r.label}
-                    </Text>
-                    <Text fontSize="13px" fontWeight={400} color="var(--ink-primary)" overflowWrap="anywhere" minW={0}>
-                        {r.value}
-                    </Text>
-                </Flex>
-            ))}
-            {tools.length > 0 && (
-                <Flex gap={3} align="baseline" minW={0}>
-                    <Text w="140px" flexShrink={0} fontSize="12.5px" fontWeight={300} color="var(--ink-tertiary)">
-                        Tools
-                    </Text>
-                    <Text fontSize="13px" fontWeight={400} color="var(--ink-secondary)" overflowWrap="anywhere" minW={0}>
-                        {tools.map((t, i) => (
-                            <Text as="span" key={t.name}>
-                                {t.name}
-                                {t.count > 1 ? ` ×${t.count}` : ""}
-                                {i < tools.length - 1 ? "  ·  " : ""}
+        <Flex direction="column" gap={4} py={2}>
+            {rows.length > 0 && (
+                <Flex direction="column" gap={1.5}>
+                    {rows.map((r) => (
+                        <Flex key={r.label} gap={3} align="baseline" minW={0}>
+                            <Text w="140px" flexShrink={0} fontSize="12.5px" fontWeight={300} color="var(--ink-tertiary)">
+                                {r.label}
                             </Text>
-                        ))}
-                    </Text>
+                            <Text fontSize="13px" fontWeight={400} color="var(--ink-primary)" overflowWrap="anywhere" minW={0}>
+                                {r.value}
+                            </Text>
+                        </Flex>
+                    ))}
                 </Flex>
             )}
+            {spans.length > 0 && (
+                <ToolTimeline
+                    steps={spans.map((s) => ({ verb: s.name, chip: `${(s.durationMs / 1000).toFixed(1)}s`, icon: NO_ICON }))}
+                    visibleSteps={12}
+                    streaming={!TERMINAL.includes(String(run?.status || "").toLowerCase())}
+                    open={timelineOpen}
+                    onOpenChange={setTimelineOpen}
+                    restingLabel={`${spans.length} tool calls`}
+                    activeLabel={`${spans.length} tools so far`}
+                    stats={[]}
+                />
+            )}
+            {costLines.length > 0 && (
+                <CostMeter
+                    runCost={`${formatTokenCount(tokens!.total)} tok`}
+                    sessionCost="—"
+                    lines={costLines}
+                />
+            )}
         </Flex>
+    );
+}
+
+/** Sticky-navbar run pill (assistant-ui agent-status): what the run is doing + elapsed. */
+function AgentStatusPill({ analysis }: { analysis: any }) {
+    const statusKey = String(analysis?.status || "").toLowerCase();
+    const terminal = TERMINAL.includes(statusKey);
+    const failed = ["error", "failed", "budget_exhausted"].includes(statusKey);
+    const running = !!analysis && !terminal;
+
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        if (!running) return;
+        const iv = setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(iv);
+    }, [running]);
+
+    const label = useMemo(() => {
+        if (!analysis) return "Loading…";
+        if (failed) return "Run failed";
+        if (terminal) return "Run complete";
+        const trace: any[] = Array.isArray(analysis.trace) ? analysis.trace : [];
+        for (let i = trace.length - 1; i >= 0; i--) {
+            const ev = trace[i];
+            if (ev?.type === "tool_call") return `${ev.tool || "working"}…`;
+            if (ev?.type === "thought" && ev.text) {
+                const t = ev.text.trim().replace(/\s+/g, " ");
+                return t.length > 44 ? `${t.slice(0, 44)}…` : t;
+            }
+        }
+        return "Working…";
+    }, [analysis, failed, terminal]);
+
+    const elapsed = useMemo(() => {
+        if (!running) return undefined;
+        const t0 = analysis?.started_at
+            ? +new Date(analysis.started_at)
+            : analysis?.created_at
+              ? +new Date(analysis.created_at)
+              : now;
+        return Math.max(0, Math.floor((now - t0) / 1000));
+    }, [running, analysis, now]);
+
+    return (
+        <AgentStatus
+            state={failed ? "failed" : terminal ? "done" : "working"}
+            label={label}
+            elapsed={elapsed !== undefined && elapsed > 0 ? formatSeconds(elapsed) : undefined}
+            aria-live="polite"
+        />
     );
 }
 
@@ -523,39 +626,7 @@ export default function AnalysisResult() {
                             })}
                         </Tabs.List>
                         <HStack gap={2} align="center" flexShrink={0}>
-                            <HStack
-                                gap={1.5}
-                                align="center"
-                                px={2.5}
-                                py={1}
-                                borderRadius="full"
-                                border="1px solid var(--hairline)"
-                                bg="var(--surface-panel)"
-                                aria-live="polite"
-                            >
-                                <motion.span
-                                    animate={
-                                        isRunning
-                                            ? { scale: [1, 1.3, 1], opacity: [1, 0.6, 1] }
-                                            : {}
-                                    }
-                                    transition={{ repeat: Infinity, duration: 1.4 }}
-                                    style={{
-                                        width: 7,
-                                        height: 7,
-                                        borderRadius: "50%",
-                                        background: isError
-                                            ? "var(--signal-negative)"
-                                            : isComplete
-                                            ? "var(--signal-positive)"
-                                            : "var(--signal-caution)",
-                                        display: "inline-block",
-                                    }}
-                                />
-                                <Text fontSize="12px" color="var(--ink-secondary)">
-                                    {isError ? "Failed" : isComplete ? "Complete" : "Running"}
-                                </Text>
-                            </HStack>
+                            <AgentStatusPill analysis={analysis} />
                             {isComplete && <DownloadButton runId={id} name={analysis.share_name || analysis.symbol} />}
                         </HStack>
                     </Flex>
@@ -768,10 +839,10 @@ export default function AnalysisResult() {
                                         subtitle="gathering data, searching, scoring"
                                         streamUrl={`/analysis/${id}/stream`}
                                         steps={[]}
+                                        agent={analysis.agent_name || undefined}
                                         startedAt={analysis.created_at ? +new Date(analysis.created_at) : undefined}
                                         active
                                         maxHeight={480}
-                                        separateToolResults
                                     />
                                 ) : (
                                     <AgentActivity
@@ -779,9 +850,9 @@ export default function AnalysisResult() {
                                         subtitle="full tool and thought trace"
                                         events={analysis.trace || []}
                                         steps={[]}
+                                        agent={analysis.agent_name || undefined}
                                         active={false}
                                         maxHeight={480}
-                                        separateToolResults
                                     />
                                 )}
                             </Box>
@@ -955,7 +1026,7 @@ const HARNESS_TABS = ["report", "agent workspace", "run info"] as const;
 type HarnessTab = (typeof HARNESS_TABS)[number];
 
 /** Harness run result: the typed ReportDocument + the Agent Workspace (reasoning + knowledge base). */
-function HarnessRunView({ run, tags }: { run: any; tags?: string[] }) {
+function HarnessRunView({ run }: { run: any; tags?: string[] }) {
     const doc = run.report_document as ReportDocument;
     const status = String(run.status || "").toLowerCase();
     const failed = status === "failed" || status === "budget_exhausted" || status === "error";
@@ -1054,17 +1125,20 @@ function HarnessRunView({ run, tags }: { run: any; tags?: string[] }) {
                     {/* ── Agent Workspace ── */}
                     <Tabs.Content value="agent workspace">
                         {drafting && (
-                            <Flex align="center" gap={2.5} mt={4} mb={2}>
-                                <Spinner size="sm" borderWidth="2px" color="var(--accent-primary)" />
-                                <Text fontSize="13px" color="var(--ink-secondary)">
-                                    Run in progress — reasoning and knowledge base stream in here live.
-                                </Text>
-                            </Flex>
+                            <Text mt={4} mb={2} fontSize="13px" color="var(--ink-secondary)">
+                                Run in progress — reasoning and knowledge base stream in here live.
+                            </Text>
                         )}
                         {hasTrace && (
                             <Box mt={4} mb={2}>
-                                <Text fontSize="13px" fontWeight={600} mb={3}>Agent Reasoning</Text>
-                                <RunReasoningTimeline events={run.trace} active={drafting} />
+                                <AgentActivity
+                                    title={`Analyzing ${run.share_name || run.symbol || "…"} with ${run.agent_name || "agent"}`}
+                                    subtitle={drafting ? "gathering data, searching, scoring" : "full tool and thought trace"}
+                                    events={run.trace || []}
+                                    agent={run.agent_name || undefined}
+                                    active={drafting}
+                                    maxHeight={620}
+                                />
                             </Box>
                         )}
                         {workspace && (
@@ -1085,7 +1159,7 @@ function HarnessRunView({ run, tags }: { run: any; tags?: string[] }) {
 
                     {/* ── Run info — what the run recorded, one line each ── */}
                     <Tabs.Content value="run info">
-                        <RunMetadata run={run} tags={tags} />
+                        <RunMetadata run={run} />
                     </Tabs.Content>
             </Container>
             </Tabs.Root>

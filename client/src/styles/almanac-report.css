@@ -97,6 +97,18 @@ html.dark .almanac-report.dom-economy {
   margin-bottom: 6px;
 }
 
+/* stat-spark card row: sibling panels sit side by side (grid on wide, stack
+   on narrow), each card keeping its hairline frame */
+.almanac-report .card-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+}
+.almanac-report .card-row .fig-body {
+  flex: 0 1 340px;
+  min-width: 280px;
+}
+
 /* Figure frame (rule 7): Fig. N, title, measure, how-to-read, source, downloads.
  * No rules above/below the plot — the figure reads as one open block. */
 .almanac-report .fig-frame {

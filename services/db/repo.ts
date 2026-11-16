@@ -7,7 +7,23 @@
 import { randomUUID } from "node:crypto";
 import type { SQLInputValue } from "node:sqlite";
 import { getSqlite, fromJson, toJson } from "./sqlite.js";
-import type { AgentRow } from "../harness/agentstore.js";
+
+/** A legacy agents-table row (pre-file-store). The one-time export script and
+ *  migration reads walk these; new code uses the harness file store. */
+export interface AgentRow {
+  id: string;
+  user_id: string;
+  name: string;
+  source: string;
+  md_config?: string | null;
+  persona?: any;
+  configuration?: any;
+  asset_evaluation?: any;
+  macro_evaluation?: any;
+  created_at?: string;
+  updated_at?: string;
+  [k: string]: unknown;
+}
 
 const now = () => new Date().toISOString();
 
@@ -35,6 +51,12 @@ function agentRowIn(row: Record<string, any>): Record<string, unknown> {
 
 export async function listAgentRows(userId: string): Promise<AgentRow[]> {
   const rows = getSqlite().prepare("SELECT * FROM agents WHERE user_id = ? ORDER BY created_at ASC").all(userId);
+  return rows.map(agentRowOut);
+}
+
+/** Every agents row, any user — the one-time file-store export walks these. */
+export async function listAllAgentRows(): Promise<AgentRow[]> {
+  const rows = getSqlite().prepare("SELECT * FROM agents ORDER BY created_at ASC").all();
   return rows.map(agentRowOut);
 }
 
@@ -99,6 +121,11 @@ function skillRowOut(r: any): SkillRow {
 
 export async function listSkillRows(userId: string): Promise<SkillRow[]> {
   return getSqlite().prepare("SELECT * FROM skills WHERE user_id = ? ORDER BY created_at ASC").all(userId).map(skillRowOut);
+}
+
+/** Every skills row, any user — the one-time file-store export walks these. */
+export async function listAllSkillRows(): Promise<SkillRow[]> {
+  return getSqlite().prepare("SELECT * FROM skills ORDER BY created_at ASC").all().map(skillRowOut);
 }
 
 export async function getSkillRow(userId: string, skillId: string): Promise<SkillRow | null> {

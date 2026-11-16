@@ -88,7 +88,7 @@ Then in the web app:
 Or run the CLI directly (from `services/`, with `npm run searxng` up and an `OPENCODE_API_KEY` set):
 
 ```bash
-npx tsx harness/cli.ts --real --symbol AAPL --model opencode/deepseek-v4.1-flash --max-steps 20 --max-tokens 30000 --skill chartist-technical-analysis --save-workspace
+npm run cli -- --symbol AAPL --model opencode/deepseek-v4.1-flash --max-steps 20 --skill chartist-technical-analysis
 ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>

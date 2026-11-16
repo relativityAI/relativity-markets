@@ -14,7 +14,7 @@ import {
   type ReportDocument,
   type Series,
 } from "./document.js";
-import type { TraceEvent } from "../types.js";
+import type { TraceEvent } from "../trace.js";
 import { renderFigure } from "./figure-kit.js";
 import { jsonrepair } from "jsonrepair";
 
@@ -271,14 +271,12 @@ export function attachChartData(
  * (self-contained, theme-var'd — see figure-kit). Runs at assembly after
  * attachChartData so tokens are already resolved. Atomic
  * per block: all-or-nothing keeps svgs index-aligned with [spec, ...panels].
- * Candles are skipped — the UI keeps its live MarketChart (hover readout);
- * dumpMarkdown renders them statically for the .md artifact.
+ * Cards and plots all render statically; the SVGs carry the hover CSS.
  */
 export function renderFigures(doc: ReportDocument): void {
   for (const block of allBlocks(doc)) {
     if (block.type !== "chart") continue;
     const specs = [block.spec, ...(block.panels ?? [])];
-    if (specs.some((sp) => sp.kind === "candle")) continue;
     const svgs = specs.map((sp) => renderFigure(sp, { label: block.title, unit: block.measure, ink: block.color }));
     if (svgs.length && svgs.every((x): x is string => x != null)) block.svgs = svgs;
   }

@@ -22,9 +22,9 @@
  */
 
 import { wrapUntrusted } from "./untrusted.js";
-import { log } from "../log.js";
+import { log } from "../../api/logger.js";
 import { loadAgentConfig } from "../config.js";
-import { config } from "../../api/config.js";
+import { config } from "./appconfig.js";
 
 export interface WebSearchResult {
   title: string;

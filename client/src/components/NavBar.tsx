@@ -47,13 +47,17 @@ export default function NavBar() {
 
   useEffect(() => {
     let alive = true;
+    // Tavily chip: connected iff the user's API key is set (not a live probe).
+    // Default to not-connected; only the settings response can flip it on.
+    setSources((prev) => ({ ...prev, tavily: { ok: false, href: "https://app.tavily.com" } }));
     fetch(`${API_BASE}/health/sources`)
       .then((r) => r.json())
       .then((d) => {
-        if (alive && d?.sources) setSources(d.sources);
+        // Merge, don't replace: the probe payload has no tavily entry and
+        // clobbering the map here reset the chip to its ambiguous "checking" look.
+        if (alive && d?.sources) setSources((prev) => ({ ...prev, ...d.sources }));
       })
       .catch(() => {});
-    // Tavily chip: connected iff the user's API key is set (not a live probe).
     if (user) {
       SettingsService.getSettings()
         .then((d) => {
@@ -64,8 +68,6 @@ export default function NavBar() {
             }));
         })
         .catch(() => {});
-    } else if (alive) {
-      setSources((prev) => ({ ...prev, tavily: { ok: false, href: "https://app.tavily.com" } }));
     }
     return () => {
       alive = false;

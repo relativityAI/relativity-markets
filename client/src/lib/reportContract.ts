@@ -24,18 +24,24 @@ export interface Series {
 }
 
 export interface ChartSpec {
-  kind: "line" | "multiline" | "candle" | "bar" | "vbar" | "hbar" | "gbar" | "pie" | "donut" | "area" | "scatter" | "radar" | "stat" | "movers" | "table";
+  /**
+   * The plot reference — the only kinds the agent writes and the renderers
+   * draw. Server contract mirror (services/harness/report/document.ts).
+   */
+  kind: "line" | "multiline" | "area" | "hbar" | "vbar" | "gbar" | "table" | "matrix" | "kpi-card" | "stat-spark";
   /** Domain token(s) resolved server-side into `series` (e.g. "price" or "price, sma200"). */
   data?: string;
   series?: Series[];
   categories?: string[];
   values?: number[];
-  /** kind:"gbar" — named series aligned to `categories`. */
+  /** kind:"gbar"/"vbar" — named series aligned to `categories`. */
   groups?: { name: string; values: number[] }[];
-  /** kind:"table" — column headers. */
+  /** kind:"matrix" — column headers left unshaded (plain values). */
+  plain?: string[];
+  /** kind:"table"/"matrix" — column headers. */
   columns?: string[];
-  /** kind:"table" — one array per row. */
-  rows?: (string | number)[][];
+  /** kind:"table"/"matrix" — one array per row; cells are strings, numbers, or { text, sub?, bar? }. */
+  rows?: (string | number | { text: string; sub?: string; bar?: number })[][];
 }
 
 /** Mermaid diagram — rendered to SVG client-side, never raw HTML. */
@@ -65,17 +71,18 @@ export interface ArtifactRef {
   url: string;
 }
 
-/** Inner block of a v2 section. Figures (chart/diagram/table/compare) carry a required sourceId. */
+/** Inner block of a v2 section. Figure `sourceId` + `type:"table"` are legacy
+ *  (stored docs) — current writes cite sources in the citations block. */
 export type ReportBlock =
   | { type: "text"; level: 1 | 2; text: string; highlights?: Highlight[] }
   | { type: "callout"; variant: "info" | "warn" | "key"; title?: string; text: string; highlights?: Highlight[] }
-  | { type: "chart"; title?: string; tagline?: string; spec: ChartSpec; panels?: ChartSpec[]; caption?: string; measure?: string; sourceId: string; color?: string; svgs?: string[] }
-  | { type: "diagram"; title?: string; spec: DiagramSpec; caption?: string; sourceId: string }
-  | { type: "table"; title?: string; columns: string[]; rows: (string | number)[][]; caption?: string; sourceId: string }
-  | { type: "compare"; title?: string; before: ChartSpec | DiagramSpec; after: ChartSpec | DiagramSpec; sourceId: string }
+  | { type: "chart"; title?: string; tagline?: string; spec: ChartSpec; panels?: ChartSpec[]; caption?: string; measure?: string; sourceId?: string; color?: string; svgs?: string[] }
+  | { type: "diagram"; title?: string; spec: DiagramSpec; caption?: string; sourceId?: string }
+  | { type: "table"; title?: string; columns: string[]; rows: (string | number)[][]; caption?: string; sourceId?: string }
+  | { type: "compare"; title?: string; before: ChartSpec | DiagramSpec; after: ChartSpec | DiagramSpec; sourceId?: string }
   | { type: "metrics"; items: { label: string; value: string; delta?: string; tone?: "neutral" | "positive" | "negative"; sourceId?: string }[] }
   | { type: "code"; language?: string; text: string }
-  | { type: "citations"; refs: string[] };
+  | { type: "citations"; refs: (string | { source: string; url?: string })[] };
 
 /** v2 full section: exactly one heading + its inner blocks. */
 export interface ReportSection {
