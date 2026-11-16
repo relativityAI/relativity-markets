@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.6.1...relativity-markets-v0.6.2) (2026-11-16)
+
+
+### Performance Improvements
+
+* instant relativity start + native-platform docker builds ([#166](https://github.com/relativityAI/relativity-markets/issues/166)) ([0189ff6](https://github.com/relativityAI/relativity-markets/commit/0189ff66a552b7fe2c5d7284138ff280ad3728d4))
+
 ## [0.6.1](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.6.0...relativity-markets-v0.6.1) (2026-11-16)
 
 
