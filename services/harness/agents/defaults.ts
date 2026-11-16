@@ -6,6 +6,7 @@
  *   ---
  *   name: Display Name        (required)
  *   skill: skill-id           (optional — one skill per agent)
+ *   category: equity          (optional — agent class, from categories.yaml)
  *   ---
  *   <Markdown body = the agent's soul prompt>
  *
@@ -29,13 +30,18 @@ function loadDefaultAgent(file: string): AgentInput {
   if (!fm || typeof fm !== "object" || Array.isArray(fm)) {
     throw new Error(`default agent ${file}: frontmatter must be a mapping`);
   }
-  const { name, skill } = fm as Record<string, unknown>;
+  const { name, skill, category } = fm as Record<string, unknown>;
   if (typeof name !== "string" || !name.trim()) {
     throw new Error(`default agent ${file}: frontmatter "name" is required`);
   }
   const soulPrompt = (match[2] || "").trim();
   const skillIds = typeof skill === "string" && skill.trim() ? [skill.trim()] : [];
-  return { name: name.trim(), soulPrompt, skillIds };
+  return {
+    name: name.trim(),
+    category: typeof category === "string" && category.trim() ? category.trim() : "",
+    soulPrompt,
+    skillIds,
+  };
 }
 
 export function loadDefaultAgents(): AgentInput[] {

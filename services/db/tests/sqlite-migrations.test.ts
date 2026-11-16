@@ -32,9 +32,25 @@ describe("sqlite migrations", () => {
     const d = new DatabaseSync(":memory:");
     d.exec("CREATE TABLE legacy (x TEXT)");
     d.prepare("INSERT INTO legacy VALUES ('keep-me')").run();
+    // A real pre-versioning database carries the app's own prior schema —
+    // give it the v1 schedules shape so the shipped migration has something
+    // real to ALTER.
+    d.exec(
+      `CREATE TABLE schedules (
+         id TEXT PRIMARY KEY, user_id TEXT NOT NULL, symbol TEXT NOT NULL,
+         share_name TEXT NOT NULL, source TEXT NOT NULL, time TEXT NOT NULL,
+         timezone TEXT NOT NULL, last_fired_date TEXT,
+         created_at TEXT NOT NULL DEFAULT 'now'
+       )`,
+    );
+    d.prepare("INSERT INTO schedules (id, user_id, symbol, share_name, source, time, timezone) VALUES ('s1','u1','AAPL','Apple','SEC','21:00','UTC')").run();
     migrateSqlite(d);
     expect(version(d)).toBe(SCHEMA_VERSION);
     expect((d.prepare("SELECT x FROM legacy").get() as { x: string }).x).toBe("keep-me");
+    // The v2 migration landed: new columns exist, existing rows keep firing daily.
+    const freq = d.prepare("SELECT frequency, start_date FROM schedules WHERE id='s1'").get() as { frequency: string; start_date: string | null };
+    expect(freq.frequency).toBe("daily");
+    expect(freq.start_date).toBeNull();
   });
 
   it("pending migrations run once, in order", () => {

@@ -12,15 +12,13 @@ const hairline = "var(--hairline)";
 const positive = "var(--signal-positive)";
 const canvas = "var(--surface-canvas)";
 
-export function MenuDropdown({ value, placeholder, search, logo, plain, children }: {
+export function MenuDropdown({ value, placeholder, search, logo, children }: {
     value: string | null;
     placeholder: string;
     /** In-place search: the trigger itself is the text input — no header block in the panel. */
     search?: { value: string; onChange: (v: string) => void; placeholder?: string };
     /** Optional icon shown before the trigger's value. */
     logo?: ReactNode;
-    /** Flat-form mode: borderless trigger with 6px corners. */
-    plain?: boolean;
     children: (close: () => void) => ReactNode;
 }) {
     const [open, setOpen] = useState(false);
@@ -139,13 +137,11 @@ export function MenuDropdown({ value, placeholder, search, logo, plain, children
                 }
                 onKeyDown={onTriggerKeyDown}
                 whileTap={{ scale: 0.997 }}
-                className="flex cursor-pointer items-center gap-1.5 rounded-[10px] border border-input px-3 transition-opacity hover:opacity-70 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50"
+                className="flex cursor-pointer items-center gap-1.5 rounded-[6px] border-[0.5px] border-[color:var(--hairline)] bg-transparent px-2.5 transition-colors hover:border-[color:var(--ink-tertiary)] focus-within:border-[color:var(--ink-tertiary)] focus-within:ring-1 focus-within:ring-console-accent/40"
                 style={{
-                    minHeight: "32px",
+                    minHeight: "36px",
                     outline: "none",
                     background: "transparent",
-                    border: plain ? "none" : undefined,
-                    borderRadius: plain ? 6 : undefined,
                 }}
             >
                 {logo && <span style={{ display: "inline-flex", flexShrink: 0, marginRight: 2 }}>{logo}</span>}
@@ -217,7 +213,7 @@ export function MenuDropdown({ value, placeholder, search, logo, plain, children
                             transformOrigin: "top left",
                             background: canvas,
                             border: `1px solid ${hairline}`,
-                            borderRadius: plain ? 6 : "12px",
+                            borderRadius: "12px",
                             padding: "4px 0",
                             boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
                             maxHeight: "320px",
