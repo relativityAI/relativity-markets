@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.3.1...relativity-markets-v0.4.0) (2026-11-16)
+
+
+### Features
+
+* **agents:** one category per agent, schedule frequencies, category-gated runs ([#157](https://github.com/relativityAI/relativity-markets/issues/157)) ([580fb34](https://github.com/relativityAI/relativity-markets/commit/580fb347a7c5d0aa26e6a8a78c42c5aaa3edd648))
+
 ## [0.3.1](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.3.0...relativity-markets-v0.3.1) (2026-11-15)
 
 
