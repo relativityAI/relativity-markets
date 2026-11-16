@@ -221,5 +221,8 @@ pyrightconfig.json
 services/dist/
 services/.env
 
+### relativity launcher runtime (bin/relativity) ###
+relativity.log
+
 ### brag output ###
 brag-output/

@@ -1503,8 +1503,12 @@ if (existsSync(path.join(clientDist, "index.html"))) {
   });
 }
 
-const server = app.listen(config.port, async () => {
-  log.info("[api]", `listening on :${config.port}`);
+// Local-only by default: AUTH_MODE=local has no sign-in and stores API keys,
+// so the app shouldn't be reachable from the LAN. Containers set
+// RELATIVITY_HOST=0.0.0.0 so published ports keep working.
+const host = process.env.RELATIVITY_HOST || "127.0.0.1";
+const server = app.listen(config.port, host, async () => {
+  log.info("[api]", `listening on ${host}:${config.port}`);
   log.info(
     "[api]",
     `config: mode=${config.authMode} db=${config.sqlitePath} voyager=${config.voyagerUrl} mcp=${config.mcpVoyagerUrl || "off"} rateLimit=${config.rateLimitPerMin}/min logLevel=${process.env.LOG_LEVEL || "info"}`,

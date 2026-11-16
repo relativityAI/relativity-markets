@@ -16,7 +16,7 @@ RUN npm run build
 
 FROM node:22-alpine
 WORKDIR /app
-ENV NODE_ENV=production PORT=8080 SQLITE_PATH=/app/data/relativity.db
+ENV NODE_ENV=production PORT=8080 RELATIVITY_HOST=0.0.0.0 SQLITE_PATH=/app/data/relativity.db
 COPY --from=api /src/services/dist ./dist
 # Runtime reads these relative to cwd: skills (config/skills), skill-repos.json,
 # harness prompt assets + default agents. See harness/skills.ts + harness/config.ts.

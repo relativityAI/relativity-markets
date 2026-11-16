@@ -21,16 +21,15 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  publish:
-    # GITHUB_TOKEN-created tags don't emit push events, so we can't rely on
-    # release.yml's tag trigger — call it directly with the tag from the
-    # manifest (the release PR just bumped it to the released version).
+  # Tag resolution needs `steps`, but a job that CALLS a reusable workflow
+  # can't have any (steps.uses needs an action.yml; workflows are called
+  # job-level only). So resolve the tag in its own job first.
+  resolve-tag:
     needs: release-please
     if: needs.release-please.outputs.releases_created == 'true'
-    permissions:
-      contents: write
-      packages: write
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
       - name: Resolve tag
@@ -39,6 +38,16 @@ jobs:
           version=$(node -p "require('./.release-please-manifest.json')['.']")
           name=$(node -p "require('./package.json').name")
           echo "tag=${name}-v${version}" >> "$GITHUB_OUTPUT"
-      - uses: ./.github/workflows/release.yml
-        with:
-          tag: ${{ steps.tag.outputs.tag }}
+
+  publish:
+    # GITHUB_TOKEN-created tags don't emit push events, so we can't rely on
+    # release.yml's tag trigger — call it directly with the tag from the
+    # manifest (the release PR just bumped it to the released version).
+    needs: [release-please, resolve-tag]
+    if: needs.release-please.outputs.releases_created == 'true'
+    permissions:
+      contents: write
+      packages: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.resolve-tag.outputs.tag }}

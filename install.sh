@@ -1,48 +1,54 @@
 #!/bin/sh
-# Relativity one-command installer.
-# Docker? Starts the prebuilt image with web search included.
-# No docker? Downloads the source and runs it with Node (22.13+).
+# Relativity installer — Docker required. Clone, then run once:
 #
-# Overrides for testing / pinned versions:
-#   RELATIVITY_DIR          install location (default: ./relativity)
-#   RELATIVITY_COMPOSE_URL  docker-compose.yml download URL
-#   RELATIVITY_TARBALL_URL  source tarball download URL
+#   git clone https://github.com/relativityAI/relativity-markets.git
+#   cd relativity-markets
+#   bash install.sh
+#
+# Puts the `relativity` command on your PATH. The app runs in Docker.
 set -e
+cd "$(dirname "$0")"
 
-REPO=relativityAI/relativity-markets
-BRANCH=main
-BASE="${RELATIVITY_BASE_URL:-https://raw.githubusercontent.com/$REPO/$BRANCH}"
-DIR="${RELATIVITY_DIR:-relativity}"
-
-if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-  echo "==> Docker found — starting Relativity (includes web search)"
-  mkdir -p "$DIR/services/searxng" "$DIR/services/data"
-  cd "$DIR"
-  curl -fsSL "${RELATIVITY_COMPOSE_URL:-$BASE/docker-compose.yml}" -o docker-compose.yml
-  curl -fsSL "$BASE/services/searxng/settings.yml" -o services/searxng/settings.yml
-  docker compose up -d
-  echo ""
-  echo "Relativity is running:  http://localhost:8080"
-  echo "Stop:  docker compose down    (in this folder)"
-  exit 0
+if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
+  echo "Docker is required to run Relativity."
+  echo "Install:  https://docs.docker.com/get-docker/"
+  echo "Then re-run:  bash install.sh"
+  exit 1
 fi
 
-echo "==> No docker — installing from source (needs Node.js 22.13+)"
-command -v node >/dev/null 2>&1 || {
-  echo "Node.js is missing. Install it from https://nodejs.org and re-run."
-  exit 1
+# Link bin/relativity to ~/.local/bin so `relativity` works from any folder.
+# Call with cwd = repo root. Adds ~/.local/bin to PATH when missing (first rc found).
+install_command() {
+  ABS=$(pwd)
+  mkdir -p "$HOME/.local/bin"
+  ln -sf "$ABS/bin/relativity" "$HOME/.local/bin/relativity"
+  chmod +x "$ABS/bin/relativity"
+  # Windows (Git Bash): also register for cmd/PowerShell.
+  # ponytail: % in the install path would break this; nobody has % in a folder name.
+  case $(uname -s) in
+    MINGW* | MSYS* | CYGWIN*)
+      wd=$(cygpath -w "$ABS/bin")
+      powershell.exe -NoProfile -Command "\$p=[Environment]::GetEnvironmentVariable('Path','User');\$d='$wd';if((\$p+'') -notlike ('*'+\$d+'*')){[Environment]::SetEnvironmentVariable('Path',\$(if(\$p){\$p.TrimEnd(';')+';'+\$d}else{\$d}),'User')}" >/dev/null
+      ;;
+  esac
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) return 0 ;;
+  esac
+  for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
+    [ -f "$rc" ] || continue
+    if ! grep -qF '.local/bin' "$rc"; then
+      printf '\n# relativity CLI\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"$rc"
+      echo "NOTE: added ~/.local/bin to your PATH in $rc — restart your terminal (or: . $rc)"
+    fi
+    return 0
+  done
+  printf 'export PATH="$HOME/.local/bin:$PATH"\n' >"$HOME/.profile"
+  echo "NOTE: created ~/.profile with ~/.local/bin on PATH — restart your terminal"
 }
-NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]')
-NODE_MINOR=$(node -p 'process.versions.node.split(".")[1]')
-if [ "$NODE_MAJOR" -lt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt 13 ]; }; then
-  echo "Node.js $NODE_MAJOR.$NODE_MINOR is too old — need 22.13+. Update it from https://nodejs.org and re-run."
-  exit 1
-fi
 
-mkdir -p "$DIR" && cd "$DIR"
-echo "==> Downloading source"
-curl -fsSL "${RELATIVITY_TARBALL_URL:-https://codeload.github.com/$REPO/tar.gz/refs/heads/$BRANCH}" | tar -xz --strip-components=1
-echo "==> Installing dependencies"
-npm install
-echo "==> Starting (web app on http://localhost:5173 — stop with Ctrl+C)"
-npm run dev
+install_command
+
+echo ""
+echo "Done. Open a NEW terminal and type:  relativity"
+echo "  * opens your browser (http://127.0.0.1:8080); Ctrl+C stops it"
+echo "  * first run downloads the Docker images — a few minutes"
