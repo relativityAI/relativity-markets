@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.5.0...relativity-markets-v0.6.0) (2026-11-16)
+
+
+### Features
+
+* **cli:** relativity one-command launcher + docker-mandatory install (+ release workflow fix) ([#161](https://github.com/relativityAI/relativity-markets/issues/161)) ([41a8849](https://github.com/relativityAI/relativity-markets/commit/41a8849bbbb5314df7457ace6959069a06e44219))
+
 ## [0.5.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.4.0...relativity-markets-v0.5.0) (2026-11-16)
 
 
