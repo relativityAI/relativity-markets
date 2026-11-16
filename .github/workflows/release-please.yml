@@ -42,6 +42,8 @@ jobs:
       - name: Approve + auto-merge the release PR
         env:
           GH_TOKEN: ${{ github.token }}
+          # no checkout in this job — gh can't discover the repo from .git
+          GH_REPO: ${{ github.repository }}
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
         run: |
           set -e
