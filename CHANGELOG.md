@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.4.0...relativity-markets-v0.5.0) (2026-11-16)
+
+
+### Features
+
+* agent categories, schedules + DeepAgents harness & final plot reference ([#159](https://github.com/relativityAI/relativity-markets/issues/159)) ([d9df052](https://github.com/relativityAI/relativity-markets/commit/d9df0525b6e37694aa2503ec8a184f5b4557d424))
+
 ## [0.4.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.3.1...relativity-markets-v0.4.0) (2026-11-16)
 
 
