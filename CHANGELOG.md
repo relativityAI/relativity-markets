@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.6.0...relativity-markets-v0.6.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **ci:** release step needs GH_REPO — job has no checkout for gh to discover ([#164](https://github.com/relativityAI/relativity-markets/issues/164)) ([58da291](https://github.com/relativityAI/relativity-markets/commit/58da291ecb0c75320f57080104034f83437b7f63))
+
 ## [0.6.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.5.0...relativity-markets-v0.6.0) (2026-11-16)
 
 
