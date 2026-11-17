@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.8.0...relativity-markets-v0.8.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* **cli:** always run the latest image, on every platform ([1d4376e](https://github.com/relativityAI/relativity-markets/commit/1d4376e2e93d549ec7dd6c8156cb4dd7a0a747e5))
+
 ## [0.8.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.7.0...relativity-markets-v0.8.0) (2026-11-17)
 
 
