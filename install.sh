@@ -23,11 +23,14 @@ install_command() {
   mkdir -p "$HOME/.local/bin"
   ln -sf "$ABS/bin/relativity" "$HOME/.local/bin/relativity"
   chmod +x "$ABS/bin/relativity"
-  # Windows (Git Bash): also register for cmd/PowerShell.
+  # Windows (Git Bash): cmd/PowerShell can't run an extensionless shell script,
+  # so install a .cmd shim beside the symlink. It delegates to that symlink,
+  # which points into the repo — so `git pull` keeps the launcher up to date.
   # ponytail: % in the install path would break this; nobody has % in a folder name.
   case $(uname -s) in
     MINGW* | MSYS* | CYGWIN*)
-      wd=$(cygpath -w "$ABS/bin")
+      cp -f "$ABS/bin/relativity.cmd" "$HOME/.local/bin/relativity.cmd"
+      wd=$(cygpath -w "$HOME/.local/bin")
       powershell.exe -NoProfile -Command "\$p=[Environment]::GetEnvironmentVariable('Path','User');\$d='$wd';if((\$p+'') -notlike ('*'+\$d+'*')){[Environment]::SetEnvironmentVariable('Path',\$(if(\$p){\$p.TrimEnd(';')+';'+\$d}else{\$d}),'User')}" >/dev/null
       ;;
   esac
@@ -50,5 +53,5 @@ install_command
 
 echo ""
 echo "Done. Open a NEW terminal and type:  relativity"
-echo "  * opens your browser (http://127.0.0.1:8080); Ctrl+C stops it"
+echo "  * opens your browser (http://127.0.0.1:8501); Ctrl+C stops it"
 echo "  * first run downloads the Docker images — a few minutes"

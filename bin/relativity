@@ -1,10 +1,12 @@
 #!/bin/sh
 # relativity — start Relativity (Docker) and open it in your browser.
+# Every run refreshes the app image first, so you always get the latest build.
 # Foreground: `docker compose up` streams logs; Ctrl+C stops the containers.
 # install.sh symlinks this to ~/.local/bin/relativity; works from any dir.
 set -e
 
-URL=http://127.0.0.1:8080
+URL=http://127.0.0.1:8501
+IMAGE=ghcr.io/relativityai/relativity-markets:latest
 
 SELF=$0
 while [ -L "$SELF" ]; do
@@ -16,6 +18,7 @@ while [ -L "$SELF" ]; do
 done
 DIR=$(cd "$(dirname "$SELF")/.." && pwd)
 
+compose() { docker compose -f "$DIR/docker-compose.yml" "$@"; }
 up() { curl -fsS -o /dev/null --max-time 2 "$URL/health" 2>/dev/null; }
 
 open_browser() {
@@ -24,6 +27,19 @@ open_browser() {
     MINGW* | MSYS* | CYGWIN*) cmd.exe /c start "" "$URL" >/dev/null 2>&1 & ;;
     *) xdg-open "$URL" >/dev/null 2>&1 & ;;
   esac
+}
+
+open_when_up() {
+  n=0
+  while [ "$n" -lt 600 ]; do
+    if up; then
+      open_browser
+      return 0
+    fi
+    sleep 1
+    n=$((n + 1))
+  done
+  echo "App did not become healthy at $URL" >&2
 }
 
 if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
@@ -35,34 +51,34 @@ if [ ! -f "$DIR/docker-compose.yml" ]; then
   exit 1
 fi
 
-if up; then
-  echo "Relativity is already running: $URL"
-  open_browser
+# Refresh the app image BEFORE anything else, so every invocation — including
+# one against an already-running app — picks up the newest published build.
+# Other services come from their registries on first run; tvmcp is build-only,
+# so a blanket `compose pull` would always fail on it.
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo "(first run downloads the Docker images — a few minutes)"
+fi
+echo "Checking for updates..."
+if ! compose pull app; then
+  echo "Could not check for updates — starting with the local image." >&2
+fi
+
+latest=$(docker image inspect "$IMAGE" -f '{{.Id}}' 2>/dev/null || true)
+running=$(compose ps -q app 2>/dev/null || true)
+
+if [ -n "$running" ] && up; then
+  current=$(docker inspect -f '{{.Image}}' "$running" 2>/dev/null || true)
+  if [ -n "$latest" ] && [ -n "$current" ] && [ "$current" != "$latest" ]; then
+    echo "Update available — restarting the app with the latest image..."
+    compose up -d --no-deps --force-recreate app
+    open_when_up
+  else
+    echo "Relativity is already running: $URL"
+    open_browser
+  fi
   exit 0
 fi
 
 echo "Starting Relativity: $URL  —  Ctrl+C stops it"
-if ! docker image inspect ghcr.io/relativityai/relativity-markets:latest >/dev/null 2>&1; then
-  echo "(first run downloads the Docker images — a few minutes)"
-fi
-# start NOW on local images; refresh ghcr in the background for the next run
-(
-  out=$(docker compose -f "$DIR/docker-compose.yml" pull 2>&1 || true)
-  case $out in
-  *Pull*) echo "Update downloaded — restart relativity to use it." ;;
-  esac
-) &
-# open the browser once the app answers; dies with this terminal
-(
-  n=0
-  while [ "$n" -lt 600 ]; do
-    if up; then
-      open_browser
-      break
-    fi
-    sleep 1
-    n=$((n + 1))
-  done
-) &
-# blocks streaming container logs; Ctrl+C stops the containers
-docker compose -f "$DIR/docker-compose.yml" up
+open_when_up &
+compose up

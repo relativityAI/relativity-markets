@@ -6,7 +6,7 @@ Requires Node ≥ 22.13 (`node:sqlite`).
 
 ```bash
 npm install          # once, in client/ and services/
-npm run dev          # from repo root: API (8080) + UI (5173)
+npm run dev          # from repo root: API (8501) + UI (5173)
 npm test             # all tests, both packages
 npm run typecheck    # TypeScript, both packages
 npm run build
