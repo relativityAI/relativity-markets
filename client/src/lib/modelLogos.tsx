@@ -7,7 +7,6 @@ import {
     SiMeta,
     SiMistralai,
     SiNvidia,
-    SiOllama,
     SiPerplexity,
 } from "react-icons/si";
 import grokLogo from "@/assets/llm_grok.svg";
@@ -31,6 +30,8 @@ import tavilyLogo from "@/assets/tavily-color.svg";
 export function modelProvider(model?: string | null): string {
     const id = (model || "").trim().toLowerCase();
     if (!id) return "unknown";
+    // Model family outranks the provider prefix: opencode/deepseek-* is DeepSeek.
+    if (id.includes("deepseek")) return "deepseek";
     const prefix = id.split("/")[0];
     if (prefix === "meta-llama" || prefix === "meta") return "meta";
     if (prefix === "gemini" || prefix === "google") return "google";
@@ -55,7 +56,6 @@ const PROVIDERS: Record<string, ProviderVisual> = {
     meta: { label: "Meta Llama", Icon: SiMeta, color: "#0668E1" },
     mistral: { label: "Mistral AI", image: mistralAiLogo },
     nvidia: { label: "NVIDIA", Icon: SiNvidia, color: "#76B900" },
-    ollama: { label: "Ollama", Icon: SiOllama },
     perplexity: { label: "Perplexity", Icon: SiPerplexity, color: "#20808D" },
     grok: { label: "Grok", image: grokLogo, invert: true },
     cohere: { label: "Cohere", image: cohereLogo, invert: true },

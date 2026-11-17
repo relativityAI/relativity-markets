@@ -7,13 +7,13 @@ import { LOCAL_AUTH } from "@/auth/AuthContext";
 import { useColorMode } from "@/components/ui/color-mode";
 import UserAvatar from "@/components/shared/UserAvatar";
 import { API_BASE, SettingsService } from "@/db";
-import { TickerLogo, SOURCE_DEFS } from "@/lib/sourceLogos";
-import type { IconType } from "react-icons";
+import { TickerLogo } from "@/lib/sourceLogos";
 import { DropdownItem } from "@/pages/shared/AnalysisControls";
 import { cn } from "@/lib/utils";
 import searxngLogo from "@/assets/searxng.svg";
 import yahooLogo from "@/assets/yahoo_finance.png";
 import tavilyLogo from "@/assets/tavily-color.svg";
+import tradingviewLogo from "@/assets/tradingview.svg";
 
 // Navbar data-source chips. SearXNG/Yahoo/TradingView status comes from GET
 // /health/sources — a real probe per source, cached server-side for a minute.
@@ -91,12 +91,10 @@ export default function NavBar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sources, setSources] = useState<Record<string, SourceStatus>>({});
 
-  // ponytail: TradingView has no logo asset — reuse the react-icons mark from
-  // SOURCE_DEFS instead of shipping a new SVG.
-  const dataSources = useMemo<{ id: string; name: string; img?: string; Icon?: IconType }[]>(
+  const dataSources = useMemo<{ id: string; name: string; img: string }[]>(
     () => [
       { id: "searxng", name: "SearXNG", img: searxngLogo },
-      { id: "tradingview", name: "TradingView", Icon: SOURCE_DEFS.tradingview.icon },
+      { id: "tradingview", name: "TradingView", img: tradingviewLogo },
       { id: "tavily", name: "Tavily", img: tavilyLogo },
       { id: "yahoo", name: "Yahoo Finance (yfinance MCP)", img: yahooLogo },
     ],
@@ -227,16 +225,17 @@ export default function NavBar() {
                       href ? "cursor-pointer" : "cursor-default",
                     )}
                   >
-                    {s.Icon ? (
-                      <s.Icon size={15} aria-hidden="true" className={cn("text-[var(--ink-secondary)]", down && "opacity-40")} />
-                    ) : (
-                      <img
-                        src={s.img}
-                        alt=""
-                        aria-hidden="true"
-                        className={cn("h-full w-full object-contain", down && "grayscale opacity-40")}
-                      />
-                    )}
+                    <img
+                      src={s.img}
+                      alt=""
+                      aria-hidden="true"
+                      className={cn(
+                        "h-full w-full object-contain",
+                        down && "grayscale opacity-40",
+                        // The TradingView SVG is solid black — invert on dark so it stays visible.
+                        s.id === "tradingview" && colorMode === "dark" && "invert",
+                      )}
+                    />
                     <span className="pointer-events-none invisible absolute left-1/2 top-full z-40 mt-1.5 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-[4px] border border-[var(--hairline)] bg-[var(--surface-canvas)] px-2 py-1 font-[family-name:var(--font-body)] text-xs text-[var(--ink-primary)] opacity-0 shadow-[0_8px_24px_rgba(0,0,0,0.12)] transition-all duration-150 group-hover/src:delay-300 group-hover/src:visible group-hover/src:opacity-100">
                       {s.name}
                       {st?.ok === true && <Check size={12} style={{ color: "#7A9E7E" }} />}

@@ -19,6 +19,7 @@ import { z } from "zod";
 import { MultiServerMCPClient, type StreamableHTTPConnection } from "@langchain/mcp-adapters";
 import type { StructuredTool } from "langchain";
 import { log } from "../../api/logger.js";
+import { stockTechnicalAnalysisTool } from "./stock-ta.js";
 
 export const McpSourceSchema = z
   .object({
@@ -132,6 +133,10 @@ export async function buildRunTools(
       failOrSkip(required, `MCP source "${entry.name}" unreachable at ${url} — start the server or fix the url\n  ${e?.message || e}`);
     }
   }
+
+  // Stocks-only TA for markets the TradingView MCP can't reach (India
+  // NSE/BSE). Local tool, so it stays available even if an MCP source is down.
+  push("local", stockTechnicalAnalysisTool());
 
   return { tools, close: () => Promise.allSettled(clients.map((c) => c.close())).then(() => undefined) };
 }

@@ -35,6 +35,65 @@ export interface ScheduleRow {
     created_at: string;
 }
 
+/** A named watchlist and its watched symbols (persisted in SQLite). */
+export interface WatchlistItem {
+    symbol: string;
+    source?: string;
+    name?: string;
+}
+
+export interface WatchlistRow {
+    id: string;
+    user_id: string;
+    name: string;
+    items: WatchlistItem[];
+    created_at: string;
+    updated_at: string;
+}
+
+/** The local API restarts under `tsx watch`; a write in that window should
+ *  retry briefly instead of reporting a lost change. */
+async function retryWatchlistWrite<T>(write: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+        try {
+            return await write();
+        } catch (e: any) {
+            const status = e?.response?.status;
+            const retryable = !status || status >= 500 || status === 429;
+            if (!retryable || attempt >= 2) throw e;
+            await new Promise((resolve) => setTimeout(resolve, 600));
+        }
+    }
+}
+
+/** Watchlists — persisted per user, CRUD via /watchlists. */
+export const WatchlistService = {
+    async list(): Promise<WatchlistRow[]> {
+        const response = await axios.get(`${API_BASE}/watchlists`);
+        return response.data as WatchlistRow[];
+    },
+
+    async create(name: string, items: WatchlistItem[] = []): Promise<WatchlistRow> {
+        return retryWatchlistWrite(async () => {
+            const response = await axios.post(`${API_BASE}/watchlists`, { name, items });
+            return response.data as WatchlistRow;
+        });
+    },
+
+    async update(id: string, patch: { name?: string; items?: WatchlistItem[] }): Promise<WatchlistRow> {
+        return retryWatchlistWrite(async () => {
+            const response = await axios.put(`${API_BASE}/watchlists/${encodeURIComponent(id)}`, patch);
+            return response.data as WatchlistRow;
+        });
+    },
+
+    async delete(id: string): Promise<void> {
+        await retryWatchlistWrite(async () => {
+            await axios.delete(`${API_BASE}/watchlists/${encodeURIComponent(id)}`);
+        });
+    },
+};
+
 /**
  * Global Agent Service - delegates to the backend API
  */
@@ -227,6 +286,8 @@ export interface SkillSummary {
     anchors?: { label: string; weight?: number }[];
     /** User labels from frontmatter metadata.tags — search + display. */
     tags?: string[];
+    /** ISO created-at from the skill file's birthtime. */
+    created_at?: string;
 }
 
 export const SkillService = {
@@ -316,14 +377,13 @@ export const ToolService = {
 };
 
 /**
- * Providers that run without a user key: local Ollama plus the free-tier
- * cloud providers the server's key pool supplies. Kept in sync with the
- * API's KEYLESS_PROVIDERS set in services/api/models.ts.
+ * Providers offered as server-side free-tier keys / pools. With no user keys,
+ * these are the models worth showing; everything else needs a user key first.
  */
-const KEYLESS_PROVIDERS = new Set(["ollama", "groq", "gemini", "cerebras", "openrouter", "mistral", "nvidia", "cohere", "zai"]);
+const SERVER_FREE_PROVIDERS = new Set(["groq", "gemini", "cerebras", "openrouter", "mistral", "nvidia", "cohere", "zai"]);
 
 export function isServerFreeModel(modelId: string): boolean {
-    return KEYLESS_PROVIDERS.has(String(modelId).split("/")[0]);
+    return SERVER_FREE_PROVIDERS.has(String(modelId).split("/")[0]);
 }
 
 export const VoyagerService = {

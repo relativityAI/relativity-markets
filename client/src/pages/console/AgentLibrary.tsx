@@ -75,15 +75,16 @@ function SkillSelect({ value, onChange, skills }: { value: string; onChange: (id
 }
 
 /** One class/category per agent (services/config/categories.yaml via the API). */
-function CategorySelect({ value, onChange, categories }: { value: string; onChange: (c: string) => void; categories: string[] }) {
+function CategorySelect({ value, onChange, categories, invalid }: { value: string; onChange: (c: string) => void; categories: string[]; invalid?: boolean }) {
     return (
         <select
             value={value}
             onChange={(e) => onChange(e.target.value)}
             aria-label="Agent category"
-            className={SELECT_CLS}
+            aria-invalid={invalid || undefined}
+            className={cn(SELECT_CLS, invalid && "border-console-negative!")}
         >
-            <option value="">Select…</option>
+            <option value="">Select a category…</option>
             {categories.map((c) => (
                 <option key={c} value={c}>{c}</option>
             ))}
@@ -140,6 +141,7 @@ export default function AgentLibrary() {
     const [saving, setSaving] = useState(false);
     const [createOpen, setCreateOpen] = useState(() => searchParams.get("new") === "1");
     const [newDraft, setNewDraft] = useState<Draft>({ name: "", category: "", skill: "", tags: [], tagText: "" });
+    const [createErrors, setCreateErrors] = useState<{ name?: string; category?: string }>({});
     const [deleteTarget, setDeleteTarget] = useState<Agent | null>(null);
     const [deleting, setDeleting] = useState(false);
     const [defaults, setDefaults] = useState<DefaultAgentRow[]>([]);
@@ -278,6 +280,7 @@ export default function AgentLibrary() {
         setDraft(null);
         setDirty(false);
         setNewDraft({ name: "", category: "", skill: skills[0]?.id || "", tags: [], tagText: "" });
+        setCreateErrors({});
     };
 
     const adoptAgent = (created: Agent, d: Draft) => {
@@ -288,6 +291,7 @@ export default function AgentLibrary() {
         }
         setCreateOpen(false);
         setNewDraft({ name: "", category: "", skill: skills[0]?.id || "", tags: [], tagText: "" });
+        setCreateErrors({});
         if (id) {
             setExpanded(id);
             setDraft(d);
@@ -297,12 +301,14 @@ export default function AgentLibrary() {
 
     const submitCreate = async () => {
         const name = newDraft.name.trim();
-        if (!name) {
-            toaster.create({ title: "Name required", description: "Give this agent a name.", type: "error" });
-            return;
-        }
-        if (!newDraft.category) {
-            toaster.create({ title: "Category required", description: "Pick one class/category for this agent.", type: "error" });
+        const errors: { name?: string; category?: string } = {};
+        if (!name) errors.name = "Give this agent a name.";
+        if (!newDraft.category) errors.category = "Pick a category before creating.";
+        setCreateErrors(errors);
+        if (Object.keys(errors).length > 0) {
+            // Put focus on the first missing field — the popup itself says what's wrong.
+            const form = document.querySelector('[data-testid="agent-create-form"]');
+            form?.querySelector<HTMLElement>(errors.name ? '[aria-label="Agent name"]' : '[aria-label="Agent category"]')?.focus();
             return;
         }
         try {
@@ -426,22 +432,32 @@ export default function AgentLibrary() {
                         </div>
                     </div>
                     <FormSection title="Details">
-                        <FormRow label="Name">
+                        <FormRow label="Name *">
                             <Input
                                 value={newDraft.name}
-                                onChange={(e) => setNewDraft((d) => ({ ...d, name: e.target.value }))}
+                                onChange={(e) => {
+                                    setNewDraft((d) => ({ ...d, name: e.target.value }));
+                                    if (createErrors.name) setCreateErrors((x) => ({ ...x, name: undefined }));
+                                }}
                                 placeholder="Untitled agent"
                                 aria-label="Agent name"
-                                className={FIELD_INPUT}
+                                aria-invalid={!!createErrors.name}
+                                className={cn(FIELD_INPUT, createErrors.name && "border-console-negative!")}
                                 data-testid="agent-name-input"
                             />
+                            {createErrors.name && <p role="alert" className="font-app-body text-[12px] text-console-negative">{createErrors.name}</p>}
                         </FormRow>
-                        <FormRow label="Category">
+                        <FormRow label="Category *">
                             <CategorySelect
                                 value={newDraft.category}
-                                onChange={(c) => setNewDraft((d) => ({ ...d, category: c }))}
+                                onChange={(c) => {
+                                    setNewDraft((d) => ({ ...d, category: c }));
+                                    if (createErrors.category) setCreateErrors((x) => ({ ...x, category: undefined }));
+                                }}
                                 categories={categories}
+                                invalid={!!createErrors.category}
                             />
+                            {createErrors.category && <p role="alert" className="font-app-body text-[12px] text-console-negative">{createErrors.category}</p>}
                         </FormRow>
                         <FormRow label="Skill">
                             <SkillSelect

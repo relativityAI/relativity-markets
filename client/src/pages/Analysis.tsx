@@ -13,7 +13,8 @@ import { motion, AnimatePresence } from "motion/react";
 import { dur, ease } from "@/lib/motion";
 import { TickerLogo } from "@/lib/sourceLogos";
 import { AgentAvatar } from "@/components/shared/AgentCell";
-import { Play, CalendarDays, Check } from "lucide-react";
+import { ModelLogo } from "@/lib/modelLogos";
+import { Play, CalendarDays, Check, Clock } from "lucide-react";
 import { toaster } from "@/compat/ui";
 import {
     MenuDropdown,
@@ -45,7 +46,7 @@ const FREQ_LABEL: Record<string, string> = { daily: "Daily", weekly: "Weekly", b
 const FIELD_INPUT =
     "h-9 rounded-[6px] border-[0.5px] border-[color:var(--hairline)] bg-transparent px-2.5 text-sm shadow-none placeholder:text-console-ink-4 focus-visible:ring-1 focus-visible:ring-console-accent/40 dark:bg-transparent";
 const SELECT_CLS =
-    "h-9 w-full max-w-64 cursor-pointer rounded-[6px] border-[0.5px] border-[color:var(--hairline)] bg-transparent px-2 text-sm text-console-ink shadow-none outline-none focus-visible:ring-1 focus-visible:ring-console-accent/40 dark:bg-transparent";
+    "h-9 w-full max-w-64 cursor-pointer rounded-[6px] border-[0.5px] border-[color:var(--hairline)] bg-transparent px-2 text-sm text-console-ink shadow-none outline-none focus-visible:ring-1 focus-visible:ring-console-accent/40 dark:bg-transparent [&>option]:bg-[var(--surface-recessed)] [&>option]:text-console-ink";
 
 /** Form section: the My-agents heading (light title) over whitespace-separated
  *  rows — no rules, no fills. */
@@ -300,7 +301,8 @@ export default function Analysis() {
         };
     }, [stockQuery]);
 
-    const [model, setModel] = useState("opencode/deepseek-v4.1-flash");
+    const [model, setModel] = useState("");
+    const [availableModels, setAvailableModels] = useState<string[]>([]);
     const [modelError, setModelError] = useState<string | null>(null);
     const [maxSteps, setMaxSteps] = useState("");
     const [maxTokens, setMaxTokens] = useState("");
@@ -325,7 +327,7 @@ export default function Analysis() {
         setCategory(next);
         // The picked agent must belong to the chosen category — else clear it.
         const picked = agents.find((a) => a.id === agentId);
-        if (picked && next && (picked.category ?? "") !== next) setAgentId("");
+        if (!next || (picked && (picked.category ?? "") !== next)) setAgentId("");
         // Only equity supports a company pick; leaving equity drops it.
         if (next !== "equity") {
             setPickedStock(null);
@@ -344,6 +346,16 @@ export default function Analysis() {
             share: stock.ticker || stock.SYMBOL || "",
             shareName: stock.name || stock.NAME || stock.ticker || stock.SYMBOL || "",
         }));
+    }, []);
+
+    // /models is already filtered by the user's added API keys.
+    useEffect(() => {
+        AnalysisService.getAvailableModels()
+            .then((data: unknown) => {
+                const fromKeys = Array.isArray(data) ? (data as string[]) : [];
+                setAvailableModels([...new Set(["opencode/deepseek-v4.1-flash", ...fromKeys])]);
+            })
+            .catch(() => setAvailableModels(["opencode/deepseek-v4.1-flash"]));
     }, []);
 
     const checkModel = useCallback(async (modelId: string) => {
@@ -617,7 +629,7 @@ export default function Analysis() {
                                         onClick={() => setRunMode(m)}
                                         testId={m === "scheduled" ? "mode-scheduled" : undefined}
                                     >
-                                        {m === "once" ? "Single" : "Scheduled"}
+                                        {m === "once" ? "Single" : <><Clock className="size-3.5" aria-hidden /> Scheduled</>}
                                     </ModeButton>
                                 ))}
                             </div>
@@ -745,6 +757,7 @@ export default function Analysis() {
                                     <MenuDropdown
                                         value={null}
                                         placeholder={selectedAgent ? "Change agent…" : "Select agent…"}
+                                        disabled={!category}
                                     >
                                     {(close) => (
                                         <Box>
@@ -794,17 +807,35 @@ export default function Analysis() {
                         )}
 
                         <FormRow label="Model">
-                            <Input
-                                value={model}
-                                onChange={(e) => {
-                                    setModel(e.target.value);
-                                    setModelError(null);
-                                }}
-                                placeholder="provider/model"
-                                aria-label="Model id"
-                                data-testid="run-model"
-                                className={FIELD_INPUT}
-                            />
+                            <div className="flex items-center gap-3">
+                            <div className="min-w-0 flex-1" data-testid="run-model">
+                                <MenuDropdown
+                                    value={model}
+                                    placeholder="Select model…"
+                                    logo={model ? <ModelLogo model={model} size={16} /> : undefined}
+                                >
+                                    {(close) => availableModels.map((m) => (
+                                        <DropdownItem
+                                            key={m}
+                                            label={m}
+                                            logo={<ModelLogo model={m} size={16} />}
+                                            selected={m === model}
+                                            onClick={() => {
+                                                setModel(m);
+                                                setModelError(null);
+                                                close();
+                                            }}
+                                        />
+                                    ))}
+                                </MenuDropdown>
+                            </div>
+                            <Link
+                                to="/settings"
+                                className="shrink-0 font-app-body text-[11px] text-[var(--accent-primary)] underline underline-offset-2 hover:opacity-80"
+                            >
+                                Add keys
+                            </Link>
+                            </div>
                             {modelError && (
                                 <Text fontSize="11px" fontWeight={400} fontFamily="var(--font-body)" color="var(--signal-negative)">
                                     {modelError}

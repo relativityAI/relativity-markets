@@ -163,7 +163,7 @@ export default function DraftWithAiPanel({ open, onClose, agent, agentId, onAppl
         const models = keys.length > 0
           ? allModels.filter((m: string) => {
               const provider = m.split("/")[0];
-              return provider === "ollama" || keys.includes(provider);
+              return keys.includes(provider);
             })
           : allModels;
         setAvailableModels(models);

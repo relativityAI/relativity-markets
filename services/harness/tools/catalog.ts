@@ -32,20 +32,24 @@ export const TOOL_CATALOG: { name: string; description: string }[] = [
   { name: "searxng_search_suggestions", description: "Autocomplete a partial query using SearXNG suggestions." },
   { name: "searxng_instance_info", description: "Inspect the SearXNG instance's categories, engines, and defaults." },
 
-  // TradingView MCP server (docker: tradingview-mcp, streamable HTTP)
-  { name: "get_technical_analysis", description: "Full TradingView technical analysis: RSI, MACD, Bollinger, 23 indicators with BUY/SELL/HOLD." },
-  { name: "get_multi_timeframe_analysis", description: "Weekly→Daily→4H→1H→15m alignment analysis for a symbol." },
-  { name: "get_candlestick_patterns", description: "Detect 15 candlestick patterns on a symbol." },
-  { name: "get_stock_decision", description: "3-layer decision engine: ranking + trade setup + quality score." },
-  { name: "screen_stocks", description: "Multi-exchange TradingView screener with 20+ filter criteria." },
-  { name: "scan_by_signal", description: "Scan by signal type (oversold, trending, breakout...)." },
-  { name: "stock_screener", description: "List common/preferred stocks for any TradingView country market, ranked by market cap." },
-  { name: "stock_prices", description: "Direct price lookup for specific EXCHANGE:SYMBOL pairs." },
+  // Local stock TA (yahoo OHLCV) — the TradingView MCP has no India NSE/BSE TA.
+  { name: "stock_technical_analysis", description: "Full stock TA: EMA10/20/50/200, RSI14, MACD, Bollinger, ATR14, VWAP, 15 candlestick patterns, BUY/SELL/HOLD bias. Use exchange=NSE or BSE for India." },
+
+  // TradingView MCP server (docker: tradingview-mcp, streamable HTTP, v0.8.1)
+  // ponytail: real server names only (the get_* docs names don't exist), and
+  // stocks-only — the crypto scanners are deliberately not in the allow list.
+  { name: "coin_analysis", description: "Full single-symbol stock TA: RSI, MACD, SMA/EMA, Bollinger, ATR, OBV. Pass exchange=NASDAQ/NYSE/NSE etc — the default KUCOIN is crypto." },
+  { name: "multi_timeframe_analysis", description: "Weekly→Daily→4H→1H→15m alignment for a stock. Pass a stock exchange, not the KUCOIN default." },
+  { name: "combined_analysis", description: "TradingView technicals + sentiment + news → confluence decision. Defaults to NASDAQ." },
+  { name: "multi_agent_analysis", description: "Technical/sentiment/risk agent debate ending in a decision. Pass a stock exchange." },
+  { name: "stock_screener", description: "Screen stocks by country (incl. india → NSE/BSE), ranked by market cap." },
+  { name: "stock_prices", description: "Direct price lookup for EXCHANGE:SYMBOL pairs (e.g. NSE:RELIANCE, BSE:TCS)." },
+  { name: "backtest_strategy", description: "Backtest strategies incl. ema_cross and triple_ema." },
+  { name: "compare_strategies", description: "Ranked leaderboard across all strategies." },
+  { name: "walk_forward_backtest_strategy", description: "Walk-forward validation of a strategy." },
   { name: "yahoo_price", description: "Real-time quote: price, change %, 52w high/low, market state." },
-  { name: "market_snapshot", description: "Global overview: S&P500, NASDAQ, VIX, BTC, ETH, EUR/USD, SPY, GLD." },
-  { name: "financial_news", description: "Live RSS headlines from Yahoo Finance, MarketWatch, CNBC (Marketaux-keyed)."},
-  { name: "market_sentiment", description: "Reddit sentiment across finance communities (Marketaux-keyed)." },
-  { name: "combined_analysis", description: "TradingView technicals + Reddit sentiment + live news → confluence decision." },
+  { name: "financial_news", description: "Live headline financial news (category=stocks)." },
+  { name: "market_sentiment", description: "Sentiment across finance communities (Marketaux-keyed)." },
 
   // Tavily MCP (remote; connected only when the user's key is set)
   { name: "tavily_search", description: "AI web search with depth, time-range, and domain filters (topic=news for news)." },

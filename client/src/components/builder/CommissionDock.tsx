@@ -250,7 +250,7 @@ export default function CommissionDock({ open, onClose, agent, agentId, onApply 
                 const models = userProviders.length > 0
                     ? allModels.filter((m: string) => {
                         const provider = m.split("/")[0];
-                        return provider === "ollama" || userProviders.includes(provider);
+                        return userProviders.includes(provider);
                     })
                     : allModels.filter((m: string) => isServerFreeModel(m));
                 setAvailableModels(models);

@@ -19,17 +19,18 @@
         "urlEnv": "MCP_TRADINGVIEW_URL",
         "required": false,
         "allow": [
-          "top_gainers",
-          "top_losers",
-          "bollinger_scan",
-          "rating_filter",
+          "financial_news",
           "coin_analysis",
-          "consecutive_candles_scan",
-          "advanced_candle_pattern",
-          "volume_breakout_scanner",
-          "volume_confirmation_analysis",
-          "smart_volume_scanner",
-          "multi_agent_analysis"
+          "multi_timeframe_analysis",
+          "combined_analysis",
+          "multi_agent_analysis",
+          "market_sentiment",
+          "stock_screener",
+          "stock_prices",
+          "backtest_strategy",
+          "compare_strategies",
+          "walk_forward_backtest_strategy",
+          "yahoo_price"
         ]
       },
       {

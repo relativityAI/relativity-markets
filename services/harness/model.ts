@@ -3,7 +3,7 @@
  *
  * Same provider matrix the old harness served, rebuilt on @langchain/*.
  * Every OpenAI-compatible gateway (cerebras, groq, openrouter, mistral,
- * nvidia, cohere, zai, ollama, opencode) collapses into ChatOpenAI with a
+ * nvidia, cohere, zai, opencode) collapses into ChatOpenAI with a
  * custom baseURL, so the whole matrix is one map + two first-class clients.
  *
  * The caller owns key selection: it passes the picked key (usually from the
@@ -14,6 +14,7 @@
 import { randomUUID } from "node:crypto";
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
+import { ChatGoogle } from "@langchain/google";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 
 export interface LlmKeys {
@@ -50,12 +51,10 @@ const PROVIDER_LABELS: Record<string, string> = {
   nvidia: "NVIDIA NIM",
   cohere: "Cohere",
   zai: "Z.AI",
-  ollama: "Ollama",
   opencode: "OpenCode",
 };
 
 export function assertProviderKeyAvailable(provider: string, key: string | undefined): void {
-  if (provider === "ollama") return;
   if (!key || !String(key).trim()) {
     throw new Error(
       `No API key configured for "${PROVIDER_LABELS[provider] || provider}" — add one in Settings or pick a model from a provider that has a key.`,
@@ -113,7 +112,6 @@ const GATEWAYS: Record<string, OpenAiCompatGateway> = {
   nvidia: { baseURL: "https://integrate.api.nvidia.com/v1" },
   cohere: { baseURL: "https://api.cohere.ai/compatibility/v1" },
   zai: { baseURL: "https://api.z.ai/api/paas/v4" },
-  ollama: { baseURL: process.env.OLLAMA_URL || "http://localhost:11434/v1" },
 };
 
 export function buildModel(modelId: string, keys: LlmKeys, apiKey?: string, temperature = 0, maxTokens?: number): BaseChatModel {
@@ -129,6 +127,13 @@ export function buildModel(modelId: string, keys: LlmKeys, apiKey?: string, temp
       return new ChatAnthropic({ ...opts, apiKey: key });
     case "opencode":
       return new ChatOpenAI({ ...opts, configuration: openCodeConfiguration(key!) });
+    case "gemini":
+      return new ChatGoogle({
+        model: name,
+        apiKey: key,
+        temperature,
+        ...(maxTokens ? { maxOutputTokens: maxTokens } : {}),
+      });
     default: {
       const gateway = GATEWAYS[provider];
       if (!gateway) throw new Error(`Unknown model provider: ${provider}`);

@@ -33,6 +33,11 @@ const SECTION_BOX = "rounded-xl border-[0.5px] border-[color:var(--hairline)] bg
  *  height. */
 const SECTION_LIST = "max-h-[22rem] overflow-x-hidden overflow-y-auto pr-1 md:h-[22rem]";
 
+function formatDate(dateStr?: string): string {
+    if (!dateStr) return "—";
+    return new Date(dateStr).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
 function matches(s: SkillSummary, q: string): boolean {
     if (!q) return true;
     return s.name.toLowerCase().includes(q)
@@ -107,8 +112,11 @@ export default function AgentSkills() {
         >
             <SkillAvatar skill={s} size={48} round />
             <span className="flex min-w-0 shrink flex-col gap-1">
-                <span className="block truncate font-app-display text-[22px] font-normal leading-[1.05] tracking-[-0.015em] text-console-ink">
+                <span className="block truncate font-app-display text-[22px] font-normal leading-[1.1] tracking-[-0.015em] text-console-ink">
                     {s.name}
+                </span>
+                <span className="block font-app-body text-[12px] font-normal text-console-ink-4">
+                    Created {formatDate(s.created_at)}
                 </span>
                 {s.tags?.length ? (
                     <span className="flex flex-wrap gap-1.5">

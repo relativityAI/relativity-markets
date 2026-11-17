@@ -277,9 +277,9 @@ export async function runHarnessSymbol(
       log.warn("harness", `run ${agent.id} attempt ${attempt}/3 failed on ${modelId}: ${msg} — falling back to ${next || "same model"}`);
       if (next && next !== modelId) modelId = next;
       await new Promise((r) => setTimeout(r, 750 * attempt));
-    } finally {
-      await close();
     }
+    // `close()` is called in the inner finally above once tools are built;
+    // there is no close to call if buildRunTools itself threw.
   }
   if (!result) throw lastError;
   await collector.flush().catch(() => {});

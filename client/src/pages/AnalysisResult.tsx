@@ -1025,6 +1025,12 @@ function EmptyState({ message }: { message: string }) {
 const HARNESS_TABS = ["report", "agent workspace", "run info"] as const;
 type HarnessTab = (typeof HARNESS_TABS)[number];
 
+/** One score inside each verdict band — keeps the big verdict's ink in sync
+ *  with verdictForScore(), the single source of truth for verdict colours. */
+const VERDICT_BAND_EXAMPLE: Record<string, number> = {
+    Outstanding: 95, Strong: 80, Fair: 60, Underwhelming: 45, Subpar: 20,
+};
+
 /** Harness run result: the typed ReportDocument + the Agent Workspace (reasoning + knowledge base). */
 function HarnessRunView({ run }: { run: any; tags?: string[] }) {
     const doc = run.report_document as ReportDocument;
@@ -1041,6 +1047,14 @@ function HarnessRunView({ run }: { run: any; tags?: string[] }) {
     const harnessTab: HarnessTab = drafting ? "agent workspace" : postRunTab ?? "report";
     const workspace = (run.workspace ?? null) as Record<string, string> | null;
     const hasTrace = Array.isArray(run.trace) && run.trace.length > 0;
+    // The document carries the verdict word (e.g. "Fair"); older rows without
+    // one fall back to the score-derived word.
+    const verdictWord = String((doc as any)?.verdict || verdictForScore(run.total_score).label);
+    const verdictInk = verdictForScore(VERDICT_BAND_EXAMPLE[verdictWord] ?? null).color;
+    const ticker = String(doc?.symbol || run.symbol || "");
+    const stockName = String(run.share_name || ticker);
+    // Some runs store the ticker as the share name — don't print it twice.
+    const showTicker = ticker && ticker.toLowerCase() !== stockName.toLowerCase();
     return (
         <Box bg="var(--surface-canvas)">
             <Tabs.Root
@@ -1116,6 +1130,40 @@ function HarnessRunView({ run }: { run: any; tags?: string[] }) {
                             <Text mt={4} fontSize="13px" color="var(--ink-secondary)">
                                 The run did not complete — the report below is partial.
                             </Text>
+                        )}
+                        {/* Stock identity + verdict lead the report: a large logo,
+                            name and ticker on one line, then the verdict word. */}
+                        {doc && (
+                            <Flex align="center" gap={{ base: 5, md: 8 }} mt={6} mb={9}>
+                                <TickerLogo symbol={ticker} size={128} />
+                                <Box minW={0}>
+                                    <Flex align="baseline" gap={3} flexWrap="wrap">
+                                        <Text
+                                            fontSize={{ base: "18px", md: "20px" }}
+                                            fontWeight={500}
+                                            lineHeight="shorter"
+                                            color="var(--ink-primary)"
+                                        >
+                                            {stockName}
+                                        </Text>
+                                        {showTicker && (
+                                            <Text fontSize="14px" fontWeight={400} color="var(--ink-tertiary)">
+                                                {ticker}
+                                            </Text>
+                                        )}
+                                    </Flex>
+                                    <Text
+                                        fontFamily="var(--font-display)"
+                                        fontWeight={300}
+                                        fontSize={{ base: "48px", md: "76px" }}
+                                        lineHeight="0.95"
+                                        color={verdictInk}
+                                        mt={{ base: 2, md: 3 }}
+                                    >
+                                        {verdictWord}
+                                    </Text>
+                                </Box>
+                            </Flex>
                         )}
                         <Box mt={4}>
                             <ReportDocumentRenderer document={doc} />

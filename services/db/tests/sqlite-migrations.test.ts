@@ -17,8 +17,20 @@ describe("sqlite migrations", () => {
     migrateSqlite(d);
     expect(tableExists(d, "agents")).toBe(true);
     expect(tableExists(d, "analysis_runs")).toBe(true);
+    expect(tableExists(d, "watchlists")).toBe(true);
     expect(version(d)).toBe(SCHEMA_VERSION);
     expect(d.prepare("SELECT value FROM app_meta WHERE key='first_run_at'").get()).toBeTruthy();
+  });
+
+  it("v4 adds watchlists to an existing v3 database", () => {
+    const d = new DatabaseSync(":memory:");
+    d.exec("CREATE TABLE legacy (x TEXT)");
+    d.exec("PRAGMA user_version = 3");
+    migrateSqlite(d);
+    expect(version(d)).toBe(SCHEMA_VERSION);
+    expect(tableExists(d, "watchlists")).toBe(true);
+    const cols = d.prepare("SELECT name FROM pragma_table_info('watchlists')").all() as { name: string }[];
+    expect(cols.map((c) => c.name)).toEqual(["id", "user_id", "name", "items", "created_at", "updated_at"]);
   });
 
   it("is idempotent", () => {

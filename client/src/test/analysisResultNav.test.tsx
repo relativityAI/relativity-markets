@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 
 vi.mock("@/db", () => ({
@@ -88,5 +88,31 @@ describe("AnalysisResult navbar", () => {
         expect(screen.getByRole("button", { name: /download as pdf/i })).toBeTruthy();
 
         await expectRunInfoHasDuration();
+    });
+
+    it("harness run: big logo, stock name, ticker and verdict lead the report", async () => {
+        vi.mocked(AnalysisService.readAnalysis).mockResolvedValue({
+            ...baseRun,
+            source: "SEC",
+            report_document: { symbol: "ACME", verdict: "Fair", sections: [] },
+        });
+        render(wrap(<AnalysisResult />));
+        await screen.findByTestId("report-doc");
+
+        const logo = document.querySelector('img[title="ACME"]') as HTMLImageElement;
+        expect(logo).toBeTruthy();
+        expect(logo.getAttribute("src")).toContain("/logo/ACME");
+        expect(logo.style.width).toBe("128px");
+
+        // Name and ticker share one line beside the big logo; no "Verdict" label.
+        const header = logo.parentElement!;
+        expect(header.textContent).toContain("Acme Ltd");
+        expect(header.textContent).toContain("ACME");
+        expect(header.textContent).not.toContain("Verdict");
+        const name = within(header).getByText("Acme Ltd");
+        const ticker = within(header).getByText("ACME");
+        expect(name.parentElement).toBe(ticker.parentElement);
+        expect(getComputedStyle(name).color).not.toBe(getComputedStyle(ticker).color);
+        expect(parseFloat(getComputedStyle(screen.getByText("Fair")).fontSize)).toBeGreaterThan(40);
     });
 });

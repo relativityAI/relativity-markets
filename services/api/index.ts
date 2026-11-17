@@ -10,6 +10,11 @@ import {
   insertScheduleRow,
   listScheduleRows,
   deleteScheduleRow,
+  listWatchlistRows,
+  getWatchlistRow,
+  insertWatchlistRow,
+  updateWatchlistRow,
+  deleteWatchlistRow,
   listRunRows,
   listRunSummaries,
   getRunRow,
@@ -777,6 +782,67 @@ app.delete("/schedules/:id", requireAuth, async (req, res) => {
   }
 });
 
+// ── Watchlists ──────────────────────────────────────────────────────────────
+// Named symbol lists on the home page. Items are `{ symbol, source?, name? }`;
+// the client joins in live run data from /analysis.
+
+app.get("/watchlists", requireAuth, async (req, res) => {
+  try {
+    res.json(await listWatchlistRows((req as AuthedRequest).user.id));
+  } catch (e: any) {
+    res.status(503).json({ error: e?.message || "Could not list watchlists" });
+  }
+});
+
+app.post("/watchlists", requireAuth, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const name = String(body.name || "").trim();
+    if (!name) return res.status(400).json({ error: "name is required" });
+    const items = Array.isArray(body.items) ? body.items : [];
+    res.json(await insertWatchlistRow({
+      user_id: (req as AuthedRequest).user.id,
+      name,
+      items,
+    }));
+  } catch (e: any) {
+    res.status(503).json({ error: e?.message || "Could not create watchlist" });
+  }
+});
+
+app.put("/watchlists/:id", requireAuth, async (req, res) => {
+  try {
+    const userId = (req as AuthedRequest).user.id;
+    const id = String(req.params.id);
+    const body = req.body || {};
+    const patch: { name?: string; items?: any[] } = {};
+    if (body.name !== undefined) {
+      const name = String(body.name).trim();
+      if (!name) return res.status(400).json({ error: "name cannot be empty" });
+      patch.name = name;
+    }
+    if (body.items !== undefined) {
+      if (!Array.isArray(body.items)) return res.status(400).json({ error: "items must be an array" });
+      patch.items = body.items;
+    }
+    if (!(await getWatchlistRow(userId, id))) return res.status(404).json({ error: "Watchlist not found" });
+    res.json(await updateWatchlistRow(userId, id, patch));
+  } catch (e: any) {
+    res.status(503).json({ error: e?.message || "Could not update watchlist" });
+  }
+});
+
+app.delete("/watchlists/:id", requireAuth, async (req, res) => {
+  try {
+    const userId = (req as AuthedRequest).user.id;
+    const removed = await deleteWatchlistRow(userId, String(req.params.id));
+    if (!removed) return res.status(404).json({ error: "Watchlist not found" });
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(503).json({ error: e?.message || "Could not delete watchlist" });
+  }
+});
+
 app.get("/analysis", requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
@@ -965,11 +1031,6 @@ app.post("/models/validate", requireAuth, async (req, res) => {
 
     const provider = modelId.split("/")[0];
     const { llmKeys } = await fetchUserKeys(userId);
-
-    // Ollama doesn't need a key
-    if (provider === "ollama") {
-      return res.json({ valid: true });
-    }
 
     // Resolve the key (user key, else server pool) — rejects when no key exists.
     const { apiKey } = keyPool.pickKey(modelId, llmKeys);
@@ -1372,7 +1433,7 @@ app.post("/agents/draft-parameters", requireAuth, async (req, res) => {
 });
 
 // Serve the built web app when present — the docker image ships UI+API as one
-// process on :8080. Bare dev (vite:5173 + `npm run dev`) is unaffected: this is
+// process on :8501. Bare dev (vite:5173 + `npm run dev`) is unaffected: this is
 // a no-op unless client/dist exists.
 const clientDist = path.resolve(process.cwd(), process.env.CLIENT_DIST || "../client/dist");
 if (existsSync(path.join(clientDist, "index.html"))) {

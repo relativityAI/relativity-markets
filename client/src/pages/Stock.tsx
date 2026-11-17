@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { Center, Spinner } from "@chakra-ui/react";
 import { useColorMode } from "@/components/ui/color-mode";
-import { API_BASE } from "@/db";
+import { API_BASE, AnalysisService } from "@/db";
 import { TickerLogo } from "@/lib/sourceLogos";
 import Echart from "@/components/shared/Echart";
-import AgentCell, { type AgentCellAgent } from "@/components/shared/AgentCell";
+import { AgentAvatar } from "@/components/shared/AgentCell";
 import { resolvedTheme, tooltipStyle } from "@/lib/echarts";
 
 interface Overview {
@@ -52,23 +52,26 @@ const fmtPrice = (n: number | null | undefined, currency?: string) => {
     }
 };
 
-const RATINGS = [
-    { label: "Very poor", color: "#C0453F" },
-    { label: "Poor", color: "#D97736" },
-    { label: "Fair", color: "#C9A227" },
-    { label: "Good", color: "#7FA650" },
-    { label: "Excellent", color: "#4C8B6B" },
-];
+function timeAgo(dateStr?: string): string {
+    if (!dateStr) return "";
+    const mins = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    if (days < 30) return `${days}d ago`;
+    return new Date(dateStr).toLocaleDateString();
+}
 
-// UI-only placeholder runs — real per-stock runs wire up later.
-const AGENT_SEEDS = [
-    { suffix: "Value Agent", seed: "value", when: "Today, 09:42", rating: 4 },
-    { suffix: "Momentum Agent", seed: "momentum", when: "Today, 09:45", rating: 3 },
-    { suffix: "Quality Agent", seed: "quality", when: "Today, 09:40", rating: 4 },
-    { suffix: "Risk Agent", seed: "risk", when: "Today, 09:38", rating: 1 },
-    { suffix: "Sentiment Agent", seed: "sentiment", when: "Today, 09:36", rating: 3 },
-    { suffix: "Earnings Agent", seed: "earnings", when: "Today, 09:34", rating: 2 },
-];
+/** Verdict word → app signal ink (the same bands the rest of the app uses). */
+function verdictColor(verdict?: string): string {
+    const v = String(verdict || "").toLowerCase();
+    if (["excellent", "good", "strong", "outstanding", "shortlist", "buy"].includes(v)) return "var(--signal-positive)";
+    if (["fair", "watch", "hold", "neutral", "underwhelming"].includes(v)) return "var(--signal-caution)";
+    if (["very poor", "poor", "subpar", "pass", "error", "sell"].includes(v)) return "var(--signal-negative)";
+    return "var(--ink-secondary)";
+}
 
 export default function Stock() {
     const { symbol = "" } = useParams();
@@ -78,6 +81,17 @@ export default function Stock() {
     const t = resolvedTheme(colorMode === "dark");
 
     const [state, setState] = useState<{ key: string; data: Overview | null; err: string } | null>(null);
+    const [runs, setRuns] = useState<{ key: string; rows: any[] } | null>(null);
+
+    // Only saved runs in the analysis DB are shown here — nothing is seeded.
+    useEffect(() => {
+        let alive = true;
+        const key = `${symbol}|${source}`;
+        AnalysisService.listAnalyses()
+            .then((rows) => { if (alive) setRuns({ key, rows: Array.isArray(rows) ? rows : [] }); })
+            .catch(() => { if (alive) setRuns({ key, rows: [] }); });
+        return () => { alive = false; };
+    }, [symbol, source]);
 
     useEffect(() => {
         const controller = new AbortController();
@@ -136,20 +150,26 @@ export default function Stock() {
         { label: "Volume", value: fmt(d.volume, d.currency, true) },
     ];
 
-    const agents: AgentCellAgent[] = AGENT_SEEDS.map((a) => ({
-        name: `${symbol} ${a.suffix}`,
-        seed: `${symbol}-${a.seed}`,
-        when: a.when,
-        rating: RATINGS[a.rating],
-    }));
+    // Latest real run per agent for this ticker, newest first.
+    const agentRuns = (runs?.key === `${symbol}|${source}` ? runs.rows : [])
+        .filter((r) => r.symbol === symbol
+            && (!source || !r.source || String(r.source).toUpperCase() === source.toUpperCase()))
+        .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at));
+    const seenAgents = new Set<string>();
+    const visibleRuns = agentRuns.filter((r) => {
+        const name = r.agent_name || r.agent || "Agent";
+        if (seenAgents.has(name)) return false;
+        seenAgents.add(name);
+        return true;
+    });
 
     return (
         <div className="min-h-full bg-[var(--surface-canvas)] pb-16 text-[var(--ink-primary)]">
-            {/* Section 1 — identity left, metrics + chart right */}
             <section className="pt-10">
-                <div className="flex flex-col gap-8 sm:flex-row sm:items-start">
-                    {/* Left: logo, name, exchange */}
-                    <div className="min-w-0 sm:w-[40%]">
+                {/* Desktop: title + price + metadata + chart on the left, real
+                    agent runs stacked on the right. Phones: one column. */}
+                <div className="flex flex-col gap-10 lg:grid lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:gap-12">
+                    <div className="min-w-0">
                         <div className="flex items-center gap-4">
                             <TickerLogo symbol={symbol} size={88} />
                             <div className="min-w-0">
@@ -162,11 +182,8 @@ export default function Stock() {
                                 </p>
                             </div>
                         </div>
-                    </div>
 
-                    {/* Right: price, change, LTP, metrics + chart */}
-                    <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                        <div className="mt-8 flex flex-wrap items-baseline gap-x-4 gap-y-1">
                             <span className="font-[family-name:var(--font-display)] text-[clamp(2rem,4vw,3rem)] leading-none font-normal text-[var(--ink-primary)]">
                                 {fmtPrice(d.price, d.currency)}
                             </span>
@@ -181,7 +198,7 @@ export default function Stock() {
                             LTP · {fmtPrice(d.price, d.currency)} · {ltpLabel}
                         </p>
 
-                        <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4">
+                        <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
                             {stats.map((s) => (
                                 <div key={s.label}>
                                     <dt className="font-[family-name:var(--font-body)] text-[11px] font-light tracking-wide text-[var(--ink-tertiary)] uppercase">
@@ -244,31 +261,66 @@ export default function Stock() {
                             </div>
                         )}
                     </div>
-                </div>
-            </section>
 
-            {/* Section 2 — agent runs (UI only for now) */}
-            <section className="mt-12">
-                <div className="mb-4 flex items-end justify-between gap-4">
-                    <div>
-                        <h2 className="font-[family-name:var(--font-display)] text-[clamp(1.5rem,2.5vw,2rem)] leading-tight font-normal text-[var(--ink-primary)]">
-                            Agent Runs
-                        </h2>
-                        <p className="mt-1 font-[family-name:var(--font-body)] text-xs font-light text-[var(--ink-tertiary)]">
-                            Agents currently covering {symbol}.
-                        </p>
-                    </div>
-                    <Link
-                        to="/analysis-list"
-                        className="font-[family-name:var(--font-body)] text-xs font-normal whitespace-nowrap text-[#4A6E8E] underline-offset-2 transition-colors hover:text-[var(--ink-primary)] hover:underline cursor-pointer"
-                    >
-                        View all runs
-                    </Link>
-                </div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {agents.map((a) => (
-                        <AgentCell key={a.name} agent={a} />
-                    ))}
+                    {/* Right: only real runs from the analysis DB, stacked. */}
+                    <aside className="min-w-0 w-full">
+                        <div className="flex items-end justify-between gap-4">
+                            <div>
+                                <h2 className="font-[family-name:var(--font-display)] text-[clamp(1.5rem,2.5vw,2rem)] leading-tight font-normal text-[var(--ink-primary)]">
+                                    Agent Runs
+                                </h2>
+                                <p className="mt-1 font-[family-name:var(--font-body)] text-xs font-light text-[var(--ink-tertiary)]">
+                                    Saved runs for {symbol}.
+                                </p>
+                            </div>
+                            <Link
+                                to={`/analysis-list?q=${encodeURIComponent(symbol)}`}
+                                className="font-[family-name:var(--font-body)] text-xs font-normal whitespace-nowrap text-[#4A6E8E] underline-offset-2 transition-colors hover:text-[var(--ink-primary)] hover:underline cursor-pointer"
+                            >
+                                View all runs
+                            </Link>
+                        </div>
+
+                        <div className="mt-4 flex flex-col gap-3">
+                            {visibleRuns.length === 0 ? (
+                                <p className="font-[family-name:var(--font-body)] text-[13px] font-light text-[var(--ink-tertiary)]">
+                                    No agent runs for {symbol} yet.
+                                </p>
+                            ) : visibleRuns.map((r) => {
+                                const agent = r.agent_name || r.agent || "Agent";
+                                const verdict = r.verdict || r.status || "Run";
+                                const runId = r.id || r.analysis_id;
+                                return (
+                                    <Link
+                                        key={runId || agent}
+                                        to={runId ? `/analysis-result/${runId}` : "/analysis-list"}
+                                        data-solid=""
+                                        className="agent-cell flex items-center gap-3 p-3 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
+                                    >
+                                        <span className="agent-cell-body flex min-w-0 flex-1 items-center gap-3">
+                                            <AgentAvatar seed={agent} size={44} />
+                                            <span className="min-w-0 flex-1">
+                                                <span className="flex items-baseline justify-between gap-2">
+                                                    <span className="truncate font-[family-name:var(--font-display)] text-[17px] leading-snug font-normal text-[var(--ink-primary)]">{agent}</span>
+                                                    <span className="shrink-0 font-[family-name:var(--font-body)] text-[11px] font-normal text-[var(--ink-tertiary)]">{timeAgo(r.created_at)}</span>
+                                                </span>
+                                                <span className="mt-1 block font-[family-name:var(--font-body)] text-[12px] font-medium" style={{ color: verdictColor(verdict) }}>
+                                                    {verdict}
+                                                </span>
+                                            </span>
+                                        </span>
+                                        <span className="agent-cell-cue font-[family-name:var(--font-body)] text-xs font-normal text-[#4A6E8E]">
+                                            Open
+                                            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                                <path d="M3 9L9 3" />
+                                                <path d="M4.5 3H9v4.5" />
+                                            </svg>
+                                        </span>
+                                    </Link>
+                                );
+                            })}
+                        </div>
+                    </aside>
                 </div>
             </section>
         </div>

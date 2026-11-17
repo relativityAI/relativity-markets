@@ -340,6 +340,81 @@ export function claimSchedule(id: string, date: string): boolean {
   return res.changes > 0;
 }
 
+// ── Watchlists ───────────────────────────────────────────────────────────────
+// One row per named list; `items` is the JSON array of watched symbols. Runs
+// are joined on the client from the analyses already loaded on the home page.
+
+export interface WatchlistItem {
+  symbol: string;
+  source?: string;
+  name?: string;
+}
+
+export interface WatchlistRow {
+  id: string;
+  user_id: string;
+  name: string;
+  items: WatchlistItem[];
+  created_at: string;
+  updated_at: string;
+}
+
+function watchlistRowOut(r: any): WatchlistRow {
+  return { ...r, items: fromJson<WatchlistItem[]>(r.items, []) };
+}
+
+export async function listWatchlistRows(userId: string): Promise<WatchlistRow[]> {
+  return getSqlite()
+    .prepare("SELECT * FROM watchlists WHERE user_id = ? ORDER BY created_at ASC")
+    .all(userId)
+    .map(watchlistRowOut);
+}
+
+export async function getWatchlistRow(userId: string, id: string): Promise<WatchlistRow | null> {
+  const r = getSqlite()
+    .prepare("SELECT * FROM watchlists WHERE id = ? AND user_id = ?")
+    .get(id, userId) as any;
+  return r ? watchlistRowOut(r) : null;
+}
+
+export async function insertWatchlistRow(row: {
+  user_id: string;
+  name: string;
+  items?: WatchlistItem[];
+}): Promise<WatchlistRow> {
+  const id = randomUUID();
+  getSqlite()
+    .prepare("INSERT INTO watchlists (id, user_id, name, items) VALUES (?, ?, ?, ?)")
+    .run(id, row.user_id, row.name, toJson(row.items ?? []));
+  const out = getSqlite().prepare("SELECT * FROM watchlists WHERE id = ?").get(id) as any;
+  return watchlistRowOut(out);
+}
+
+export async function updateWatchlistRow(
+  userId: string,
+  id: string,
+  patch: { name?: string; items?: WatchlistItem[] },
+): Promise<WatchlistRow | null> {
+  const sets: string[] = [];
+  const vals: SQLInputValue[] = [];
+  if (patch.name !== undefined) { sets.push("name = ?"); vals.push(sqlVal(patch.name)); }
+  if (patch.items !== undefined) { sets.push("items = ?"); vals.push(sqlVal(toJson(patch.items))); }
+  if (!sets.length) return getWatchlistRow(userId, id);
+  sets.push("updated_at = ?");
+  vals.push(sqlVal(now()));
+  vals.push(sqlVal(id), sqlVal(userId));
+  const res = getSqlite()
+    .prepare(`UPDATE watchlists SET ${sets.join(", ")} WHERE id = ? AND user_id = ?`)
+    .run(...vals);
+  return res.changes ? getWatchlistRow(userId, id) : null;
+}
+
+export async function deleteWatchlistRow(userId: string, id: string): Promise<boolean> {
+  return getSqlite()
+    .prepare("DELETE FROM watchlists WHERE id = ? AND user_id = ?")
+    .run(id, userId).changes > 0;
+}
+
 // ── api_usage / stock_pulls / builder_sessions / app_meta ───────────────────
 
 export interface UsageRow {

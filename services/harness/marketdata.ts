@@ -86,7 +86,7 @@ function rsi(closes: number[], period = 14): (number | null)[] {
   return out;
 }
 
-function ema(values: number[], period: number): (number | null)[] {
+export function ema(values: number[], period: number): (number | null)[] {
   const out: (number | null)[] = new Array(values.length).fill(null);
   if (values.length < period) return out;
   const k = 2 / (period + 1);
