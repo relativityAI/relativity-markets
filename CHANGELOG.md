@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.7.0...relativity-markets-v0.8.0) (2026-11-17)
+
+
+### Features
+
+* MCP toolbox, key-aware models, and watchlist polish ([#172](https://github.com/relativityAI/relativity-markets/issues/172)) ([3d829c4](https://github.com/relativityAI/relativity-markets/commit/3d829c40e1a3346baea68a5bd4a0c253909ba702))
+
 ## [0.7.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.6.2...relativity-markets-v0.7.0) (2026-11-17)
 
 
