@@ -7,16 +7,17 @@ import { LOCAL_AUTH } from "@/auth/AuthContext";
 import { useColorMode } from "@/components/ui/color-mode";
 import UserAvatar from "@/components/shared/UserAvatar";
 import { API_BASE, SettingsService } from "@/db";
-import { TickerLogo } from "@/lib/sourceLogos";
+import { TickerLogo, SOURCE_DEFS } from "@/lib/sourceLogos";
+import type { IconType } from "react-icons";
 import { DropdownItem } from "@/pages/shared/AnalysisControls";
 import { cn } from "@/lib/utils";
 import searxngLogo from "@/assets/searxng.svg";
 import yahooLogo from "@/assets/yahoo_finance.png";
 import tavilyLogo from "@/assets/tavily-color.svg";
 
-// Navbar data-source chips. SeXNG/Yahoo status comes from GET /health/sources —
-// a real probe per source, cached server-side for a minute. Tavily is always
-// shown (compulsory); connected = the user's Tavily API key is set.
+// Navbar data-source chips. SearXNG/Yahoo/TradingView status comes from GET
+// /health/sources — a real probe per source, cached server-side for a minute.
+// Tavily is optional; connected = the user's Tavily API key is set.
 type SourceStatus = { ok?: boolean; href?: string };
 
 type StockRow = {
@@ -27,6 +28,60 @@ type StockRow = {
   source?: string;
 };
 
+/** Bright 1-day intraday sparkline for a market index (^NSEI, ^NDX), served
+ *  by the public /market/chart endpoint. Day change is measured against the
+ *  feed's previous close (what the exchanges publish), not the session's
+ *  first tick. Renders nothing when the feed is down — decoration must
+ *  never block the nav. */
+function IndexSpark({ name, symbol }: { name: string; symbol: string }) {
+  const [data, setData] = useState<{ closes: number[]; changePct: number | null } | null>(null);
+  const [ok, setOk] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    fetch(`${API_BASE}/market/chart/${encodeURIComponent(symbol)}?range=1d&interval=5m`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((d) => {
+        if (!alive) return;
+        const closes: number[] = d.closes || [];
+        const prevClose: number | null = d.previous_close ?? null;
+        const last = closes[closes.length - 1] ?? null;
+        if (closes.length < 2 || !prevClose || !last) { setOk(false); return; }
+        setData({ closes, changePct: ((last - prevClose) / prevClose) * 100 });
+      })
+      .catch(() => { if (alive) setOk(false); });
+    return () => { alive = false; };
+  }, [symbol]);
+
+  if (!ok || !data) return null;
+  const { closes, changePct } = data;
+  const min = Math.min(...closes);
+  const max = Math.max(...closes);
+  const span = max - min || 1;
+  const W = 200;
+  const H = 48;
+  const pts = closes
+    .map((c, i) => `${((i / (closes.length - 1)) * W).toFixed(1)},${(H - 4 - ((c - min) / span) * (H - 8)).toFixed(1)}`)
+    .join(" ");
+  const up = (changePct ?? 0) >= 0;
+  const color = up ? "#22C55E" : "#EF4444";
+
+  return (
+    <div className="w-40">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="font-app-body text-[12px] font-normal text-[var(--ink-secondary)]">{name}</span>
+        <span className="font-app-tabular text-[12px] font-medium" style={{ color }}>
+          {changePct == null ? "" : `${changePct > 0 ? "+" : ""}${changePct.toFixed(2)}%`}
+        </span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="mt-1.5 h-10 w-full" aria-hidden="true">
+        <polygon points={`0,${H} ${pts} ${W},${H}`} fill={color} opacity="0.12" />
+        <polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+      </svg>
+    </div>
+  );
+}
+
 export default function NavBar() {
   const { user, signOut } = useAuth();
   const { colorMode, toggleColorMode } = useColorMode();
@@ -36,9 +91,12 @@ export default function NavBar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sources, setSources] = useState<Record<string, SourceStatus>>({});
 
-  const dataSources = useMemo(
+  // ponytail: TradingView has no logo asset — reuse the react-icons mark from
+  // SOURCE_DEFS instead of shipping a new SVG.
+  const dataSources = useMemo<{ id: string; name: string; img?: string; Icon?: IconType }[]>(
     () => [
       { id: "searxng", name: "SearXNG", img: searxngLogo },
+      { id: "tradingview", name: "TradingView", Icon: SOURCE_DEFS.tradingview.icon },
       { id: "tavily", name: "Tavily", img: tavilyLogo },
       { id: "yahoo", name: "Yahoo Finance (yfinance MCP)", img: yahooLogo },
     ],
@@ -169,12 +227,16 @@ export default function NavBar() {
                       href ? "cursor-pointer" : "cursor-default",
                     )}
                   >
-                    <img
-                      src={s.img}
-                      alt=""
-                      aria-hidden="true"
-                      className={cn("h-full w-full object-contain", down && "grayscale opacity-40")}
-                    />
+                    {s.Icon ? (
+                      <s.Icon size={15} aria-hidden="true" className={cn("text-[var(--ink-secondary)]", down && "opacity-40")} />
+                    ) : (
+                      <img
+                        src={s.img}
+                        alt=""
+                        aria-hidden="true"
+                        className={cn("h-full w-full object-contain", down && "grayscale opacity-40")}
+                      />
+                    )}
                     <span className="pointer-events-none invisible absolute left-1/2 top-full z-40 mt-1.5 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-[4px] border border-[var(--hairline)] bg-[var(--surface-canvas)] px-2 py-1 font-[family-name:var(--font-body)] text-xs text-[var(--ink-primary)] opacity-0 shadow-[0_8px_24px_rgba(0,0,0,0.12)] transition-all duration-150 group-hover/src:delay-300 group-hover/src:visible group-hover/src:opacity-100">
                       {s.name}
                       {st?.ok === true && <Check size={12} style={{ color: "#7A9E7E" }} />}
@@ -185,6 +247,12 @@ export default function NavBar() {
               })}
             </div>
           </div>
+        </div>
+
+        {/* Index tickers — moved here from the home hero */}
+        <div className="hidden xl:flex items-center gap-6">
+          <IndexSpark name="NIFTY 50" symbol="^NSEI" />
+          <IndexSpark name="NASDAQ 100" symbol="^NDX" />
         </div>
 
         {/* Stock search — centered between the mast and the account controls */}

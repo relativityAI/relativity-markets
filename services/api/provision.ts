@@ -15,11 +15,14 @@ export async function ensureUserSettings(userId: string): Promise<void> {
   }
 }
 
-/** Fetch decrypted user LLM keys from the local DB. */
-export async function fetchUserKeys(userId: string): Promise<{ llmKeys: Record<string, string> }> {
+/** Fetch decrypted user LLM keys + web-search preference. */
+export async function fetchUserKeys(
+  userId: string,
+): Promise<{ llmKeys: Record<string, string>; webSearchProvider: "searxng" | "tavily" }> {
+  const fallback = { llmKeys: {}, webSearchProvider: "searxng" as const };
   try {
     const data = await getUserSettings(userId);
-    if (!data) return { llmKeys: {} };
+    if (!data) return fallback;
 
     const llmKeys: Record<string, string> = {};
     if (data.llm_keys_encrypted && typeof data.llm_keys_encrypted === "object") {
@@ -27,9 +30,13 @@ export async function fetchUserKeys(userId: string): Promise<{ llmKeys: Record<s
         try { llmKeys[k] = decrypt(v); } catch { llmKeys[k] = ""; }
       }
     }
-    return { llmKeys };
+    const pref = data.prefs?.web_search_provider;
+    // Tavily mode needs its key — a missing/expired key silently degrades to
+    // SearXNG so the run still has a web tool.
+    const webSearchProvider: "searxng" | "tavily" = pref === "tavily" && llmKeys.tavily ? "tavily" : "searxng";
+    return { llmKeys, webSearchProvider };
   } catch (e: any) {
     log.error("[provision]", `fetchUserKeys failed for ${userId}: ${e?.message || e}`);
-    return { llmKeys: {} };
+    return fallback;
   }
 }

@@ -242,7 +242,7 @@ app.get("/user/settings", requireAuth, async (req, res) => {
       }
     }
 
-    res.json({ llm_keys: llmKeysMasked });
+    res.json({ llm_keys: llmKeysMasked, prefs: data.prefs ?? {} });
   } catch (e: any) {
     res.status(503).json({ error: e.message });
   }
@@ -265,6 +265,13 @@ app.put("/user/settings", requireAuth, async (req, res) => {
         encrypted[k] = v ? encrypt(String(v)) : "";
       }
       patch.llm_keys_encrypted = encrypted;
+    }
+
+    // Non-secret prefs (string values only) merge like keys do.
+    const { prefs } = req.body || {};
+    if (prefs !== undefined && typeof prefs === "object" && prefs !== null) {
+      const existing = await getUserSettings(userId);
+      patch.prefs = { ...(existing?.prefs || {}), ...(prefs as Record<string, string>) };
     }
 
     await upsertUserSettings(userId, patch as any);
@@ -614,9 +621,10 @@ app.post("/skills/draft", requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
     const body = req.body || {};
-    const { llmKeys } = await fetchUserKeys(userId);
+    const { llmKeys, webSearchProvider } = await fetchUserKeys(userId);
     const draftReq: SkillDraftRequest = {
       user_id: userId,
+      web_search_provider: webSearchProvider,
       model_id: String(body.model_id || keyPool.getDefaultModel(llmKeys)),
       llm_keys: llmKeys,
       messages: Array.isArray(body.messages) ? body.messages : [],
@@ -1228,12 +1236,13 @@ app.post("/builder/draft", requireAuth, async (req, res) => {
   let requestedModel = "";
   try {
     const userId = (req as AuthedRequest).user.id;
-    const { llmKeys } = await fetchUserKeys(userId);
+    const { llmKeys, webSearchProvider } = await fetchUserKeys(userId);
 
     const body = req.body || {};
     requestedModel = body.model_id || keyPool.getDefaultModel(llmKeys);
 
     const builderReq: BuilderRequest = {
+      web_search_provider: webSearchProvider,
       session_id: body.session_id ? String(body.session_id) : undefined,
       user_id: userId,
       model_id: requestedModel,

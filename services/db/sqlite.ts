@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   key_version           INTEGER,
   defaults_deleted      INTEGER NOT NULL DEFAULT 0,
   deleted_preset_keys   TEXT NOT NULL DEFAULT '[]',
+  prefs                 TEXT NOT NULL DEFAULT '{}',
   updated_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE TABLE IF NOT EXISTS user_activity (
@@ -181,7 +182,7 @@ function ensureSchema(d: DatabaseSync): void {
  * When the schema changes: append a {version, sql} entry (never edit old
  * ones), bump SCHEMA_VERSION to match, and cover it in db/tests.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 // v2: scheduled-run frequencies (daily/weekly/biweekly/monthly) — frequency
 // plus the first-run date the recurrence is anchored to. Existing rows keep
@@ -190,6 +191,10 @@ export const MIGRATIONS: { version: number; sql: string }[] = [
   {
     version: 2,
     sql: "ALTER TABLE schedules ADD COLUMN frequency TEXT NOT NULL DEFAULT 'daily';\nALTER TABLE schedules ADD COLUMN start_date TEXT;",
+  },
+  {
+    version: 3,
+    sql: "ALTER TABLE user_settings ADD COLUMN prefs TEXT NOT NULL DEFAULT '{}';",
   },
 ];
 
@@ -223,8 +228,11 @@ export function migrateSqlite(
 
   // Legacy database from before versioning existed (tables, user_version 0):
   // stamp the baseline so future migrations trigger on the next upgrade.
+  // ponytail: use the highest version actually applied, not the global
+  // SCHEMA_VERSION — a caller passing a subset of steps shouldn't jump ahead.
+  const maxStep = steps.reduce((m, s) => Math.max(m, s.version), 0);
   const stamped = (d.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
-  if (stamped < SCHEMA_VERSION) d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  if (stamped < maxStep) d.exec(`PRAGMA user_version = ${maxStep}`);
 }
 
 /** Parse a JSON column that may be a JSON string, already-parsed, or null.

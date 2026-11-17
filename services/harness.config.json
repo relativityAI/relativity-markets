@@ -1,13 +1,45 @@
 {
-  "_help": "Harness defaults, read by BOTH the CLI and the API server. Precedence: flags > HARNESS_* env (services/.env) > this file > built-ins. `engine`: v1 = one autonomous tool loop, v2 = plan-parallel harness (plan → parallel tool exec → parallel section drafts → code assembly; the skill's SKILL.md `tools:` list is its toolbox). `tools` declares the agent's toolbox; urls stay in env, the file holds the env var NAME (urlEnv). Market data comes from MCP servers only.",
+  "_help": "Harness defaults, read by BOTH the CLI and the API server. Precedence: flags > HARNESS_* env (services/.env) > this file > built-ins. `tools` declares the agent's toolbox as MCP sources only; urls stay in env, the file holds the env var NAME (urlEnv). `keyFrom` binds a per-run credential (e.g. the user's Tavily key) into the Authorization header — the source is skipped when the run has no such key.",
   "engine": "v2",
   "model": "opencode/deepseek-v4.1-flash",
   "skills": ["chartist-technical-analysis"],
   "source": "SEC",
   "tools": {
-    "websearch": {},
     "mcp": [
-      { "name": "yfinance", "urlEnv": "MCP_YFINANCE_URL", "required": true }
+      { "name": "yfinance", "urlEnv": "MCP_YFINANCE_URL", "required": true },
+      {
+        "name": "searxng",
+        "urlEnv": "MCP_SEARXNG_MCP_URL",
+        "webProvider": "searxng",
+        "required": true,
+        "allow": ["searxng_web_search", "web_url_read", "searxng_search_suggestions", "searxng_instance_info"]
+      },
+      {
+        "name": "tradingview",
+        "urlEnv": "MCP_TRADINGVIEW_URL",
+        "required": false,
+        "allow": [
+          "top_gainers",
+          "top_losers",
+          "bollinger_scan",
+          "rating_filter",
+          "coin_analysis",
+          "consecutive_candles_scan",
+          "advanced_candle_pattern",
+          "volume_breakout_scanner",
+          "volume_confirmation_analysis",
+          "smart_volume_scanner",
+          "multi_agent_analysis"
+        ]
+      },
+      {
+        "name": "tavily",
+        "url": "https://mcp.tavily.com/mcp",
+        "webProvider": "tavily",
+        "keyFrom": "tavilyKey",
+        "required": false,
+        "allow": ["tavily_search", "tavily_extract"]
+      }
     ]
   },
   "budget": {

@@ -43,6 +43,8 @@ describe("sqlite migrations", () => {
          created_at TEXT NOT NULL DEFAULT 'now'
        )`,
     );
+    // v3 migration ALTERs user_settings — a real pre-versioning DB has it too.
+    d.exec("CREATE TABLE user_settings (user_id TEXT PRIMARY KEY, llm_keys_encrypted TEXT)");
     d.prepare("INSERT INTO schedules (id, user_id, symbol, share_name, source, time, timezone) VALUES ('s1','u1','AAPL','Apple','SEC','21:00','UTC')").run();
     migrateSqlite(d);
     expect(version(d)).toBe(SCHEMA_VERSION);

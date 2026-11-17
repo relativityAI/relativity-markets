@@ -1,4 +1,4 @@
-# Local SearXNG for the harness web_search / search_news tools.
+# Local SearXNG backend for the mcp-searxng web-search tools.
 # Mounted at /etc/searxng/settings.yml by `npm run searxng`.
 use_default_settings: true
 search:

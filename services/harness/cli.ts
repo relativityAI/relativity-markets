@@ -107,8 +107,8 @@ async function main(): Promise<void> {
     vars: { symbol, title: symbol, date: new Date().toISOString().slice(0, 10), source, agent: agent.name },
     skillIds: resolvedSkills.map((s) => s.id),
   });
-  const tools = await buildRunTools((resolved.tools ?? {}) as ToolSourcesConfig, env, { symbol, source });
-
+  const { tools, close } = await buildRunTools((resolved.tools ?? {}) as ToolSourcesConfig, env, { symbol, source });
+  try {
   const result = await runAgent({
     runId,
     userId,
@@ -154,6 +154,9 @@ async function main(): Promise<void> {
   if (result.verdict) console.log(`verdict: ${result.verdict}`);
   console.log(`stats: ${result.budgetUsed.steps} steps · ${result.budgetUsed.toolCalls} tool calls · ${result.budgetUsed.tokens} out tokens`);
   console.log(`output: ${join(dir, `${runId}.md`)}`);
+  } finally {
+    await close();
+  }
 }
 
 main().catch((e) => {

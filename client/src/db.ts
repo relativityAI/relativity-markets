@@ -341,10 +341,10 @@ export const VoyagerService = {
 export const SettingsService = {
     async getSettings() {
         const response = await axios.get(`${API_BASE}/user/settings`);
-        return response.data as { llm_keys: Record<string, string> };
+        return response.data as { llm_keys: Record<string, string>; prefs: Record<string, string> };
     },
 
-    async updateSettings(payload: { llm_keys?: Record<string, string> | null }) {
+    async updateSettings(payload: { llm_keys?: Record<string, string> | null; prefs?: Record<string, string> }) {
         const response = await axios.put(`${API_BASE}/user/settings`, payload);
         return response.data;
     },
