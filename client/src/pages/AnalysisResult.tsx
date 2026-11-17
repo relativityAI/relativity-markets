@@ -1136,6 +1136,7 @@ function HarnessRunView({ run }: { run: any; tags?: string[] }) {
                                     subtitle={drafting ? "gathering data, searching, scoring" : "full tool and thought trace"}
                                     events={run.trace || []}
                                     agent={run.agent_name || undefined}
+                                    startedAt={run.started_at || run.created_at ? +new Date(run.started_at || run.created_at) : undefined}
                                     active={drafting}
                                     maxHeight={620}
                                 />

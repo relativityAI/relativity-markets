@@ -338,27 +338,13 @@ export const VoyagerService = {
     }
 };
 
-export const DataService = {
-    async getDataStatus(symbol: string, source: string) {
-        const response = await axios.get(`${API_BASE}/analysis/data-status`, {
-            params: { symbol, source }
-        });
-        return response.data;
-    },
-
-    async getVoyagerHealth() {
-        const response = await axios.get(`${API_BASE}/health/voyager`);
-        return response.data;
-    }
-};
-
 export const SettingsService = {
     async getSettings() {
         const response = await axios.get(`${API_BASE}/user/settings`);
-        return response.data as { voyager_key: string | null; llm_keys: Record<string, string> };
+        return response.data as { llm_keys: Record<string, string> };
     },
 
-    async updateSettings(payload: { voyager_key?: string; llm_keys?: Record<string, string> | null }) {
+    async updateSettings(payload: { llm_keys?: Record<string, string> | null }) {
         const response = await axios.put(`${API_BASE}/user/settings`, payload);
         return response.data;
     },

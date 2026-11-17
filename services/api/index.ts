@@ -24,15 +24,15 @@ import { getAgentCategories, isValidAgentCategory } from "./categories.js";
 import { getSources, searchStocks } from "./discovery.js";
 import { tickerLogoUrl } from "./tickerLogos.js";
 import { getPriceHistory, toYahooSymbol } from "../harness/marketdata.js";
-import { yf } from "../harness/tools/yahoo.js";
-import { getMetricsCatalog, buildFieldList, getFlatCatalog, mergeCatalogFields, normalizeQuantRules, type MetricDef } from "./metrics.js";
+import { yf } from "./yf-client.js";
+import { getMetricsCatalog, getFlatCatalog, mergeCatalogFields, normalizeQuantRules, type MetricDef } from "./metrics.js";
 import { keyPool } from "./keypool.js";
 import { buildModel, type LlmKeys } from "../harness/model.js";
 import { draftParameters } from "../harness/drafts.js";
 import { classifyModelError } from "./modelcheck.js";
 import { processBuilderTurn, extractDocumentSignals, skillDraftTurn, type BuilderRequest, type SkillDraftRequest } from "../harness/drafts.js";
 import { getSchemaDescriptor } from "../harness/schema.js";
-import { getToolCatalog } from "../harness/tools/voyager.js";
+import { getToolCatalog } from "../harness/tools/catalog.js";
 // Artifact files render workbooks per request — lazy so a bad workbook can't
 // take the whole server down.
 import type { WorkbookRecipe } from "../harness/artifacts/types.js";
@@ -63,9 +63,7 @@ import {
 import { runHarnessSymbol, resumePausedRun, startAnalysisRun, startStaleRunSweeper } from "./runs.js";
 import { startScheduleTicker, isValidTime, isValidTimeZone, isValidFrequency, todayInTz } from "./schedule.js";
 import { extractText } from "./upload.js";
-import { VoyagerClient, toCountrySource } from "./voyager.js";
 import multer from "multer";
-import { isDataFresh, FRESHNESS_FUNDAMENTAL_MS } from "./freshness.js";
 import { requireAuth, type AuthedRequest } from "./auth.js";
 import { log, paint } from "./logger.js";
 import { buildReportPdf, isUuid } from "./pdf.js";
@@ -222,36 +220,13 @@ app.get("/health/sources", async (_req, res) => {
   res.json({ ok: 1, sources: await getSourceStatuses() });
 });
 
-app.get("/health/voyager", requireAuth, async (req, res) => {
-  const base = config.voyagerUrl.replace(/\/+$/, "");
-  const { voyagerKey } = await fetchUserKeys((req as AuthedRequest).user.id);
-  const keyed = !!voyagerKey;
-  try {
-    const r = await fetch(`${base}/healthz`, {
-      signal: AbortSignal.timeout(5000),
-      headers: { accept: "application/json" },
-    });
-    res.json({ ok: r.ok, base, keyed });
-  } catch {
-    res.json({ ok: false, base, keyed });
-  }
-});
-
 // ── user settings (encrypted API keys) ────────────────────────────────
 
 app.get("/user/settings", requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
     const data = await getUserSettings(userId);
-    if (!data) return res.json({ voyager_key: null, llm_keys: {} });
-
-    let voyagerKeyMasked: string | null = null;
-    if (data.voyager_key_encrypted) {
-      try {
-        const raw = decrypt(data.voyager_key_encrypted);
-        voyagerKeyMasked = raw.length > 8 ? raw.slice(0, 3) + "****" + raw.slice(-4) : "****";
-      } catch { voyagerKeyMasked = "****"; }
-    }
+    if (!data) return res.json({ llm_keys: {} });
 
     const llmKeysMasked: Record<string, string> = {};
     if (data.llm_keys_encrypted && typeof data.llm_keys_encrypted === "object") {
@@ -267,7 +242,7 @@ app.get("/user/settings", requireAuth, async (req, res) => {
       }
     }
 
-    res.json({ voyager_key: voyagerKeyMasked, llm_keys: llmKeysMasked });
+    res.json({ llm_keys: llmKeysMasked });
   } catch (e: any) {
     res.status(503).json({ error: e.message });
   }
@@ -276,12 +251,9 @@ app.get("/user/settings", requireAuth, async (req, res) => {
 app.put("/user/settings", requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
-    const { voyager_key, llm_keys } = req.body || {};
+    const { llm_keys } = req.body || {};
 
     const patch: Record<string, unknown> = {};
-    if (voyager_key !== undefined) {
-      patch.voyager_key_encrypted = voyager_key ? encrypt(String(voyager_key)) : null;
-    }
     // Merge instead of replace: llm_keys_encrypted carries unrelated keys (e.g. tavily)
     // plus the client only ever sees masked values, so a full replace would drop or corrupt them.
     if (llm_keys === null) {
@@ -809,56 +781,6 @@ app.get("/analysis", requireAuth, async (req, res) => {
   }
 });
 
-// Read-only Voyager pull status / data availability for a stock.
-app.get("/analysis/data-status", requireAuth, async (req, res) => {
-  const symbol = String(req.query.symbol || "");
-  const source = String(req.query.source || "NSE");
-  if (!symbol) return res.status(400).json({ error: "symbol is required" });
-
-  const userId = (req as AuthedRequest).user.id;
-  const { voyagerKey: key } = await fetchUserKeys(userId);
-  if (!key) {
-    return res.json({
-      symbol,
-      available: false,
-      keyed: false,
-      error: "No Voyager data key is available for your account. Add one in Settings → Data provider to enable live data.",
-    });
-  }
-  const cs = toCountrySource(source);
-  const voyager = new VoyagerClient(config.voyagerUrl, key, config.voyagerRpm);
-  try {
-    const data = await voyager.getPullStatus(symbol, cs.country, cs.source);
-    const isFresh = await isDataFresh(userId, symbol, cs.source);
-    res.json({
-      ...data,
-      symbol,
-      keyed: true,
-      is_fresh: isFresh,
-      freshness_threshold_ms: FRESHNESS_FUNDAMENTAL_MS,
-      pull_supported: true,
-    });
-  } catch (e: any) {
-    const status = e?.status;
-    const message =
-      status === 401
-        ? "Voyager API key is invalid or expired."
-        : status === 403
-          ? "Insufficient permission: the Voyager key needs the data:read scope."
-          : status === 429
-            ? "Rate limit exceeded for the Voyager API key."
-            : `Voyager data check failed: ${e?.message || String(e)}`;
-    res.status(200).json({
-      symbol,
-      available: false,
-      keyed: true,
-      error: message,
-      is_fresh: false,
-      pull_supported: true,
-    });
-  }
-});
-
 // Cancel a saved run that is still marked pending or running.
 app.post("/analysis/:id/cancel", requireAuth, async (req, res) => {
   try {
@@ -1174,62 +1096,15 @@ app.get("/metrics", (req, res) => {
   res.json(getMetricsCatalog(source || undefined));
 });
 
-// ── live metric fields (drives the agent criteria builder) ────────────
-const METRIC_FIELDS_TTL_MS = 24 * 60 * 60 * 1000;
-// Liquid, long-listed symbols per source — used to discover which fields the
-// /financial-metrics snapshot exposes. Falls back through the chain.
-const REPRESENTATIVE_SYMBOLS: Record<string, { symbol: string; country: string }[]> = {
-  nse: [
-    { symbol: "RELIANCE", country: "in" },
-    { symbol: "TCS", country: "in" },
-  ],
-  sec: [
-    { symbol: "AAPL", country: "us" },
-    { symbol: "MSFT", country: "us" },
-  ],
-};
-const metricFieldsCache = new Map<string, { fields: MetricDef[]; fetched_at: number }>();
-
-async function loadMetricFields(sourceLower: string, userId: string): Promise<MetricDef[]> {
-  const cached = metricFieldsCache.get(sourceLower);
-  if (cached && Date.now() - cached.fetched_at < METRIC_FIELDS_TTL_MS) return cached.fields;
-
-  let fields: MetricDef[] | null = null;
-  const { voyagerKey } = await fetchUserKeys(userId);
-  if (voyagerKey) {
-    const voyager = new VoyagerClient(config.voyagerUrl, voyagerKey, config.voyagerRpm);
-    for (const { symbol } of REPRESENTATIVE_SYMBOLS[sourceLower] || []) {
-      try {
-        const sample = await voyager.get("/financial-metrics", {
-          symbol,
-          source: sourceLower,
-          consolidated: true,
-          filing_type: "ttm",
-        });
-        const list = buildFieldList(sample);
-        if (list.length > 0) {
-          fields = list;
-          break;
-        }
-      } catch {
-        // try next representative symbol
-      }
-    }
-  }
-  if (!fields) fields = getFlatCatalog();
-  fields = mergeCatalogFields(fields);
-  metricFieldsCache.set(sourceLower, { fields, fetched_at: Date.now() });
-  return fields;
+// ── metric fields (drives the agent criteria builder) ──────────────────
+// Static catalog only — the live sampling path went away with the REST
+// client. Merged so fields the snapshot never exposed still appear.
+function loadMetricFields(): MetricDef[] {
+  return mergeCatalogFields(getFlatCatalog());
 }
 
-app.get("/metrics/fields", requireAuth, async (req, res) => {
-  try {
-    const source = String(req.query.source || "NSE").toLowerCase();
-    const userId = (req as AuthedRequest).user.id;
-    res.json({ fields: await loadMetricFields(source, userId) });
-  } catch (e: any) {
-    res.status(503).json({ error: e.message });
-  }
+app.get("/metrics/fields", requireAuth, (_req, res) => {
+  res.json({ fields: loadMetricFields() });
 });
 
 // ── builder agent routes ──────────────────────────────────────────────
@@ -1511,7 +1386,7 @@ const server = app.listen(config.port, host, async () => {
   log.info("[api]", `listening on ${host}:${config.port}`);
   log.info(
     "[api]",
-    `config: mode=${config.authMode} db=${config.sqlitePath} voyager=${config.voyagerUrl} mcp=${config.mcpVoyagerUrl || "off"} rateLimit=${config.rateLimitPerMin}/min logLevel=${process.env.LOG_LEVEL || "info"}`,
+    `config: mode=${config.authMode} db=${config.sqlitePath} yfinanceMcp=${config.mcpYfinanceUrl || "off"} rateLimit=${config.rateLimitPerMin}/min logLevel=${process.env.LOG_LEVEL || "info"}`,
   );
   // Runs execute in-process, so nothing survives a restart: anything left
   // PENDING/RUNNING from a previous process is dead. Clear it, then keep

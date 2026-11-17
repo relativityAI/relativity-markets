@@ -1,11 +1,11 @@
 /**
  * Live probes for the navbar's "Data sources" chips. One honest upstream
- * call per source (SearXNG search with format=json, a Yahoo quote), never
- * throws — a dead source is just `ok:false` with the reason. The route
- * caches for a minute so a page load can't hammer Yahoo.
+ * call per source (SearXNG search with format=json; the yfinance MCP server's
+ * tool list), never throws — a dead source is just `ok:false` with the reason.
+ * The route caches for a minute so a page load can't hammer upstreams.
  */
 
-import { yf } from "../harness/tools/yahoo.js";
+import { MultiServerMCPClient } from "@langchain/mcp-adapters";
 import { webCfg } from "../harness/tools/search.js";
 
 export interface SourceStatus {
@@ -18,7 +18,8 @@ export type SourceStatuses = Record<string, SourceStatus>;
 /** Test seam — vitest stubs these; production uses the real ones. */
 export interface ProbeDeps {
   fetchImpl?: typeof fetch;
-  quote?: (symbol: string) => Promise<unknown>;
+  /** MCP tool-list probe for the yfinance source. */
+  listMcpTools?: () => Promise<unknown>;
 }
 
 // SearXNG's JSON search fans out to upstream engines — a live instance can
@@ -28,7 +29,7 @@ const TTL_MS = 60_000;
 
 const HREFS = {
   searxng: "https://github.com/searxng/searxng",
-  yahoo: "https://github.com/ranaroussi/yfinance",
+  yahoo: "https://github.com/narumiruna/yfinance-mcp",
 };
 
 const shortErr = (e: unknown): string => String((e as Error)?.message || e).slice(0, 160);
@@ -45,9 +46,25 @@ async function probeFetch(fetchImpl: typeof fetch, url: string): Promise<{ ok: b
   }
 }
 
+/** The agent's market-data source: a real tools/list against the MCP server. */
+async function probeMcp(url: string): Promise<{ ok: boolean; error?: string }> {
+  if (!url) return { ok: false, error: "MCP_YFINANCE_URL is not set" };
+  try {
+    const client = new MultiServerMCPClient({
+      throwOnLoadError: true,
+      mcpServers: { yfinance: { url, transport: "http" as const } },
+    });
+    const tools = await client.getTools();
+    if (!tools.length) return { ok: false, error: "MCP server exposed no tools" };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: shortErr(e) };
+  }
+}
+
 export async function probeSources(deps: ProbeDeps = {}): Promise<SourceStatuses> {
   const fetchImpl = deps.fetchImpl ?? fetch;
-  const quote = deps.quote ?? ((symbol: string) => yf.quote(symbol));
+  const listTools = deps.listMcpTools ?? (() => probeMcp(process.env.MCP_YFINANCE_URL || ""));
 
   // Same URL resolution the search tool uses (agent.yaml web.baseUrl,
   // SEARXNG_URL env wins) — a chip must not disagree with the tool.
@@ -55,11 +72,10 @@ export async function probeSources(deps: ProbeDeps = {}): Promise<SourceStatuses
 
   const [searxng, yahoo] = await Promise.all([
     probeFetch(fetchImpl, searxngUrl),
-    // Promise.resolve().then so a sync throw from a stubbed quote lands in the handler.
     Promise.resolve()
-      .then(() => quote("AAPL"))
+      .then(() => listTools())
       .then(
-        () => ({ ok: true as const }),
+        (r: any) => ({ ok: r?.ok !== false, ...(r?.ok === false ? { error: r.error } : {}) }),
         (e) => ({ ok: false as const, error: shortErr(e) }),
       ),
   ]);
@@ -77,5 +93,5 @@ export async function getSourceStatuses(deps: ProbeDeps = {}): Promise<SourceSta
   if (cache && Date.now() - cache.at < TTL_MS) return cache.value;
   const value = await probeSources(deps);
   cache = { at: Date.now(), value };
-  return value;
+  return cache.value;
 }

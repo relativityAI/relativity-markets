@@ -11,6 +11,7 @@
     "test": "vitest run --passWithNoTests",
     "cli": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx harness/cli.ts",
     "export-legacy-store": "tsx scripts/export-legacy-store.ts",
+    "smoke:mcp": "tsx scripts/mcp-smoke.ts",
     "searxng": "docker compose -f ../docker-compose.yml up -d searxng",
     "db:up": "docker compose -f ../docker-compose.yml up -d postgres",
     "db:reset": "rm -f data/relativity.db data/relativity.db-wal data/relativity.db-shm"

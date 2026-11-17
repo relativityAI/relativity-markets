@@ -86,7 +86,7 @@ export function applyVariables(text: string, vars: Record<string, string | undef
 }
 
 /** Data tools that only return text — nothing for the plot reference to promise. */
-export const TEXT_TOOLS = new Set(["web_search", "search_news", "web_fetch", "get_quote", "get_fundamentals", "search_symbol", "get_insights"]);
+export const TEXT_TOOLS = new Set(["web_search", "search_news", "web_fetch", "yfinance_search", "yfinance_get_ticker_news"]);
 
 /** True when at least one data tool can return series for the plot reference. */
 export function hasSeriesTool(toolNames: Iterable<string>): boolean {

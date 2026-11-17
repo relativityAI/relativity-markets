@@ -14,6 +14,8 @@ services:
         required: false
     environment:
       SEARXNG_URL: http://searxng:8080
+      # Agent market-data toolbox (yfinance MCP over streamable HTTP).
+      MCP_YFINANCE_URL: http://yfmcp:8000/mcp
       # Local-first: state is the SAME SQLite file local dev uses
       # (services/data/relativity.db) — runs, agents, keys are shared.
       SQLITE_PATH: /app/data/relativity.db
@@ -25,6 +27,18 @@ services:
       - ./services/data:/app/data
     depends_on:
       - searxng
+      - yfmcp
+
+  # yfinance MCP server — the agent's market-data toolbox. The image's default
+  # entrypoint is stdio; we override it to serve streamable HTTP so the API
+  # connects over the network (verified: FastMCP run(transport)).
+  yfmcp:
+    image: narumi/yfinance-mcp:latest
+    entrypoint:
+      - python
+      - -c
+      - "from yfmcp.server import mcp; mcp.settings.host='0.0.0.0'; mcp.run(transport='streamable-http')"
+    restart: unless-stopped
 
   searxng:
     image: docker.io/searxng/searxng:latest

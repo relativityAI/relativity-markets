@@ -13,7 +13,7 @@ import type { MetricDef } from "../api/metrics.js";
 import { normalizeQuantRules } from "../api/metrics.js";
 import { buildAgentBuilderSystemPrompt, buildBuilderRecoveryPrompt, buildDocumentExtractionPrompt, buildDraftParametersPrompt } from "./agentPrompts.js";
 import { webSearchTool } from "./tools/websearch.js";
-import { getToolCatalog } from "./tools/voyager.js";
+import { getToolCatalog } from "./tools/catalog.js";
 import { insertBuilderSessionTurn } from "../db/repo.js";
 import { classifyModelError } from "../api/modelcheck.js";
 import { keyPool } from "../api/keypool.js";

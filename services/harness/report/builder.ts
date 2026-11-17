@@ -100,6 +100,7 @@ function barsIn(o: any): Bar[] | null {
     o?.candles_recent,
     o?.bars,
     o?.daily,
+    o?.candles, // preloaded price history (marketdata.getPriceHistory)
     o?.sections?.price_history?.data?.daily,
     o?.sections?.price_history?.daily,
     o?.data,
@@ -244,12 +245,16 @@ export function attachChartData(
   doc: ReportDocument,
   trace: TraceEvent[],
   payloads?: { callId: string; payload: unknown }[],
+  preload?: unknown[],
 ): ReportDocument {
   const archived = (payloads ?? [])
     .map((p) => p.payload)
     .filter((r): r is any => r != null && typeof r === "object")
     .reverse(); // newest first, matching dataResults
-  const results = archived.length ? archived : dataResults(trace);
+  // Preload first: MCP tools return text/tables, so the server-fetched price
+  // history is the authoritative shape for `data` tokens.
+  const pre = (preload ?? []).filter((r): r is any => r != null && typeof r === "object");
+  const results = [...pre, ...(archived.length ? archived : dataResults(trace))];
   if (!results.length) return doc;
   for (const block of allBlocks(doc)) {
     if (block.type === "chart") {

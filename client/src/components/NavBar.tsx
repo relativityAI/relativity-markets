@@ -40,7 +40,7 @@ export default function NavBar() {
     () => [
       { id: "searxng", name: "SearXNG", img: searxngLogo },
       { id: "tavily", name: "Tavily", img: tavilyLogo },
-      { id: "yahoo", name: "Yahoo Finance (yfinance)", img: yahooLogo },
+      { id: "yahoo", name: "Yahoo Finance (yfinance MCP)", img: yahooLogo },
     ],
     [],
   );

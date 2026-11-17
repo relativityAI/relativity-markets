@@ -139,7 +139,7 @@ interface RunHarnessOptions {
 
 /**
  * Run a harness agent against a symbol: compile the definition, wire the data
- * tools (websearch + Voyager MCP), execute the deepagents loop with key/model
+ * tools (websearch + MCP data tools), execute the deepagents loop with key/model
  * fallback, persist the run, and return the typed document. Shared by
  * POST /analysis and POST /harness/agents/:id/run. Returns null when the
  * agent does not exist for the user.
