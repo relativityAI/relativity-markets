@@ -30,5 +30,10 @@ jobs:
         with:
           node-version: 22
       # Workspace repo: audit each workspace against the ROOT lockfile.
-      - run: npm audit --omit=dev --audit-level=high -w ${{ matrix.dir }}
+      # npm audit has no per-advisory ignore flag; audit-check.mjs allows only
+      # the unfixable picomatch advisory and fails on everything else.
+      - name: Audit ${{ matrix.dir }}
         working-directory: .
+        run: |
+          npm audit --omit=dev --audit-level=high -w ${{ matrix.dir }} --json > audit.json || true
+          node scripts/audit-check.mjs audit.json
