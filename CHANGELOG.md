@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.6.2...relativity-markets-v0.7.0) (2026-11-17)
+
+
+### Features
+
+* **harness:** agent toolbox moves to yfinance MCP; drop Voyager REST ([#168](https://github.com/relativityAI/relativity-markets/issues/168)) ([1d7cefb](https://github.com/relativityAI/relativity-markets/commit/1d7cefb9d0ceea827cb5cac48fc2c038ee78edda))
+
 ## [0.6.2](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.6.1...relativity-markets-v0.6.2) (2026-11-16)
 
 
