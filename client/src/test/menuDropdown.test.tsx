@@ -64,3 +64,18 @@ describe("MenuDropdown inline search", () => {
         expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
     });
 });
+
+describe("MenuDropdown disabled", () => {
+    it("does not open the panel", async () => {
+        const user = userEvent.setup();
+        render(
+            <MenuDropdown value="" placeholder="Select agent…" disabled>
+                {(close) => <DropdownItem label="Agent A" onClick={close} />}
+            </MenuDropdown>,
+        );
+        const trigger = screen.getByRole("button", { name: /Select agent/ });
+        expect(trigger).toHaveAttribute("aria-disabled", "true");
+        await user.click(trigger);
+        expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    });
+});

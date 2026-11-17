@@ -34,14 +34,12 @@ export interface HarnessSkill {
   source: SkillSource;
   /** Tools this skill may call, from frontmatter allowed-tools. */
   allowedTools: string[];
-  /**
-   * Data tools the (retired) v2 plan harness executed in parallel, from
-   * frontmatter `tools:` (a list). Kept for backward compatibility of the
-   * frontmatter format; the deepagents loop treats it as advisory.
-   */
-  tools: string[];
   /** Frontmatter `citations: inline` — report-structure forbids footnotes. */
   citations?: "inline";
+  /** User labels from frontmatter `metadata.tags` (comma-separated). */
+  tags: string[];
+  /** ISO created-at, from the skill file's birthtime where available. */
+  created_at?: string;
   /** Markdown body (opaque instructions). */
   body: string;
   /** Skill directory on disk (built-ins always; customs resolve to their dir). */
@@ -87,6 +85,15 @@ function readFrontmatter(src: string): { frontmatter: Record<string, unknown>; b
 
 function humanizeName(name: string): string {
   return name.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Filesystem birth time as an ISO string; unavailable on some platforms/FS. */
+function fileCreatedAt(file: string): string | undefined {
+  try {
+    return statSync(file).birthtime.toISOString();
+  } catch {
+    return undefined;
+  }
 }
 
 function readReferences(dir: string): { path: string; text: string }[] {
@@ -144,12 +151,6 @@ export function parseSkillMarkdown(
   if (frontmatter["allowed-tools"] !== undefined && typeof frontmatter["allowed-tools"] !== "string") {
     issues.push({ line: 1, message: "allowed-tools must be a space-separated string", severity: "error" });
   }
-  if (
-    frontmatter.tools !== undefined &&
-    (!Array.isArray(frontmatter.tools) || frontmatter.tools.some((t) => typeof t !== "string" || !t.trim()))
-  ) {
-    issues.push({ line: 1, message: "tools must be a list of tool-name strings", severity: "error" });
-  }
   if (frontmatter.citations !== undefined && frontmatter.citations !== "inline" && frontmatter.citations !== "footnotes") {
     issues.push({ line: 1, message: 'citations must be "inline" or "footnotes"', severity: "error" });
   }
@@ -168,8 +169,8 @@ export function parseSkillMarkdown(
   const allowedTools = typeof frontmatter["allowed-tools"] === "string"
     ? frontmatter["allowed-tools"].split(/\s+/).filter(Boolean)
     : [];
-  const tools = Array.isArray(frontmatter.tools)
-    ? (frontmatter.tools as string[]).map((t) => t.trim()).filter(Boolean)
+  const tags = typeof fmMetadata.tags === "string"
+    ? fmMetadata.tags.split(",").map((t) => t.trim()).filter(Boolean)
     : [];
 
   return {
@@ -181,8 +182,8 @@ export function parseSkillMarkdown(
       version: Number(fmMetadata.version) > 0 ? Number(fmMetadata.version) : 1,
       source,
       allowedTools,
-      tools,
       ...(frontmatter.citations === "inline" ? { citations: "inline" as const } : {}),
+      tags,
       body: body.trim(),
       dir,
       references: dir ? readReferences(dir) : [],
@@ -222,7 +223,7 @@ export function loadBuiltinSkills(): HarnessSkill[] {
   for (const { slug, file } of builtinSkillFiles()) {
     try {
       const { skill, issues } = parseSkillMarkdown(readFileSync(file, "utf8"), "builtin", slug, join(BUILTIN_SKILLS_DIR, slug));
-      if (skill) out.push(skill);
+      if (skill) out.push({ ...skill, created_at: fileCreatedAt(file) });
       else console.warn(`[skills] builtin ${slug} failed to parse: ${issues.map((i) => i.message).join("; ")}`);
     } catch (e: any) {
       console.warn(`[skills] builtin ${slug} read failed: ${e?.message}`);
@@ -243,6 +244,7 @@ export interface CustomSkillRecord {
   markdown: string;
   /** Extra files (path → content) beyond SKILL.md, e.g. references/*.md. */
   files: Record<string, string>;
+  createdAt?: string;
   updatedAt?: string;
 }
 
@@ -267,7 +269,14 @@ function readCustomRecord(userId: string, skillId: string): CustomSkillRecord | 
       // unreadable — skip
     }
   }
-  return { skillId, markdown: readFileSync(file, "utf8"), files, updatedAt: statSync(file).mtime.toISOString() };
+  const stats = statSync(file);
+  return {
+    skillId,
+    markdown: readFileSync(file, "utf8"),
+    files,
+    createdAt: fileCreatedAt(file),
+    updatedAt: stats.mtime.toISOString(),
+  };
 }
 
 export function listCustomSkillIds(userId: string): string[] {
@@ -289,7 +298,7 @@ export function listCustomSkills(userId: string): HarnessSkill[] {
     const rec = readCustomRecord(userId, id);
     if (!rec) continue;
     const { skill } = parseSkillMarkdown(rec.markdown, "custom", id, join(customSkillDir(userId, id)));
-    if (skill) out.push(skill);
+    if (skill) out.push({ ...skill, created_at: rec.createdAt });
   }
   return out;
 }
@@ -298,7 +307,7 @@ export function getCustomSkill(userId: string, skillId: string): HarnessSkill | 
   const rec = readCustomRecord(userId, skillId);
   if (!rec) return null;
   const { skill } = parseSkillMarkdown(rec.markdown, "custom", skillId, customSkillDir(userId, skillId));
-  return skill ? { ...skill, id: skillId, source: "custom" } : null;
+  return skill ? { ...skill, id: skillId, source: "custom", created_at: rec.createdAt } : null;
 }
 
 export function getCustomSkillFiles(userId: string, skillId: string): CustomSkillRecord | null {
@@ -327,7 +336,8 @@ export function getBuiltinSkillFiles(id: string): CustomSkillRecord | null {
   return { skillId: id, markdown: readFileSync(join(base, "SKILL.md"), "utf8"), files };
 }
 
-/** Save (upsert) a custom skill as a directory: SKILL.md + extra files. */export function saveCustomSkill(
+/** Save (upsert) a custom skill as a directory: SKILL.md + extra files. */
+export function saveCustomSkill(
   userId: string,
   markdown: string,
   files: Record<string, string> = {},
@@ -345,7 +355,7 @@ export function getBuiltinSkillFiles(id: string): CustomSkillRecord | null {
       writeFileSync(dest, content);
     }
   }
-  return { skill: { ...skill, dir, source: "custom" }, issues: [] };
+  return { skill: { ...skill, dir, source: "custom", created_at: fileCreatedAt(join(dir, "SKILL.md")) }, issues: [] };
 }
 
 export function deleteCustomSkill(userId: string, skillId: string): boolean {

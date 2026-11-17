@@ -166,7 +166,7 @@ export async function runHarnessSymbol(
     vars: { symbol, title: symbol, date: new Date().toISOString().slice(0, 10), source, agent: agent.name },
     skillIds: o.skillIdsOverride,
   });
-  const { llmKeys } = await fetchUserKeys(userId);
+  const { llmKeys, webSearchProvider } = await fetchUserKeys(userId);
   let modelId = requestedModel || agent.modelId || keyPool.getDefaultModel(llmKeys);
   const budget: Budget = clampBudget({ ...compiled.budget, ...o.budgetOverride });
   // API wall-clock backstop: hard stop at 180s.
@@ -229,11 +229,13 @@ export async function runHarnessSymbol(
           // row unreadable — run fresh
         }
       }
-      const tools = await buildRunTools((resolved.tools ?? {}) as ToolSourcesConfig, process.env, {
+      const { tools, close } = await buildRunTools((resolved.tools ?? {}) as ToolSourcesConfig, process.env, {
         symbol,
         source,
         tavilyKey: llmKeys.tavily || undefined,
+        webSearchProvider,
       });
+      try {
       result = await runAgent({
         runId,
         userId,
@@ -261,6 +263,9 @@ export async function runHarnessSymbol(
           void flushWorkspace(snapshot);
         },
       });
+      } finally {
+        await close();
+      }
       keyPool.recordUsage({ provider, keyRef, modelId, requests: 1, tokensOut: result.budgetUsed.tokens });
       break;
     } catch (e: any) {
@@ -273,6 +278,8 @@ export async function runHarnessSymbol(
       if (next && next !== modelId) modelId = next;
       await new Promise((r) => setTimeout(r, 750 * attempt));
     }
+    // `close()` is called in the inner finally above once tools are built;
+    // there is no close to call if buildRunTools itself threw.
   }
   if (!result) throw lastError;
   await collector.flush().catch(() => {});
@@ -344,17 +351,18 @@ export async function resumePausedRun(
     (await listAgents(userId))[0];
   if (!agent) return null;
 
-  const { llmKeys } = await fetchUserKeys(userId);
+  const { llmKeys, webSearchProvider } = await fetchUserKeys(userId);
   const modelId = (row.model as string) || agent.modelId || keyPool.getDefaultModel(llmKeys);
   const { apiKey } = keyPool.pickKey(modelId, llmKeys);
   const template = getSystemPrompt(systemPrompt || "");
   const compiled = compileAgent(userId, agent, { template });
   const { config: cliCfg } = loadRunFileConfig();
   const resolved = resolveRunConfig(process.env, cliCfg);
-  const tools = await buildRunTools((resolved.tools ?? {}) as ToolSourcesConfig, process.env, {
+  const { tools, close } = await buildRunTools((resolved.tools ?? {}) as ToolSourcesConfig, process.env, {
     symbol,
     source,
     tavilyKey: llmKeys.tavily || undefined,
+    webSearchProvider,
   });
 
   const collector = new TraceCollector(runId, async (events) => {
@@ -364,7 +372,9 @@ export async function resumePausedRun(
   });
 
   const t0 = Date.now();
-  const result = await resumeAgent(
+  let result: Awaited<ReturnType<typeof resumeAgent>>;
+  try {
+  result = await resumeAgent(
     {
       runId,
       userId,
@@ -383,6 +393,9 @@ export async function resumePausedRun(
     } satisfies ResumeOptions & { onEvent: (e: HarnessTraceEvent) => void },
     decisions,
   );
+  } finally {
+    await close();
+  }
   await collector.flush().catch(() => {});
 
   const legacyStatus = result.status === "failed" ? "ERROR" : "COMPLETED";

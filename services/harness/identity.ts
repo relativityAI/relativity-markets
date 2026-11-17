@@ -111,7 +111,6 @@ const PROVIDER_COLORS: Record<string, string> = {
     mistral: "#FA500F",
     mistralai: "#FA500F",
     nvidia: "#76B900",
-    ollama: "#16181B",
     perplexity: "#20808D",
 };
 export function modelProvider(model?: string | null): string {

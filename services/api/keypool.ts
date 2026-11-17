@@ -10,7 +10,7 @@
  * A throttled background flush persists daily aggregates to the `api_usage`
  * table, which the admin panel reads.
  */
-import { getModels, isKeylessProvider } from "./models.js";
+import { getModels } from "./models.js";
 import { flushApiUsage, type UsageRow } from "../db/repo.js";
 import { log } from "./logger.js";
 import { config, DEFAULT_DAILY_REQUESTS } from "./config.js";
@@ -30,7 +30,7 @@ export interface KeyPoolConfig {
 
 export interface PickResult {
   apiKey: string;
-  /** "user" | "server:0" | "none" (keyless provider like ollama). */
+  /** "user" | "server:0". */
   keyRef: string;
 }
 
@@ -143,13 +143,9 @@ export class KeyPool {
       return { apiKey: userKey, keyRef: "user" };
     }
     if (!this.cfg.serverKeys[provider]?.length) {
-      // Keyless providers (ollama) need no key; otherwise reject.
-      if (provider === "ollama") return { apiKey: "", keyRef: "none" };
-      const hint = isKeylessProvider(provider) && provider !== "ollama"
-        ? ` (this provider is free to sign up for — add a ${provider} key in Settings, or pick a different model)`
-        : "";
-      throw new Error(`No API key for "${provider}"${hint}. Add one in Settings, or pick a different model.`);
-    }    this.ensureDay();
+      throw new Error(`No API key for "${provider}". Add one in Settings, or pick a different model.`);
+    }
+    this.ensureDay();
     const st = this.state(provider);
     const pool = this.cfg.serverKeys[provider];
     const cap = this.cfg.dailyCaps?.[provider] ?? DEFAULT_DAILY_REQUESTS[provider];
@@ -208,11 +204,11 @@ export class KeyPool {
     return 1 - Math.min(0.5, fail / (req + 1));
   }
 
-  /** True when the provider has a user key, a key not in cooldown, or is keyless (ollama). */
+  /** True when the provider has a user key or a server key not in cooldown. */
   private hasHealthyKey(provider: string, userKeys: Record<string, string | undefined>): boolean {
     if (userKeys[provider]) return true;
     const keys = this.cfg.serverKeys[provider] || [];
-    if (!keys.length) return provider === "ollama";
+    if (!keys.length) return false;
     const st = this.state(provider);
     const now = Date.now();
     return keys.some((_, i) => !(st.keys[i].lastFailAt && now - st.keys[i].lastFailAt < this.cooldownMs));
@@ -226,7 +222,8 @@ export class KeyPool {
   getDefaultModel(userKeys: Record<string, string | undefined> = {}): string {
     this.ensureDay();
     const providers = this.providersFor(userKeys);
-    if (!providers.length) return getModels()[0]?.id || "";
+    // No keys anywhere — nothing is runnable, so there is no default model.
+    if (!providers.length) return "";
 
     // DEFAULT_MODEL pins the model for every run that does not name one.
     // Only honoured when its provider is configured AND still has a usable key
@@ -274,7 +271,6 @@ export class KeyPool {
   // ── failure + usage accounting ───────────────────────────────────────────
   /** Mark a provider key as failed; puts it in cooldown and tallies a failure. */
   markFailure(provider: string, keyRef: string): void {
-    if (keyRef === "none") return;
     this.ensureDay();
     const st = this.state(provider);
     if (keyRef.startsWith("server:")) {

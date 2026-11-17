@@ -12,13 +12,14 @@ const hairline = "var(--hairline)";
 const positive = "var(--signal-positive)";
 const canvas = "var(--surface-canvas)";
 
-export function MenuDropdown({ value, placeholder, search, logo, children }: {
+export function MenuDropdown({ value, placeholder, search, logo, disabled, children }: {
     value: string | null;
     placeholder: string;
     /** In-place search: the trigger itself is the text input — no header block in the panel. */
     search?: { value: string; onChange: (v: string) => void; placeholder?: string };
     /** Optional icon shown before the trigger's value. */
     logo?: ReactNode;
+    disabled?: boolean;
     children: (close: () => void) => ReactNode;
 }) {
     const [open, setOpen] = useState(false);
@@ -51,6 +52,10 @@ export function MenuDropdown({ value, placeholder, search, logo, children }: {
         if (!open) search?.onChange("");
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open]);
+
+    useEffect(() => {
+        if (disabled) setOpen(false);
+    }, [disabled]);
 
     useEffect(() => {
         const handler = (e: MouseEvent) => {
@@ -123,21 +128,22 @@ export function MenuDropdown({ value, placeholder, search, logo, children }: {
             <motion.div
                 ref={triggerRef}
                 role={search ? undefined : "button"}
-                tabIndex={search ? undefined : 0}
+                tabIndex={search ? undefined : disabled ? -1 : 0}
+                aria-disabled={disabled || undefined}
                 aria-expanded={search ? undefined : open}
                 aria-haspopup={search ? undefined : "listbox"}
-                onClick={() => (search ? setOpen(true) : setOpen((o) => !o))}
+                onClick={() => { if (!disabled) (search ? setOpen(true) : setOpen((o) => !o)); }}
                 onFocus={
-                    search
+                    search && !disabled
                         ? () => {
                               if (skipNextOpenRef.current) return;
                               setOpen(true);
                           }
                         : undefined
                 }
-                onKeyDown={onTriggerKeyDown}
+                onKeyDown={disabled ? undefined : onTriggerKeyDown}
                 whileTap={{ scale: 0.997 }}
-                className="flex cursor-pointer items-center gap-1.5 rounded-[6px] border-[0.5px] border-[color:var(--hairline)] bg-transparent px-2.5 transition-colors hover:border-[color:var(--ink-tertiary)] focus-within:border-[color:var(--ink-tertiary)] focus-within:ring-1 focus-within:ring-console-accent/40"
+                className={`flex items-center gap-1.5 rounded-[6px] border-[0.5px] border-[color:var(--hairline)] bg-transparent px-2.5 transition-colors ${disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer hover:border-[color:var(--ink-tertiary)] focus-within:border-[color:var(--ink-tertiary)] focus-within:ring-1 focus-within:ring-console-accent/40"}`}
                 style={{
                     minHeight: "36px",
                     outline: "none",

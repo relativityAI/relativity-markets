@@ -3,201 +3,179 @@
 # Models here get nice display names and priority ordering; any model not
 # here still appears if a provider's live API returns it.
 #
-# Priority blocks 1-2 are the SERVER-FREE providers: no user key needed at
-# all (server key pools + free-tier providers that only need a free signup
-# key). Paid providers (openai/anthropic) rank last — they only appear when
-# the user has added their own keys.
+# Every provider needs an API key added in Settings. With no keys at all the
+# dropdown is empty. Model IDs below were checked against the provider docs /
+# public catalogs (Nov 2026).
 models:
-  # ── Google AI Studio — free tier, no credit card (Flashes: 1,000-1,500 RPD) ──
+  # ── Google AI Studio (Gemini) — key from Settings ──
   - id: "gemini/gemini-3.5-flash-lite"
     provider: google
     name: "Gemini 3.5 Flash-Lite (fastest)"
     priority: 1
-  - id: "gemini/gemini-3.7-flash"
+  - id: "gemini/gemini-3.8-flash"
     provider: google
-    name: "Gemini 3.7 Flash"
-    priority: 23
-
-  # ── Groq — free forever, no credit card (~30 RPM, up to 14.4k RPD) ──
-  - id: "groq/llama-3.3-70b-versatile"
-    provider: groq
-    name: "Llama 3.3 70B (Groq, free)"
+    name: "Gemini 3.8 Flash"
     priority: 2
-  - id: "groq/llama-3.1-8b-instant"
-    provider: groq
-    name: "Llama 3.1 8B (Groq, free)"
-    priority: 3
-  - id: "groq/meta-llama/llama-4-scout-17b-16e-instruct"
-    provider: groq
-    name: "Llama 4 Scout (Groq)"
-    priority: 4
-  - id: "groq/meta-llama/llama-4-maverick-17b-128e-instruct"
-    provider: groq
-    name: "Llama 4 Maverick (Groq)"
-    priority: 5
+
+  # ── Groq — key from Settings ──
   - id: "groq/openai/gpt-oss-120b"
     provider: groq
     name: "GPT-OSS 120B (Groq)"
-    priority: 6
+    priority: 3
   - id: "groq/openai/gpt-oss-20b"
     provider: groq
     name: "GPT-OSS 20B (Groq)"
-    priority: 7
-  - id: "groq/qwen/qwen3-32b"
+    priority: 4
+  - id: "groq/qwen/qwen3.8-27b"
     provider: groq
-    name: "Qwen3 32B (Groq)"
-    priority: 8
+    name: "Qwen3.8 27B (Groq)"
+    priority: 5
 
-  # ── OpenRouter free models — no credit card (20 RPM; 50-1,000 RPD) ──
-  # Every entry is a `:free` model probed live against the server key pool
-  # (Oct 2026). models.ts also discovers the :free catalog hourly so newly
-  # released free models show up before this list is edited; two classes are
-  # filtered out there and deliberately absent here:
-  #   * thinkingmachines/inkling* — HTTP 403, locked to OpenRouter's harness apps
-  #   * nvidia/nemotron-3.5-content-safety — guardrail model, not a chat model
-  - id: "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
+  # ── OpenRouter free models — key from Settings (free signup, no card) ──
+  # Current :free catalog (Nov 2026). models.ts also discovers the free tier
+  # hourly. thinkingmachines/inkling-2-small:free and guardrail models are
+  # excluded there because they aren't usable regular chat models.
+  - id: "openrouter/inclusionai/ling-3.2-flash:free"
     provider: openrouter
-    name: "Nemotron 3 Ultra (OpenRouter, free)"
+    name: "Ling 3.2 Flash (OpenRouter, free)"
+    priority: 6
+  - id: "openrouter/baidu/ernie-5.5-flash-preview:free"
+    provider: openrouter
+    name: "ERNIE 5.5 Flash Preview (OpenRouter, free)"
+    priority: 7
+  - id: "openrouter/liquid/lfm-3-1.7b:free"
+    provider: openrouter
+    name: "LFM3 1.7B (OpenRouter, free)"
+    priority: 8
+  - id: "openrouter/particle-ai/particle-1:free"
+    provider: openrouter
+    name: "Particle 1 (OpenRouter, free)"
     priority: 9
-  - id: "openrouter/minimax/minimax-m3.1-flash:free"
+  - id: "openrouter/recursive/flint-v1.0:free"
     provider: openrouter
-    name: "MiniMax M3.1 Flash (OpenRouter, free)"
+    name: "Flint v1 (OpenRouter, free)"
     priority: 10
   - id: "openrouter/nvidia/nemotron-3.5-super-vl:free"
     provider: openrouter
     name: "Nemotron 3.5 Super VL (OpenRouter, free)"
     priority: 11
-  - id: "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
-    provider: openrouter
-    name: "Nemotron 3 Super (OpenRouter, free)"
-    priority: 12
   - id: "openrouter/dots-studio/dots-3-note-preview:free"
     provider: openrouter
     name: "Dots3 Note Preview (OpenRouter, free)"
-    priority: 13
-  - id: "openrouter/google/gemma-4-31b-it:free"
-    provider: openrouter
-    name: "Gemma 4 31B (OpenRouter, free)"
-    priority: 14
-  - id: "openrouter/google/gemma-4-26b-a4b-it:free"
-    provider: openrouter
-    name: "Gemma 4 26B (OpenRouter, free)"
-    priority: 15
+    priority: 12
   - id: "openrouter/nvidia/nemotron-3.5-lightning:free"
     provider: openrouter
     name: "Nemotron 3.5 Lightning (OpenRouter, free)"
-    priority: 16
-  - id: "openrouter/poolside/laguna-s-2.1:free"
-    provider: openrouter
-    name: "Laguna S 2.1 coding (OpenRouter, free)"
-    priority: 17
+    priority: 13
   - id: "openrouter/cohere/north-mini-code:free"
     provider: openrouter
     name: "North Mini Code (OpenRouter, free)"
-    priority: 18
-  - id: "openrouter/poolside/laguna-xs-2.1:free"
+    priority: 14
+  - id: "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
     provider: openrouter
-    name: "Laguna XS 2.1 coding (OpenRouter, free)"
-    priority: 19
-  - id: "openrouter/xingchen-agi/xing4.0-29b-a4b:free"
-    provider: openrouter
-    name: "Xing4.0 29B (OpenRouter, free)"
-    priority: 20
+    name: "Nemotron 3 Ultra (OpenRouter, free)"
+    priority: 15
   - id: "openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
     provider: openrouter
     name: "Nemotron 3 Nano Omni (OpenRouter, free)"
-    priority: 21
-  - id: "openrouter/liquid/lfm-2.5-2.6b:free"
+    priority: 16
+  - id: "openrouter/google/gemma-4-26b-a4b-it:free"
     provider: openrouter
-    name: "LFM 2.5 2.6B (OpenRouter, free)"
-    priority: 22
+    name: "Gemma 4 26B (OpenRouter, free)"
+    priority: 17
+  - id: "openrouter/google/gemma-4-31b-it:free"
+    provider: openrouter
+    name: "Gemma 4 31B (OpenRouter, free)"
+    priority: 18
 
-  # ── Cerebras — free tier, no credit card (~1M tokens/day) ──
+  # ── Cerebras — key from Settings ──
   - id: "cerebras/gpt-oss-120b"
     provider: cerebras
     name: "GPT-OSS 120B (Cerebras)"
-    priority: 25
-  - id: "cerebras/llama-3.3-70b"
-    provider: cerebras
-    name: "Llama 3.3 70B (Cerebras)"
-    priority: 43
+    priority: 19
 
-  # ── Mistral La Plateforme — free Experiment tier, no credit card (~1 req/s) ──
-  - id: "mistral/mistral-small-latest"
+  # ── Mistral La Plateforme — key from Settings ──
+  - id: "mistral/mistral-small-2603"
     provider: mistral
-    name: "Mistral Small (free tier)"
-    priority: 32
-  - id: "mistral/mistral-medium-latest"
+    name: "Mistral Small 4"
+    priority: 20
+  - id: "mistral/mistral-large-4"
     provider: mistral
-    name: "Mistral Medium (free tier)"
-    priority: 33
-  - id: "mistral/open-mistral-nemo"
+    name: "Mistral Large 4"
+    priority: 21
+  - id: "mistral/ministral-8b-2512"
     provider: mistral
-    name: "Mistral Nemo (free tier)"
-    priority: 34
+    name: "Ministral 3 8B"
+    priority: 22
 
-  # ── NVIDIA NIM — free tier, no credit card (40 RPM, ~1k free credits) ──
-  # NOTE: llama-3.3-70b-instruct hit EOL on NIM (2026-08-26, HTTP 410) and was
-  # replaced with live-probed Nemotron models.
-  - id: "nvidia/nvidia/nemotron-3-super-120b-a12b"
-    provider: nvidia
-    name: "Nemotron 3 Super 120B (NVIDIA NIM)"
-    priority: 35
+  # ── NVIDIA NIM — key from Settings ──
   - id: "nvidia/nvidia/nemotron-3.5-lightning-30b-a3b"
     provider: nvidia
     name: "Nemotron 3.5 Lightning 30B (NVIDIA NIM)"
-    priority: 36
-  - id: "nvidia/mistralai/mistral-nemotron"
+    priority: 23
+  - id: "nvidia/nvidia/nemotron-3.5-super-vl-120b-a12b"
     provider: nvidia
-    name: "Mistral Nemotron (NVIDIA NIM)"
-    priority: 37
+    name: "Nemotron 3.5 Super VL 120B (NVIDIA NIM)"
+    priority: 24
+  - id: "nvidia/nvidia/nemotron-3-ultra-550b-a55b"
+    provider: nvidia
+    name: "Nemotron 3 Ultra 550B (NVIDIA NIM)"
+    priority: 25
 
-  # ── Cohere — trial keys free, no credit card (20 RPM, 1k calls/month) ──
-  - id: "cohere/command-a"
+  # ── Cohere — key from Settings ──
+  - id: "cohere/command-a-plus-05-2026"
     provider: cohere
-    name: "Command A (Cohere trial)"
-    priority: 39
+    name: "Command A+ (Cohere)"
+    priority: 26
   - id: "cohere/command-r7b-12-2024"
     provider: cohere
-    name: "Command R7B (Cohere trial, fast)"
-    priority: 40
+    name: "Command R7B (Cohere, fast)"
+    priority: 27
 
-  # ── Z.AI — GLM Flash models free, no credit card (~1k RPD) ──
+  # ── Z.AI — key from Settings ──
+  - id: "zai/glm-5.3-flash"
+    provider: zai
+    name: "GLM 5.3 Flash (Z.AI)"
+    priority: 28
   - id: "zai/glm-4.7-flash"
     provider: zai
-    name: "GLM 4.7 Flash (Z.AI, free)"
-    priority: 41
+    name: "GLM 4.7 Flash (Z.AI)"
+    priority: 29
   - id: "zai/glm-4.5-flash"
     provider: zai
-    name: "GLM 4.5 Flash (Z.AI, free)"
-    priority: 42
-
-  # ── Paid providers — appear only when the user adds their own keys ──
-  - id: "openai/gpt-5.6-luna"
-    provider: openai
-    name: "GPT-5.6 Luna (budget)"
-    priority: 24
-  - id: "anthropic/claude-haiku-4-5"
-    provider: anthropic
-    name: "Claude Haiku 4.5 (fast)"
-    priority: 26
-  - id: "gemini/gemini-2.5-pro"
-    provider: google
-    name: "Gemini 2.5 Pro"
-    priority: 27
-  - id: "openai/gpt-5.6-terra"
-    provider: openai
-    name: "GPT-5.6 Terra"
-    priority: 28
-  - id: "anthropic/claude-sonnet-4-6"
-    provider: anthropic
-    name: "Claude Sonnet 4.6"
-    priority: 29
-  - id: "openai/gpt-5.6-sol"
-    provider: openai
-    name: "GPT-5.6 Sol"
+    name: "GLM 4.5 Flash (Z.AI)"
     priority: 30
-  - id: "ollama/llama3.2:3b"
-    provider: ollama
-    name: "Llama 3.2 3B (local Ollama)"
+
+  # ── Paid frontier providers — appear only with the user's own key ──
+  - id: "gemini/gemini-4-hydrogen"
+    provider: google
+    name: "Gemini 4 Hydrogen"
     priority: 31
+  - id: "openai/gpt-6.2-astra"
+    provider: openai
+    name: "GPT-6.2 Astra"
+    priority: 32
+  - id: "anthropic/claude-opus-5-5"
+    provider: anthropic
+    name: "Claude Opus 5.5"
+    priority: 33
+  - id: "openai/gpt-6.2-sol"
+    provider: openai
+    name: "GPT-6.2 Sol"
+    priority: 34
+  - id: "anthropic/claude-sonnet-5-5"
+    provider: anthropic
+    name: "Claude Sonnet 5.5"
+    priority: 35
+  - id: "openai/gpt-6.1-terra"
+    provider: openai
+    name: "GPT-6.1 Terra"
+    priority: 36
+  - id: "openai/gpt-6-luna"
+    provider: openai
+    name: "GPT-6 Luna (budget)"
+    priority: 37
+  - id: "anthropic/claude-haiku-5-5"
+    provider: anthropic
+    name: "Claude Haiku 5.5 (fast)"
+    priority: 38

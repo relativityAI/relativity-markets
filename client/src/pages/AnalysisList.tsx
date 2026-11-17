@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { MdArrowUpward, MdArrowDownward, MdExpandMore, MdChevronRight } from "react-icons/md";
 import { AnalysisService, AgentService, SkillService } from "@/db";
 import { agentDisplayName } from "@/utils";
@@ -229,6 +229,10 @@ function GroupHeaderRow({
 
 export default function AnalysisList() {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
+    // Stock pages deep-link here with ?q=<symbol> so this page's own search box
+    // filters the runs to that stock. Typing in the box still works as usual.
+    const symbolQuery = searchParams.get("q") || "";
 
     const [uniqueAnalysis, setUniqueAnalysis] = useState<any[]>([]);
     const [fetchError, setFetchError] = useState(false);
@@ -238,7 +242,11 @@ export default function AnalysisList() {
     const [deleteTarget, setDeleteTarget] = useState<AnalysisItem | null>(null);
     const [agents, setAgents] = useState<any[]>([]);
     const [viewMode, setViewMode] = useState<GroupMode>("individual");
-    const [query, setQuery] = useState("");
+    const [query, setQuery] = useState(symbolQuery);
+
+    useEffect(() => {
+        setQuery(symbolQuery);
+    }, [symbolQuery]);
     // Groups start collapsed — the headers themselves are the summary.
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
 

@@ -12,7 +12,7 @@ import { buildModel, type LlmKeys } from "./model.js";
 import type { MetricDef } from "../api/metrics.js";
 import { normalizeQuantRules } from "../api/metrics.js";
 import { buildAgentBuilderSystemPrompt, buildBuilderRecoveryPrompt, buildDocumentExtractionPrompt, buildDraftParametersPrompt } from "./agentPrompts.js";
-import { webSearchTool } from "./tools/websearch.js";
+import { buildRunTools } from "./tools/sources.js";
 import { getToolCatalog } from "./tools/catalog.js";
 import { insertBuilderSessionTurn } from "../db/repo.js";
 import { classifyModelError } from "../api/modelcheck.js";
@@ -21,21 +21,42 @@ import { listAllSkillsForUser, loadBuiltinSkills, parseSkillMarkdown } from "./s
 import type { TraceEvent } from "./types.js";
 import { TraceMapper } from "./trace.js";
 
-// Pull web_search results into readable "query → title → url" entries.
+/** Web-search toolbox for one-shot turns — same MCP composition as runs. */
+async function webSearchToolset(tavilyKey?: string, webSearchProvider: "searxng" | "tavily" = "searxng"): Promise<{ tools: StructuredTool[]; close: () => Promise<void> }> {
+  try {
+    const { loadRunFileConfig } = await import("./run-config.js");
+    const { tools, close } = await buildRunTools(
+      loadRunFileConfig().config.tools as Parameters<typeof buildRunTools>[0],
+      process.env,
+      { symbol: "", source: "", tavilyKey, webSearchProvider },
+    );
+    return { tools, close };
+  } catch (e) {
+    console.warn("[drafts] web search unavailable:", (e as Error)?.message || e);
+    return { tools: [], close: async () => {} };
+  }
+}
+
+// Pull web-search results into readable "query → title → url" entries.
+// MCP search tools return formatted text, so titles/urls come out of it.
 function searchResultsFromTrace(events: TraceEvent[]): { query: string; title: string; url: string }[] {
   const out: { query: string; title: string; url: string }[] = [];
   const seen = new Set<string>();
   for (const ev of events) {
-    if (ev.type !== "tool_result" || ev.tool !== "web_search") continue;
+    if (ev.type !== "tool_result" || !/search|extract/i.test(ev.tool) || ev.status !== "ok") continue;
     const args = (ev as any).args as { query?: string } | undefined;
-    for (const r of ((ev.result as any)?.results ?? []) as any[]) {
-      if (!r?.url || seen.has(r.url)) continue;
-      seen.add(r.url);
-      let fallback = r.url;
+    const text = typeof ev.result === "string" ? ev.result : String((ev.result as any)?.content ?? "");
+    const query = args?.query || text.slice(0, 60);
+    for (const m of text.matchAll(/https?:\/\/[^\s)\"']+/g)) {
+      const url = m[0].replace(/[.,]+$/, "");
+      if (!/^https?:\/\//.test(url) || url.includes("searxng") || seen.has(url)) continue;
+      seen.add(url);
+      let fallback = url;
       try {
-        fallback = new URL(r.url).hostname.replace(/^www\./, "");
+        fallback = new URL(url).hostname.replace(/^www\./, "");
       } catch {}
-      out.push({ query: args?.query || "", title: r.title || fallback, url: r.url });
+      const label = text.slice(Math.max(0, m.index - 120), m.index).replace(/[\n\r]+/g, " ").trim().split(" ").slice(-8).join(" ") || fallback;
+      out.push({ query, title: label, url });
     }
   }
   return out;
@@ -183,6 +204,7 @@ export interface BuilderMessage {
 }
 
 export interface BuilderRequest {
+  web_search_provider?: "searxng" | "tavily";
   session_id?: string;
   user_id?: string;
   model_id: string;
@@ -273,8 +295,8 @@ export async function processBuilderTurn(
     userMessage +
     "\n\nRespond with JSON only.";
 
-  const searchTools: StructuredTool[] = webSearchTool({ tavilyKey: req.llm_keys.tavily });
-  const tools = searchTools.length ? searchTools : [];
+  const searchTools = await webSearchToolset(req.llm_keys.tavily, req.web_search_provider);
+  const tools = searchTools.tools;
   const trace: TraceEvent[] = [];
   const onEvent = (ev: TraceEvent) => {
     trace.push(ev);
@@ -484,6 +506,7 @@ export interface SkillDraftMessage {
 }
 
 export interface SkillDraftRequest {
+  web_search_provider?: "searxng" | "tavily";
   user_id?: string;
   model_id: string;
   llm_keys: LlmKeys;
@@ -537,7 +560,7 @@ metadata:
 What the analyst must state first, and what to mark INSUFFICIENT when data is missing.
 
 Web search (when available):
-- If the user names an investor, fund, or a named methodology (e.g. "Peter Lynch skill", "QGLP framework"), web_search it FIRST and base Purpose/Method/anchors on what the sources actually describe — not a caricature. In your reply, name in one line what the top source showed and carry its vocabulary into the anchors.
+- If the user names an investor, fund, or a named methodology (e.g. "Peter Lynch skill", "QGLP framework"), search the web FIRST and base Purpose/Method/anchors on what the sources actually describe — not a caricature. In your reply, name in one line what the top source showed and carry its vocabulary into the anchors.
 - Never invent a methodology's rules; if search is unavailable or unhelpful, say so and build from the user's description, asking when unclear.
 
 Rules for good skills:
@@ -570,15 +593,19 @@ export async function skillDraftTurn(req: SkillDraftRequest): Promise<SkillDraft
   promptParts.push("\nRespond now.");
 
   const searchRequested = req.web_search !== false;
-  const tools: StructuredTool[] = searchRequested ? webSearchTool({ tavilyKey: req.llm_keys.tavily }) : [];
+  const searchTools = await webSearchToolset(req.llm_keys.tavily, req.web_search_provider);
+  const tools = searchRequested ? searchTools.tools : [];
 
   const searchResults: { query: string; title: string; url: string }[] = [];
   const trace: TraceEvent[] = [];
   const onEvent = (ev: TraceEvent) => {
     trace.push(ev);
-    if (ev.type === "tool_result" && ev.tool === "web_search") {
-      for (const r of ((ev.result as any)?.results ?? []) as any[]) {
-        if (r?.url) searchResults.push({ query: (ev as any).args?.query || "", title: r.title || "", url: r.url });
+    if (ev.type === "tool_result" && /search|extract/i.test(ev.tool) && ev.status === "ok") {
+      const text = typeof ev.result === "string" ? ev.result : String((ev.result as any)?.content ?? "");
+      for (const m of text.matchAll(/https?:\/\/[^\s)\"']+/g)) {
+        const url = m[0].replace(/[.,]+$/, "");
+        if (/searxng/.test(url)) continue;
+        searchResults.push({ query: (ev as any).args?.query || "", title: "", url });
       }
     }
   };

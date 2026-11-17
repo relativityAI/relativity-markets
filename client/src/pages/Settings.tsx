@@ -316,12 +316,14 @@ export default function Settings() {
     const { user } = useAuth();
     const { colorMode, setColorMode } = useColorMode();
     const [savedKeys, setSavedKeys] = useState<Record<string, string>>({});
+    const [webProvider, setWebProvider] = useState<"searxng" | "tavily">("searxng");
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         SettingsService.getSettings()
             .then((data) => {
                 setSavedKeys({ ...(data.llm_keys || {}) });
+                setWebProvider(data.prefs?.web_search_provider === "tavily" ? "tavily" : "searxng");
             })
             .catch(() => {})
             .finally(() => setLoading(false));
@@ -345,9 +347,24 @@ export default function Settings() {
                 delete next[keyName];
                 return next;
             });
+            // ponytail: no Tavily key → keep the toggle honest; the backend
+            // falls back to SearXNG too, but stale UI would re-enable it later.
+            if (keyName === "tavily" && webProvider === "tavily") {
+                await SettingsService.updateSettings({ prefs: { web_search_provider: "searxng" } });
+                setWebProvider("searxng");
+            }
             toaster.create({ title: `${providerLabel(keyName)} key removed`, type: "info" });
         } catch (e) {
             toaster.create({ title: `Failed to remove: ${(e as Error).message}`, type: "error" });
+        }
+    };
+
+    const handleWebProvider = async (value: "searxng" | "tavily") => {
+        try {
+            await SettingsService.updateSettings({ prefs: { web_search_provider: value } });
+            setWebProvider(value);
+        } catch (e) {
+            toaster.create({ title: `Failed to save preference: ${(e as Error).message}`, type: "error" });
         }
     };
 
@@ -485,6 +502,37 @@ export default function Settings() {
                                         onRemove={handleRemoveKey}
                                     />
                                 </Box>
+                                {!!savedKeys.tavily && (
+                                    <Box mt={4}>
+                                        <Text fontSize="12px" color="var(--ink-tertiary)" mb={2}>
+                                            Default web search — SearXNG is self-hosted and free; Tavily uses the key above.
+                                        </Text>
+                                        <Flex gap={1} p={1} bg="var(--surface-recessed)" borderRadius="2px" w="fit-content">
+                                            {(["searxng", "tavily"] as const).map((v) => {
+                                                const active = webProvider === v;
+                                                return (
+                                                    <Flex
+                                                        key={v}
+                                                        as="button"
+                                                        type="button"
+                                                        onClick={() => handleWebProvider(v)}
+                                                        aria-pressed={active}
+                                                        px={4}
+                                                        py={1.5}
+                                                        borderRadius="2px"
+                                                        cursor="pointer"
+                                                        bg={active ? "var(--surface-panel)" : "transparent"}
+                                                        boxShadow={active ? "0 1px 2px rgba(0,0,0,0.08)" : "none"}
+                                                    >
+                                                        <Text fontSize="12.5px" color={active ? "var(--accent-primary)" : "var(--ink-tertiary)"}>
+                                                            {v === "searxng" ? "SearXNG" : "Tavily"}
+                                                        </Text>
+                                                    </Flex>
+                                                );
+                                            })}
+                                        </Flex>
+                                    </Box>
+                                )}
                             </>
                         )}
                     </Box>

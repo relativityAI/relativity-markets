@@ -1,4 +1,4 @@
-# One prebuilt image: web app + API on :8080. SearXNG (web search) is included
+# One prebuilt image: web app + API on :8501. SearXNG (web search) is included
 # and runs automatically. Langfuse (agent tracing) is opt-in:
 # `docker compose --profile langfuse up -d`. Postgres is the legacy cloud path.
 services:
@@ -8,14 +8,17 @@ services:
     # build: .
     ports:
       # Loopback only — the app has no sign-in and stores API keys.
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8501:8501"
     env_file:
       - path: ./services/.env
         required: false
     environment:
+      PORT: 8501
       SEARXNG_URL: http://searxng:8080
-      # Agent market-data toolbox (yfinance MCP over streamable HTTP).
+      # Agent toolbox MCP urls (all streamable HTTP, internal network only).
       MCP_YFINANCE_URL: http://yfmcp:8000/mcp
+      MCP_SEARXNG_MCP_URL: http://searxng-mcp:3000/mcp
+      MCP_TRADINGVIEW_URL: http://tvmcp:8000/mcp
       # Local-first: state is the SAME SQLite file local dev uses
       # (services/data/relativity.db) — runs, agents, keys are shared.
       SQLITE_PATH: /app/data/relativity.db
@@ -28,6 +31,8 @@ services:
     depends_on:
       - searxng
       - yfmcp
+      - searxng-mcp
+      - tvmcp
 
   # yfinance MCP server — the agent's market-data toolbox. The image's default
   # entrypoint is stdio; we override it to serve streamable HTTP so the API
@@ -38,6 +43,35 @@ services:
       - python
       - -c
       - "from yfmcp.server import mcp; mcp.settings.host='0.0.0.0'; mcp.run(transport='streamable-http')"
+    restart: unless-stopped
+
+  # searxng-mcp — the agent's web-search toolbox, in front of the searxng
+  # container. HTTP mode needs no auth; publish loopback only so local dev and
+  # `npm run smoke:mcp` can reach it at the localhost URL in services/.env.
+  searxng-mcp:
+    image: isokoliuk/mcp-searxng:latest
+    ports:
+      - "127.0.0.1:3005:3000"
+    environment:
+      SEARXNG_URL: http://searxng:8080
+      MCP_HTTP_PORT: "3000"
+      MCP_HTTP_HOST: 0.0.0.0
+    depends_on:
+      - searxng
+    restart: unless-stopped
+
+  # tvmcp — TradingView market-data/technical-analysis MCP, built from the
+  # official PyPI package so we get the current TA/screener tools (the old
+  # arm64 image only had 11 crypto scanners). News/sentiment degrade to a
+  # "not configured" note without MARKETAUX_API_TOKEN.
+  tvmcp:
+    build:
+      context: ./docker/tradingview-mcp
+    image: relativity/tradingview-mcp:0.8.1
+    ports:
+      - "127.0.0.1:8006:8000"
+    environment:
+      MARKETAUX_API_TOKEN: ${MARKETAUX_API_TOKEN:-}
     restart: unless-stopped
 
   searxng:

@@ -2,12 +2,6 @@
 name: nifty-indices-analysis
 description: End-of-day read of the Indian index market in the style of tipsheet.markets — Nifty 50 and size leadership (mid/small/micro caps), breadth (52-week highs, share above 200/50-day averages), FII/DII flows, sector leadership quadrants, index valuation percentiles, the 10-month trend rule, and which readings sit outside their usual range. Use whenever the user asks how the broad market is doing, which index or size segment is leading, whether breadth or flows confirm the index, how expensive indices are, or wants a market-wide report instead of a single-stock analysis — even if they never say "indices" or "tipsheet".
 citations: inline
-tools:
-  - yfinance_get_ticker_info
-  - yfinance_get_price_history
-  - yfinance_search
-  - search_news
-  - web_search
 metadata:
   tags: indices
 ---

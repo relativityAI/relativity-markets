@@ -102,13 +102,18 @@ function normalizeDomain(raw: unknown): string | null {
   return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host) ? host : null;
 }
 
-// Exact symbol match, or the NSE-suffixed twin the search API returns for
-// Indian symbols (RELIANCE → RELIANCE.NS). Anything looser risks hanging the
-// wrong company's logo on a row (TCS → The Container Store), so no fallback.
+// Exact symbol match, or an Indian twin. Many NSE tickers come back only as a
+// fuzzy match (ADOR → ADORWELD.NS) or under their BSE code; when nothing exact
+// matches, prefer an Indian listing rather than leaving a letter fallback.
+// A loose US match is still avoided (TCS → The Container Store).
 function pick(results: any[], symbol: string): string | null {
-  const want = [symbol, `${symbol}.NS`];
-  const hit = results.find((r) => want.includes(String(r?.symbol || "").toUpperCase()));
-  return normalizeDomain(hit?.website);
+  const want = [symbol, `${symbol}.NS`, `${symbol}.BO`];
+  const exact = results.find((r) => want.includes(String(r?.symbol || "").toUpperCase()));
+  if (exact?.website) return normalizeDomain(exact.website);
+  const indian = results.find((r) =>
+    ["NSI", "BSE"].includes(String(r?.exchange || "").toUpperCase()) &&
+    String(r?.symbol || "").toUpperCase().startsWith(symbol));
+  return normalizeDomain(indian?.website);
 }
 
 // One live search at a time, spaced ≥ SLOT_GAP_MS (see header).

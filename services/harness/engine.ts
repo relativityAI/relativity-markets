@@ -35,6 +35,7 @@ import { langfuseCallbacks } from "./tracing.js";
 import { getCheckpointer } from "./checkpointer.js";
 import { ReportCanvas, validateComposed } from "./report/canvas.js";
 import { reportWriteTool } from "./tools/report-write.js";
+import { wrapUntrusted } from "./tools/index.js";
 import { allBlocks, countCharts, sectionHeadings, type ReportDocument } from "./report/document.js";
 import { attachChartData, renderFigures } from "./report/builder.js";
 import { getPriceHistory } from "./marketdata.js";
@@ -147,12 +148,21 @@ let langfuseHandlers: unknown[] = [];
  * keeps going, exactly like the old registry's behavior. The domain tools
  * already return error-shaped objects; this guard catches the ones that
  * still throw (network failures, upstream 500s).
+ *
+ * The same chokepoint marks web-sourced MCP output as untrusted data: the
+ * built-in search used to wrap results itself; MCP tools don't.
  */
+const WEB_TOOLS = new Set([
+  "searxng_web_search", "web_url_read", "tavily_search", "tavily_extract",
+  "yfinance_get_ticker_news", "financial_news", "market_sentiment", "combined_analysis",
+]);
+
 const toolErrorGuard = createMiddleware({
   name: "ToolErrorGuard",
   wrapToolCall: async (request, handler) => {
+    let result: Awaited<ReturnType<typeof handler>>;
     try {
-      return await handler(request);
+      result = await handler(request);
     } catch (e: any) {
       const text = `Error: ${friendlyError(e?.message || String(e))}`;
       console.warn(`[engine] tool ${request.toolCall?.name} failed: ${text}`);
@@ -163,6 +173,18 @@ const toolErrorGuard = createMiddleware({
         status: "error",
       });
     }
+    if (result instanceof ToolMessage && WEB_TOOLS.has(request.toolCall?.name ?? "")) {
+      const text = typeof result.content === "string"
+        ? result.content
+        : JSON.stringify(result.content);
+      return new ToolMessage({
+        content: wrapUntrusted(request.toolCall?.name ?? "web", text),
+        tool_call_id: result.tool_call_id,
+        name: result.name,
+        status: result.status,
+      });
+    }
+    return result;
   },
 });
 

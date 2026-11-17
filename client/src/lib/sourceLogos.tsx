@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { LuNewspaper, LuGlobe } from "react-icons/lu";
+import { LuNewspaper, LuGlobe, LuChartLine } from "react-icons/lu";
 import type { IconType } from "react-icons";
 import { API_BASE } from "@/db";
 import secLogo from "@/assets/sec_logo.png";
@@ -8,8 +8,9 @@ import voyagerLogo from "@/assets/voyager_logo.png";
 import yahooLogo from "@/assets/yahoo_finance.png";
 import youtubeLogo from "@/assets/youtube_logo.png";
 import redditLogo from "@/assets/reddit_logo.png";
+import tavilyLogo from "@/assets/tavily-color.svg";
 
-export type SourceKey = "sec" | "nse" | "voyager" | "yahoo" | "youtube" | "reddit" | "news" | "web";
+export type SourceKey = "sec" | "nse" | "voyager" | "yahoo" | "youtube" | "reddit" | "news" | "web" | "tradingview" | "tavily";
 
 type SourceDef = { image?: string; icon?: IconType; label: string; full: string };
 
@@ -22,6 +23,8 @@ export const SOURCE_DEFS: Record<SourceKey, SourceDef> = {
     reddit: { image: redditLogo, label: "Reddit", full: "Reddit" },
     news: { icon: LuNewspaper, label: "News", full: "Market & ticker news" },
     web: { icon: LuGlobe, label: "Web", full: "Live web search" },
+    tradingview: { icon: LuChartLine, label: "TradingView", full: "TradingView market data & technicals" },
+    tavily: { image: tavilyLogo, label: "Tavily", full: "Tavily AI web search" },
 };
 
 export function SourceMark({ source, size = 12, muted = false }: { source: SourceKey; size?: number; muted?: boolean }) {
@@ -154,6 +157,32 @@ const TOOL_SOURCES: Record<string, SourceKey[]> = {
     search_youtube: ["youtube"],
     get_youtube_transcript: ["youtube"],
     web_search: ["web"],
+    searxng_web_search: ["web"],
+    web_url_read: ["web"],
+    searxng_search_suggestions: ["web"],
+    searxng_instance_info: ["web"],
+    tavily_search: ["tavily"],
+    tavily_extract: ["tavily"],
+    financial_news: ["tradingview"],
+    market_sentiment: ["tradingview"],
+    combined_analysis: ["tradingview"],
+    market_snapshot: ["tradingview"],
+    stock_prices: ["tradingview"],
+    yahoo_price: ["tradingview"],
+    stock_technical_analysis: ["yahoo"],
+    coin_analysis: ["tradingview"],
+    multi_timeframe_analysis: ["tradingview"],
+    backtest_strategy: ["tradingview"],
+    compare_strategies: ["tradingview"],
+    walk_forward_backtest_strategy: ["tradingview"],
+    multi_agent_analysis: ["tradingview"],
+    get_technical_analysis: ["tradingview"],
+    get_multi_timeframe_analysis: ["tradingview"],
+    get_candlestick_patterns: ["tradingview"],
+    get_stock_decision: ["tradingview"],
+    screen_stocks: ["tradingview"],
+    scan_by_signal: ["tradingview"],
+    stock_screener: ["tradingview"],
 };
 
 // Single branded mark for one tool call. "exchange" has no logo of its own —

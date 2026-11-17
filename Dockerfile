@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# One image = web app + API in one process on :8080. Web search (SearXNG) runs
+# One image = web app + API in one process on :8501. Web search (SearXNG) runs
 # as a separate container via docker-compose.yml.
 #
 # Build stages are pinned to $BUILDPLATFORM: npm/tsc/vite run natively on the
@@ -24,7 +24,7 @@ RUN npm run build
 
 FROM node:22-alpine
 WORKDIR /app
-ENV NODE_ENV=production PORT=8080 RELATIVITY_HOST=0.0.0.0 SQLITE_PATH=/app/data/relativity.db
+ENV NODE_ENV=production PORT=8501 RELATIVITY_HOST=0.0.0.0 SQLITE_PATH=/app/data/relativity.db
 COPY --from=api /src/services/dist ./dist
 # Runtime reads these relative to cwd: skills (config/skills), skill-repos.json,
 # harness prompt assets + default agents. See harness/skills.ts + harness/config.ts.
@@ -38,5 +38,5 @@ RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
 # from services/ and uses the ../client/dist default instead).
 ENV CLIENT_DIST=./client/dist
 COPY --from=client /src/client/dist ./client/dist
-EXPOSE 8080
+EXPOSE 8501
 CMD ["node", "--disable-warning=ExperimentalWarning", "dist/api/index.js"]

@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ── server-side LLM key pools (multiple keys per provider for rotation) ──
+// No keys are configured by default: users add their own in Settings. These
+// env vars remain available for optional server-side pools.
 
 export const LLM_PROVIDERS = [
   "openai",
@@ -13,9 +15,8 @@ export const LLM_PROVIDERS = [
   "cerebras",
   "groq",
   "openrouter",
-  // Free-tier providers (no credit card needed for an API key) — supported in
-  // buildModel + provider discovery so users can pick them without their own
-  // paid keys:
+  // Free-tier providers (no credit card needed) — supported in buildModel +
+  // discovery so users can add a free key in Settings instead of a paid one:
   "mistral", // La Plateforme free "Experiment" tier (~1 req/s)
   "nvidia", // NVIDIA NIM free tier (40 RPM, 1k free credits on signup)
   "cohere", // Cohere trial keys (20 RPM, 1k calls/month)
@@ -85,7 +86,7 @@ export function parseDailyCaps(env: Record<string, string | undefined> = process
 }
 
 export const config = {
-  port: Number(process.env.PORT || 8080),
+  port: Number(process.env.PORT || 8501),
   // Scoring must be deterministic (plan 0.4/A6): the LLM quant judge is OFF
   // unless explicitly enabled with QUANT_LLM_JUDGE=1. Lazy so tests and
   // late-set env vars are honored.
@@ -136,7 +137,6 @@ export const config = {
   agentMaxTokens: Number(process.env.AGENT_MAX_TOKENS || 200_000),
   rateLimitPerMin: 10,
   tavilyUrl: "https://api.tavily.com/search",
-  ollamaUrl: process.env.OLLAMA_URL || "http://localhost:11434/v1",
   // The yfinance MCP server is the harness agent's market-data toolbox
   // (streamable HTTP, tool list re-fetched each run).
   mcpYfinanceUrl: process.env.MCP_YFINANCE_URL || "",

@@ -12,11 +12,13 @@ export interface UserSettingsRow {
   key_version: number | null;
   defaults_deleted: boolean | null;
   deleted_preset_keys: string[] | null;
+  /** Non-secret per-user preferences (e.g. web_search_provider). */
+  prefs: Record<string, string>;
 }
 
 export async function getUserSettings(userId: string): Promise<UserSettingsRow | null> {
   const row = getSqlite().prepare(
-    "SELECT user_id, llm_keys_encrypted, key_version, defaults_deleted, deleted_preset_keys FROM user_settings WHERE user_id = ?",
+    "SELECT user_id, llm_keys_encrypted, key_version, defaults_deleted, deleted_preset_keys, prefs FROM user_settings WHERE user_id = ?",
   ).get(userId) as any;
   if (!row) return null;
   return {
@@ -25,6 +27,7 @@ export async function getUserSettings(userId: string): Promise<UserSettingsRow |
     key_version: row.key_version ?? null,
     defaults_deleted: row.defaults_deleted == null ? null : !!row.defaults_deleted,
     deleted_preset_keys: fromJson(row.deleted_preset_keys, []) as string[],
+    prefs: fromJson(row.prefs, {}) as Record<string, string>,
   };
 }
 
@@ -34,7 +37,7 @@ export async function upsertUserSettings(userId: string, patch: Partial<Omit<Use
   const vals: unknown[] = [userId];
   for (const [k, v] of Object.entries(patch)) {
     if (v === undefined) continue;
-    if (k === "llm_keys_encrypted" || k === "deleted_preset_keys") vals.push(toJson(v));
+    if (k === "llm_keys_encrypted" || k === "deleted_preset_keys" || k === "prefs") vals.push(toJson(v));
     else if (k === "defaults_deleted") vals.push(v ? 1 : 0);
     else vals.push(v);
     cols.push(k);

@@ -2,13 +2,6 @@
 name: chartist-technical-analysis-v3
 description: Compact stock technical analysis framework from "The Chartist" (Himanshu Sharma) podcast. Covers near-52-week-high scans, relative strength, Weinstein stage analysis, 30/40-week moving average, base breakouts, volume spikes, climax tops, trailing stops and loss maths. Use whenever the user wants to analyse a stock chart, build or read a scan or screener, find strong stocks or themes, judge a breakout, base, trend or stage, or decide entry, stop and exit, even if they never say "technical analysis" or "Chartist". (v3 runs on the plan-parallel harness — the frontmatter tools list is its parallel toolbox.)
 citations: inline
-tools:
-  - yfinance_get_price_history
-  - yfinance_get_ticker_info
-  - yfinance_get_analyst_estimates
-  - yfinance_search
-  - search_news
-  - web_search
 metadata:
   title: Chartist Technical Analysis (v3)
   category: market

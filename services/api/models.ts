@@ -27,16 +27,8 @@ export function getModelIds(): string[] {
   return getModels().map((m) => m.id);
 }
 
-/**
- * Providers that work WITHOUT any API key: local Ollama plus the free-tier
- * cloud providers (no credit card needed — just a free signup key, which the
- * server pool supplies). Users with no keys of their own can still pick these.
- */
-const KEYLESS_PROVIDERS = new Set(["ollama", "groq", "gemini", "cerebras", "openrouter", "mistral", "nvidia", "cohere", "zai"]);
-
-export function isKeylessProvider(provider: string): boolean {
-  return KEYLESS_PROVIDERS.has(provider);
-}
+// Every provider needs an API key added in Settings. "Free tier" means no
+// credit card, not no key — with no keys added, no models are available.
 
 // ── Dynamic model discovery ──────────────────────────────────────────
 
@@ -51,6 +43,7 @@ export function isKeylessProvider(provider: string): boolean {
 const OPENROUTER_FREE_EXCLUDED = new Set([
   "thinkingmachines/inkling:free",
   "thinkingmachines/inkling-small:free",
+  "thinkingmachines/inkling-2-small:free",
   "nvidia/nemotron-3.5-content-safety:free",
 ]);
 
@@ -214,13 +207,12 @@ async function fetchProviderModels(
 }
 
 /**
- * Get available models for a user based on their configured API keys plus the
- * server's own key pools (config.serverKeys).
- * Providers the server is keyed for use their explicit PROVIDER_MODELS list
- * (or the curated YAML list); user-keyed providers keep curated + live discovery.
- * OpenRouter additionally live-discovers its `:free` tier with the server key so
- * keyless users see every free model (unless OPENROUTER_MODELS pins the list).
- * Curated models appear first (sorted by priority), dynamic models after (sorted alpha).
+ * Get available models for a user based on the keys they added in Settings.
+ * With no keys, the list is empty. Each keyed provider contributes its curated
+ * models plus live discovery from that provider's /models API. Curated models
+ * come first (priority order), then live-only models (alphabetical).
+ * Server-side key pools are still supported when configured via env, but this
+ * deployment keeps no default keys.
  */
 export async function getAvailableModelsForUser(
   llmKeys: Record<string, string>,
@@ -231,16 +223,9 @@ export async function getAvailableModelsForUser(
   const serverProviders = Object.keys(config.serverKeys).filter((p) => config.serverKeys[p]?.length);
   const allProviders = [...new Set([...serverProviders, ...userProviders])];
 
-  // No keys anywhere — expose ONLY the keyless/server-free providers (ollama +
-  // free-tier providers the server is NOT keyed for still need a user key, so
-  // they stay hidden too). Previously this returned the full curated list,
-  // which included paid models (OpenAI/Anthropic) users without keys could
-  // never actually call.
-  if (allProviders.length === 0) {
-    return [
-      ...getModels().filter((m) => isKeylessProvider(m.id.split("/")[0])).map((m) => m.id),
-    ];
-  }
+  // No keys anywhere — nothing is runnable. Every provider needs a key, so
+  // don't expose models the user cannot call yet.
+  if (allProviders.length === 0) return [];
 
   // Provider models for a keyed provider: explicit PROVIDER_MODELS env list,
   // else the curated YAML entries for that provider (in priority order).
@@ -266,13 +251,12 @@ export async function getAvailableModelsForUser(
     return fetchProviderModels(provider, key);
   });
 
-  // OpenRouter's free catalog churns constantly (new `:free` models weekly),
-  // while models.yaml can only be updated by hand — so also discover the free
-  // tier with the server's key. That keeps every usable no-cost model in the
-  // dropdown for keyless users even before the curated list is edited. Users
-  // with their own OpenRouter key already get the full catalog above, and
-  // models nobody can actually call here are filtered out (OPENROUTER_FREE_EXCLUDED).
-  // An explicit OPENROUTER_MODELS env list wins over both (no discovery).
+  // If a server-side OpenRouter key is configured via env, also discover its
+  // `:free` catalog (it churns weekly while models.yaml is hand-maintained).
+  // This deployment keeps no server key, so users with their own OpenRouter key
+  // get discovery from the full catalog fetch above. Unusable models are
+  // filtered out (OPENROUTER_FREE_EXCLUDED); an explicit OPENROUTER_MODELS env
+  // list wins over discovery.
   const serverOpenrouterKey = config.serverKeys.openrouter?.[0];
   if (serverOpenrouterKey && !userProviders.includes("openrouter") && !config.serverModels.openrouter?.length) {
     fetches.push(
@@ -286,20 +270,11 @@ export async function getAvailableModelsForUser(
   const liveResults = await Promise.all(fetches);
   const liveModels = new Set(liveResults.flat());
 
-  // Curated models include Ollama (keyless) plus everything above; dedupe and keep
-  // ordering: explicit env models first, curated by priority, live-only models alpha.
+  // Dedupe and keep ordering: explicit env models first, curated by priority,
+  // live-only models alphabetical.
   const seen = new Set<string>();
   const ordered: string[] = [];
-  for (const id of [
-    ...explicitModels,
-    ...curatedModels,
-    ...getModels()
-      .filter((m) => {
-        const provider = m.id.split("/")[0];
-        return isKeylessProvider(provider) && !allProviders.includes(provider);
-      })
-      .map((m) => m.id),
-  ]) {
+  for (const id of [...explicitModels, ...curatedModels]) {
     if (seen.has(id)) continue;
     seen.add(id);
     ordered.push(id);
