@@ -5,10 +5,11 @@ import { API_BASE } from "@/db";
 import secLogo from "@/assets/sec_logo.png";
 import nseLogo from "@/assets/nse_logo.png";
 import voyagerLogo from "@/assets/voyager_logo.png";
+import yahooLogo from "@/assets/yahoo_finance.png";
 import youtubeLogo from "@/assets/youtube_logo.png";
 import redditLogo from "@/assets/reddit_logo.png";
 
-export type SourceKey = "sec" | "nse" | "voyager" | "youtube" | "reddit" | "news" | "web";
+export type SourceKey = "sec" | "nse" | "voyager" | "yahoo" | "youtube" | "reddit" | "news" | "web";
 
 type SourceDef = { image?: string; icon?: IconType; label: string; full: string };
 
@@ -16,6 +17,7 @@ export const SOURCE_DEFS: Record<SourceKey, SourceDef> = {
     sec: { image: secLogo, label: "SEC", full: "U.S. Securities & Exchange Commission" },
     nse: { image: nseLogo, label: "NSE", full: "National Stock Exchange of India" },
     voyager: { image: voyagerLogo, label: "Voyager", full: "Voyager data engine" },
+    yahoo: { image: yahooLogo, label: "Yahoo", full: "Yahoo Finance (yfinance MCP)" },
     youtube: { image: youtubeLogo, label: "YouTube", full: "YouTube" },
     reddit: { image: redditLogo, label: "Reddit", full: "Reddit" },
     news: { icon: LuNewspaper, label: "News", full: "Market & ticker news" },
@@ -159,7 +161,9 @@ const TOOL_SOURCES: Record<string, SourceKey[]> = {
 // ponytail: no exchange-aware variant; thread the run's exchange in when a
 // result card actually needs to distinguish SEC from NSE.
 export function sourceForTool(tool: string | undefined): SourceKey {
-    const keys = TOOL_SOURCES[String(tool || "")] || [];
+    const name = String(tool || "");
+    if (name.startsWith("yfinance_")) return "yahoo";
+    const keys = TOOL_SOURCES[name] || [];
     const key = keys.find((k) => k !== "exchange") || keys[0] || "web";
     return key === "exchange" ? "sec" : key;
 }
@@ -168,7 +172,9 @@ export function sourceForTool(tool: string | undefined): SourceKey {
 export function sourcesUsedForParam(calls: { tool_name?: string }[] | undefined): SourceKey[] {
     const out: SourceKey[] = [];
     for (const c of calls || []) {
-        for (const k of TOOL_SOURCES[String(c?.tool_name || "")] || []) {
+        const name = String(c?.tool_name || "");
+        const keys = name.startsWith("yfinance_") ? (["yahoo"] as SourceKey[]) : TOOL_SOURCES[name] || [];
+        for (const k of keys) {
             if (!out.includes(k)) out.push(k);
         }
     }

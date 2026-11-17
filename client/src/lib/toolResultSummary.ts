@@ -66,6 +66,16 @@ export function summarizeToolResult(result: unknown): string {
 
     const o = result as Record<string, unknown>;
 
+    // MCP envelope: {type:"text", text:"{...json...}"} — parse so the summary
+    // sees the payload instead of the wrapper.
+    if (typeof o.text === "string" && /^[[{]/.test(o.text.trim())) {
+        try {
+            return summarizeToolResult(JSON.parse(o.text));
+        } catch {
+            // not JSON after all — fall through to the text handling below
+        }
+    }
+
     if (typeof o.text === "string" && o.text.length > 300) {
         return `text (${o.text.length.toLocaleString()} chars)${o.url ? ` · ${String(o.url)}` : ""}`;
     }

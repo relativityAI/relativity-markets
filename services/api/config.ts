@@ -102,21 +102,6 @@ export const config = {
   get rubricCompilerModel() {
     return process.env.RUBRIC_COMPILER_MODEL || "";
   },
-  // read_pdf SSRF guard (plan 0.5/C1): allowed download hosts. Matched as a
-  // suffix so subdomains work ("nseindia.com" allows "www.nseindia.com").
-  pdfHostAllowlist: parseCsv(process.env.PDF_HOST_ALLOWLIST).length
-    ? parseCsv(process.env.PDF_HOST_ALLOWLIST)
-    : [
-        "nseindia.com",
-        "nsearchive.nseindia.com",
-        "sec.gov",
-        "www.sec.gov",
-        "static.nseindia.com",
-        "archives.nseindia.com",
-        "cdn.nseindia.com",
-        "bseindia.com",
-        "bsmedia.business-standard.com",
-      ],
   // Local-first storage: one SQLite file (env SQLITE_PATH; relative = services/ cwd).
   sqlitePath: process.env.SQLITE_PATH || "data/relativity.db",
   // AUTH_MODE: "local" is the default (single default user, no sign-in).
@@ -135,13 +120,6 @@ export const config = {
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
   // AES-256-GCM key for encrypting stored API keys (64 hex chars = 32 bytes)
   encryptionKey: process.env.ENCRYPTION_KEY || "",
-  // Voyager
-  voyagerUrl: process.env.VOYAGER_URL || "https://voyager-api-0csb.onrender.com",
-  voyagerAdminKey: process.env.VOYAGER_ADMIN_KEY || "",
-  // data:read key for Voyager data routes (X-API-Key). The admin key above only
-  // works on /admin/* and 401s every data route.
-  voyagerApiKey: process.env.VOYAGER_API_KEY || "",
-  voyagerRpm: Number(process.env.VOYAGER_RPM || 60),
   // Server-side LLM key pools + model lists + daily caps (multiple keys per provider)
   serverKeys: parseServerKeys(),
   serverModels: parseServerModels(),
@@ -159,8 +137,7 @@ export const config = {
   rateLimitPerMin: 10,
   tavilyUrl: "https://api.tavily.com/search",
   ollamaUrl: process.env.OLLAMA_URL || "http://localhost:11434/v1",
-  // The Voyager MCP is the harness agent's toolbox (streamable HTTP, re-listed
-  // each run). Required for harness runs; the built-in Voyager REST tools are
-  // no longer registered alongside it.
-  mcpVoyagerUrl: process.env.MCP_VOYAGER_URL || "",
+  // The yfinance MCP server is the harness agent's market-data toolbox
+  // (streamable HTTP, tool list re-fetched each run).
+  mcpYfinanceUrl: process.env.MCP_YFINANCE_URL || "",
 };

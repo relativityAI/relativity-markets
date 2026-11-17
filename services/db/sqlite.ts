@@ -1,7 +1,7 @@
 /**
  * Local-first storage — a single SQLite file (node:sqlite, zero native deps).
  * Mirrors the Supabase/local-Postgres tables the app used; those clients
- * (db.ts, localdb.ts) stay untouched for the cloud path.
+ * (db.ts) stays untouched for the cloud path.
  */
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";

@@ -37,6 +37,7 @@ import { ReportCanvas, validateComposed } from "./report/canvas.js";
 import { reportWriteTool } from "./tools/report-write.js";
 import { allBlocks, countCharts, sectionHeadings, type ReportDocument } from "./report/document.js";
 import { attachChartData, renderFigures } from "./report/builder.js";
+import { getPriceHistory } from "./marketdata.js";
 import { gradeReport, reportDigest, type Verdict } from "./report/verdict.js";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 
@@ -141,7 +142,7 @@ function hydrateWorkspace(dir: string, snapshot: Record<string, string>): void {
 let langfuseHandlers: unknown[] = [];
 
 /**
- * Tool errors are RESULTS, not loop crashes — a flaky Voyager endpoint (or a
+ * Tool errors are RESULTS, not loop crashes — a flaky MCP endpoint (or a
  * tool bug) must surface to the model as an error ToolMessage and the loop
  * keeps going, exactly like the old registry's behavior. The domain tools
  * already return error-shaped objects; this guard catches the ones that
@@ -273,12 +274,14 @@ function buildSystemPrompt(o: {
   const skillNote = o.skills.length
     ? `## Skill\nYour operating skill for this run: ${o.skills.map((s) => s.id).join(", ")}. Its full SKILL.md is pinned below and its reference files live under its skill directory on the filesystem — read them with read_file when the instructions call for them.`
     : "";
-  const soul = o.agent.soulPrompt?.trim() ?? "";
   const budgetNote = [
     "## Run budget",
     `You have about ${o.budget.maxSteps} tool rounds and ${Math.round((o.budget.maxMs ?? 180_000) / 60_000)} minutes for the whole run. Research efficiently — batch your tool calls — and begin writing sections with report_write once you have enough evidence. Reserve the final third of the budget for writing: an unreported analysis is a failed run.`,
+    "Keep the plan current: call write_todos to mark an item completed (and the next one in_progress) as soon as you finish it — the live plan display reads those updates and shows nothing until you do.",
   ].join("\n");
-  return [fill(agentsDoc), structure, skillNote, soul, budgetNote, generated].filter(Boolean).join("\n\n");
+  // No soul/philosophy block: an agent's behavior comes from the prompt doc,
+  // its skill, and the budget — persona prose no longer reaches the run.
+  return [fill(agentsDoc), structure, skillNote, budgetNote, generated].filter(Boolean).join("\n\n");
 }
 
 async function createRunAgent(o: RunOptions, toolNames: string[], canvas: ReportCanvas, notify: () => void) {
@@ -314,6 +317,21 @@ export async function bootTracing(): Promise<void> {
 }
 
 // ── The run ─────────────────────────────────────────────────────────────────
+
+/**
+ * Chart `data` tokens resolve from structured tool results; MCP tools return
+ * text/tables/images, so the server fetches the price series itself at
+ * assembly (keyless Yahoo chart client — same data the old built-in tool
+ * returned). Best-effort: no history = tokens stay unresolved.
+ */
+async function chartPreload(o: { symbol: string; source: string }): Promise<unknown[]> {
+  try {
+    const h = await getPriceHistory(o.symbol, "2y", o.source);
+    return h ? [h] : [];
+  } catch {
+    return [];
+  }
+}
 
 export async function runAgent(o: RunOptions): Promise<RunResult> {
   const trace: TraceEvent[] = [];
@@ -389,7 +407,7 @@ export async function runAgent(o: RunOptions): Promise<RunResult> {
 
   // ── STITCH — sections land exactly as the agent wrote them. ───────────────
   const document = canvas.document();
-  attachChartData(document, trace);
+  attachChartData(document, trace, undefined, await chartPreload(o));
   renderFigures(document);
 
   const loopErrors: string[] = [];
@@ -545,7 +563,7 @@ export async function resumeAgent(o: ResumeOptions, decisions: ReviewDecision[])
   notify();
 
   const document = canvas.document();
-  attachChartData(document, trace);
+  attachChartData(document, trace, undefined, await chartPreload(o));
   renderFigures(document);
 
   const wroteAny = canvas.sectionCount() > 0;

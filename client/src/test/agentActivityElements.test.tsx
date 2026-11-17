@@ -87,6 +87,43 @@ describe("AgentActivity — harness reasoning feed (assistant-ui elements)", () 
     // The homepage-card agent header: the agent's name stands alone.
     expect(screen.getAllByText(fixture.agent_name).length).toBeGreaterThan(0);
   });
+
+  it("marks the plan done when the run is finished (no eternal spinner on stale todos)", () => {
+    // The fixture's last write_todos has 1 completed + 1 in_progress + 3 pending
+    // — models write the plan once and often never update it. After the run
+    // ends the plan must render as finished, not stuck on item 2.
+    render(
+      wrap(
+        <AgentActivity
+          title="Reasoning history"
+          events={fixture.trace as TraceEvent[]}
+          agent={fixture.agent_name}
+          active={false}
+        />,
+      ),
+    );
+
+    const bar = document.querySelector('[data-slot="agent-plan"] [role="progressbar"]');
+    expect(bar?.getAttribute("aria-valuenow")).toBe("100");
+    expect(screen.getAllByText("5 of 5").length).toBeGreaterThan(0);
+    // sr-only per-step status: nothing is "in progress" or "not started".
+    expect(screen.queryByText("in progress", { selector: ".sr-only" })).toBeNull();
+    expect(screen.queryByText("not started", { selector: ".sr-only" })).toBeNull();
+  });
+
+  it("runs the reasoning timer from the run's start, not from mount", () => {
+    render(
+      wrap(
+        <AgentActivity
+          title="Analyzing"
+          events={[]}
+          active
+          startedAt={Date.now() - 5_000}
+        />,
+      ),
+    );
+    expect(screen.getAllByText("00:05").length).toBeGreaterThan(0);
+  });
 });
 
 describe("RunMetadata — run info tab (assistant-ui info elements)", () => {

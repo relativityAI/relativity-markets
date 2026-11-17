@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Box, Button, Flex, Input, Stack, Text, Textarea } from "@chakra-ui/react";
+import { Box, Button, Flex, Input, Stack, Text } from "@chakra-ui/react";
 import { HarnessAgentService, type HarnessAgent } from "@/lib/harnessAgents";
 import { SkillService, type SkillSummary } from "@/db";
 import { SkillPicker } from "@/components/agents/SkillPicker";
@@ -9,7 +9,6 @@ export function AgentsPage() {
   const [agents, setAgents] = useState<HarnessAgent[]>([]);
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [name, setName] = useState("");
-  const [soulPrompt, setSoulPrompt] = useState("");
   const [skillIds, setSkillIds] = useState<string[]>([]);
   const [maxSteps, setMaxSteps] = useState(20);
   const [maxCostUsd, setMaxCostUsd] = useState(0.5);
@@ -31,14 +30,12 @@ export function AgentsPage() {
     try {
       const agent = await HarnessAgentService.create({
         name,
-        soulPrompt,
         skillIds,
         budget: { maxSteps, maxCostUsd },
         systemPrompt: systemPrompt || null,
       });
       setAgents((a) => [...a, agent]);
       setName("");
-      setSoulPrompt("");
       setSkillIds([]);
       setError(null);
     } catch (e) {
@@ -65,15 +62,6 @@ export function AgentsPage() {
             borderRadius="0"
             borderWidth="0.5px"
             data-testid="agent-name"
-          />
-          <Textarea
-            placeholder="SOUL — the agent's system prompt / investment philosophy"
-            value={soulPrompt}
-            onChange={(e) => setSoulPrompt(e.target.value)}
-            mb={2}
-            borderRadius="0"
-            borderWidth="0.5px"
-            data-testid="agent-soul"
           />
           <Flex gap={4} mb={3}>
             <Box>

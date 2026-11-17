@@ -22,8 +22,6 @@ export interface RunFileConfig {
   model?: string;
   skills?: string[];
   source?: string;
-  /** @deprecated use tools.mcp[].allow; still honored for the voyager entry. */
-  mcpAllow?: string[] | null;
   tools?: ToolSourcesConfig;
   budget?: Partial<Budget>;
 }
@@ -94,7 +92,6 @@ export interface ResolvedRunConfig {
   model: string;
   skills: string[];
   source: string;
-  mcpAllow: string[] | undefined;
   budget: Partial<Budget>;
   tools: ToolSourcesConfig | undefined;
 }
@@ -110,13 +107,11 @@ export function resolveRunConfig(env: NodeJS.ProcessEnv, file: RunFileConfig): R
     maxTokens: firstValue(env.HARNESS_MAX_TOKENS ? Number(env.HARNESS_MAX_TOKENS) : undefined, file.budget?.maxTokens, DEFAULT_BUDGET.maxTokens)!,
   };
   const skillsRaw = firstValue(env.HARNESS_SKILLS, file.skills?.join(","));
-  const mcpAllowRaw = firstValue(file.mcpAllow?.join(","));
   return {
     model: firstValue(env.HARNESS_MODEL, file.model, DEFAULT_MODEL)!,
     // One skill per run — a comma list keeps only its first entry.
     skills: (skillsRaw ?? DEFAULT_SKILLS.join(",")).split(",").map((s) => s.trim()).filter(Boolean).slice(0, 1),
     source: firstValue(env.HARNESS_SOURCE, file.source, "SEC")!.toUpperCase(),
-    mcpAllow: mcpAllowRaw ? mcpAllowRaw.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
     budget,
     tools: file.tools,
   };

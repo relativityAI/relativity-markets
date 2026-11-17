@@ -513,7 +513,9 @@ export default function AgentActivity({
     const connected = useSseTrace(streamUrl, onEvent);
     useEffect(() => {
         if (!active || !startedAt) return;
-        startRef.current = Date.now();
+        // Epoch is the RUN's start, not the moment this component mounted —
+        // otherwise a mid-run mount shows a timer stuck at 00:00.
+        startRef.current = startedAt;
         const tickTimer = () => setElapsed(Math.max(0, Math.floor((Date.now() - startRef.current) / 1000)));
         tickTimer();
         const interval = setInterval(tickTimer, 1000);
@@ -540,12 +542,17 @@ export default function AgentActivity({
                 if (Array.isArray(list) && list.length) {
                     const steps = list.map((t: any) => String(t?.content ?? "")).filter(Boolean);
                     const firstOpen = list.findIndex((t: any) => t?.status !== "completed");
-                    return { steps, activeIndex: firstOpen === -1 ? steps.length : Math.max(0, firstOpen) };
+                    // A finished run can't advance any further — render the last
+                    // known plan as done instead of an eternal spinner on the
+                    // first open item (models often write the plan once and
+                    // never update it).
+                    const activeIndex = !active || firstOpen === -1 ? steps.length : Math.max(0, firstOpen);
+                    return { steps, activeIndex };
                 }
             }
         }
         return null;
-    }, [rows]);
+    }, [rows, active]);
 
     useEffect(() => {
         if (active && scroller.current) {

@@ -1,5 +1,5 @@
 /**
- * Local-first settings store — same signatures as localdb.ts (the legacy
+ * Local-first settings store (the legacy
  * Postgres module), backed by the SQLite file. Keys stay AES-256-GCM
  * encrypted at rest via api/crypto.ts.
  */
@@ -8,7 +8,6 @@ import type { SQLInputValue } from "node:sqlite";
 
 export interface UserSettingsRow {
   user_id: string;
-  voyager_key_encrypted: string | null;
   llm_keys_encrypted: Record<string, string>;
   key_version: number | null;
   defaults_deleted: boolean | null;
@@ -17,12 +16,11 @@ export interface UserSettingsRow {
 
 export async function getUserSettings(userId: string): Promise<UserSettingsRow | null> {
   const row = getSqlite().prepare(
-    "SELECT user_id, voyager_key_encrypted, llm_keys_encrypted, key_version, defaults_deleted, deleted_preset_keys FROM user_settings WHERE user_id = ?",
+    "SELECT user_id, llm_keys_encrypted, key_version, defaults_deleted, deleted_preset_keys FROM user_settings WHERE user_id = ?",
   ).get(userId) as any;
   if (!row) return null;
   return {
     user_id: row.user_id,
-    voyager_key_encrypted: row.voyager_key_encrypted ?? null,
     llm_keys_encrypted: fromJson(row.llm_keys_encrypted, {}) as Record<string, string>,
     key_version: row.key_version ?? null,
     defaults_deleted: row.defaults_deleted == null ? null : !!row.defaults_deleted,

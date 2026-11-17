@@ -14,7 +14,6 @@ export interface HarnessAgent {
   name: string;
   /** The agent's one class/category (services/config/categories.yaml). */
   category?: string;
-  soulPrompt: string;
   skillIds: string[];
   allowedTools: string[];
   modelId: string | null;
@@ -26,7 +25,6 @@ export interface HarnessAgent {
 export interface HarnessAgentInput {
   name: string;
   category?: string;
-  soulPrompt?: string;
   skillIds?: string[];
   allowedTools?: string[];
   modelId?: string | null;
@@ -40,7 +38,6 @@ function toView(a: Record<string, any>): HarnessAgent {
     id: a.id,
     name: a.name,
     category: a.category,
-    soulPrompt: a.soul_prompt ?? "",
     skillIds: a.skill_ids ?? [],
     allowedTools: a.allowed_tools ?? [],
     modelId: a.model_id ?? null,
