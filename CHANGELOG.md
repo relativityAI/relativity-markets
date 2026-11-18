@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.8.1...relativity-markets-v0.9.0) (2026-11-18)
+
+
+### Features
+
+* two-column home, runs insights, lighter console type ([#186](https://github.com/relativityAI/relativity-markets/issues/186)) ([2df4d74](https://github.com/relativityAI/relativity-markets/commit/2df4d7419045720cd18a091f074005543ce8611e))
+
 ## [0.8.1](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.8.0...relativity-markets-v0.8.1) (2026-11-17)
 
 
