@@ -30,7 +30,7 @@ export function SectionSearch({ label, placeholder, value, onChange }: {
         <div data-open={open} className="section-search relative ml-auto flex shrink-0 items-center justify-end">
             <Input
                 ref={ref}
-                className="section-search-field h-9 rounded-[6px] pl-3 pr-9"
+                className="section-search-field h-9 rounded-[6px] border-0! bg-transparent! shadow-none! pl-3 pr-9 text-[15px] font-light"
                 placeholder={placeholder}
                 aria-label={label}
                 aria-hidden={!open}
