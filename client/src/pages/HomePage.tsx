@@ -54,10 +54,12 @@ function verdictColor(verdict?: string | null): string | undefined {
     return undefined;
 }
 
-/** Bare sparkline + day change for the watchlist cards: sits beside the
- *  stock logo, no name label (the card names the stock below). */
-function MiniSpark({ symbol, source }: { symbol: string; source?: string | null }) {
-    const [spark, setSpark] = useState<{ pts: string; color: string; pct: number | null } | null>(null);
+type Spark = { pts: string; color: string; pct: number | null };
+
+/** One intraday sparkline fetch per symbol — shared by the card's chart and
+ *  its % change so the two never drift apart (or double-fetch). */
+function useSpark(symbol: string, source?: string | null): Spark | null {
+    const [spark, setSpark] = useState<Spark | null>(null);
 
     useEffect(() => {
         let alive = true;
@@ -85,18 +87,46 @@ function MiniSpark({ symbol, source }: { symbol: string; source?: string | null 
         return () => { alive = false; };
     }, [symbol, source]);
 
+    return spark;
+}
+
+/** The line itself: logo-height, and preserveAspectRatio=none + non-scaling-
+ *  stroke make it fill whatever width is left instead of letterboxing to the
+ *  100×40 viewBox and rendering tiny. */
+function SparkSvg({ spark }: { spark: Spark }) {
+    return (
+        <svg viewBox="0 0 100 40" preserveAspectRatio="none" className="h-14 w-full min-w-0 flex-1" aria-hidden="true">
+            <polygon points={`0,40 ${spark.pts} 100,40`} fill={spark.color} opacity="0.12" />
+            <polyline
+                points={spark.pts}
+                fill="none"
+                stroke={spark.color}
+                strokeWidth="2"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                vectorEffect="non-scaling-stroke"
+            />
+        </svg>
+    );
+}
+
+function SparkChange({ spark }: { spark: Spark }) {
+    if (spark.pct == null) return null;
+    return (
+        <span className="shrink-0 font-app-tabular text-[11px] font-medium" style={{ color: spark.color }}>
+            {spark.pct > 0 ? "+" : ""}{spark.pct.toFixed(2)}%
+        </span>
+    );
+}
+
+/** Chart + day change on one line — the table view's chart cell. */
+function MiniSpark({ symbol, source }: { symbol: string; source?: string | null }) {
+    const spark = useSpark(symbol, source);
     if (!spark) return null;
     return (
-        <div className="flex min-w-0 flex-1 flex-col items-end gap-0.5">
-            <svg viewBox="0 0 100 40" className="h-10 w-full" aria-hidden="true">
-                <polygon points={`0,40 ${spark.pts} 100,40`} fill={spark.color} opacity="0.12" />
-                <polyline points={spark.pts} fill="none" stroke={spark.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-            </svg>
-            {spark.pct != null && (
-                <span className="font-app-tabular text-[11px] font-medium" style={{ color: spark.color }}>
-                    {spark.pct > 0 ? "+" : ""}{spark.pct.toFixed(2)}%
-                </span>
-            )}
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <SparkSvg spark={spark} />
+            <SparkChange spark={spark} />
         </div>
     );
 }
@@ -147,8 +177,9 @@ type StockRow = { ticker?: string; SYMBOL?: string; name?: string; NAME?: string
 /** Watchlist card: same visual language as the Latest-runs cards — stock
  *  logo on top, name + flag, then the agents that ran on it (compact rows:
  *  small avatar, name, colored verdict, light last-run time). Opens the
- *  symbol's latest run result in a new tab. */
-const WATCH_CARD = "glass-hover w-full max-w-56";
+ *  symbol's latest run result in a new tab. A grid cell, so it is always the
+ *  same width as the add-stock tile next to it. */
+const WATCH_CARD = "glass-hover";
 
 /** The watchlist before SQLite kept only symbols under this localStorage key. */
 const LEGACY_WATCH_KEY = "relativity.watchlist";
@@ -162,6 +193,7 @@ function legacyWatchSymbols(): string[] {
 }
 
 function RunCard({ run, onRemove }: { run: RunCardData; onRemove?: () => void }) {
+    const spark = useSpark(run.symbol, run.source);
     return (
         <Link
             to={run.id ? `/analysis-result/${run.id}` : `/stock/${encodeURIComponent(run.symbol)}?source=${encodeURIComponent(run.source || "")}`}
@@ -182,35 +214,39 @@ function RunCard({ run, onRemove }: { run: RunCardData; onRemove?: () => void })
                 </button>
             )}
             <div className="glass-hover-body flex w-full flex-col gap-2">
-                <div className="flex items-center gap-2">
-                    <TickerLogo symbol={run.symbol} size={72} />
-                    <MiniSpark symbol={run.symbol} source={run.source} />
+                {/* The chart takes every pixel to the right of the logo (pr-9
+                    keeps it clear of the remove button); the % change sits on
+                    the name line below so it can never squeeze the chart. */}
+                <div className="flex items-center gap-2 pr-9">
+                    <TickerLogo symbol={run.symbol} size={56} />
+                    {spark && <SparkSvg spark={spark} />}
                 </div>
                 <div className="flex items-center gap-1.5 pr-5">
-                    <span className="min-w-0 flex-1 truncate font-app-body text-[16px] font-light leading-tight text-[var(--ink-primary)]">
+                    <span className="min-w-0 flex-1 truncate font-app-body text-[14px] font-light leading-tight text-[var(--ink-primary)]">
                         {run.share_name || run.symbol}
                     </span>
-                    {run.source && <span className="shrink-0 text-[14px] leading-none">{flag(run.source)}</span>}
+                    {spark && <SparkChange spark={spark} />}
+                    {run.source && <span className="shrink-0 text-[13px] leading-none">{flag(run.source)}</span>}
                 </div>
-                <div className="flex flex-col gap-1.5 pt-1">
+                <div className="flex flex-col gap-1 pt-1">
                     {run.agents.length === 0 && (
                         <span className="font-app-body text-[12px] font-normal text-[var(--ink-tertiary)]">No runs yet</span>
                     )}
                     {run.agents.map((a, i) => (
-                        <div key={i} className="flex items-center gap-2.5">
-                            <AgentAvatar agent={a.agent || "Agent"} size={28} />
-                            <span className="min-w-0 flex-1 truncate font-app-body text-[13px] font-normal text-[var(--ink-secondary)]">
+                        <div key={i} className="flex items-center gap-2">
+                            <AgentAvatar agent={a.agent || "Agent"} size={24} />
+                            <span className="min-w-0 flex-1 truncate font-app-body text-[12px] font-normal text-[var(--ink-secondary)]">
                                 {a.agent}
                             </span>
                             {a.verdict && (
                                 <span
-                                    className="shrink-0 font-app-body text-[13px] font-normal"
+                                    className="shrink-0 font-app-body text-[12px] font-normal"
                                     style={{ color: verdictColor(a.verdict) || "var(--ink-primary)" }}
                                 >
                                     {a.verdict}
                                 </span>
                             )}
-                            <span className="w-16 shrink-0 text-right font-app-body text-[11px] font-normal text-[var(--ink-tertiary)]">
+                            <span className="w-14 shrink-0 text-right font-app-body text-[11px] font-normal text-[var(--ink-tertiary)]">
                                 {a.when}
                             </span>
                         </div>
@@ -419,11 +455,12 @@ function WatchlistSection({ runs }: { runs: any[] }) {
         : `/stock/${encodeURIComponent(card.symbol)}?source=${encodeURIComponent(card.source || "")}`;
 
     const addStockBox = (
-        <div ref={searchRef} className="w-56 max-w-full">
+        // Plain grid cell: the tile is exactly one card wide, never a full row.
+        <div ref={searchRef} className="w-full">
             {!adding ? (
                 <button
                     type="button" onClick={() => setAdding(true)}
-                    className="flex min-h-[168px] w-full flex-col items-center justify-center gap-2 rounded-[10px] border border-dashed border-[var(--hairline)] text-[var(--ink-tertiary)] transition-colors hover:border-[var(--ink-tertiary)] hover:text-[var(--ink-primary)]"
+                    className="flex h-full min-h-[140px] w-full flex-col items-center justify-center gap-2 rounded-[10px] border border-dashed border-[var(--hairline)] text-[var(--ink-tertiary)] transition-colors hover:border-[var(--ink-tertiary)] hover:text-[var(--ink-primary)]"
                 >
                     <Plus size={20} />
                     <span className="font-app-body text-[13px]">{active?.items.length ? "Add stock" : "Add your first stock"}</span>
@@ -474,14 +511,14 @@ function WatchlistSection({ runs }: { runs: any[] }) {
 
     return (
         <section className="pb-12">
-            {/* Title, picker and Add sit on the left; view toggle and row actions
-                on the right. The tab strip scrolls inside the left group, so a
-                growing number of watchlists never pushes the right controls off. */}
-            <div className="flex items-center gap-3">
-                <div className="flex min-w-0 flex-1 items-center gap-3">
-                    <h2 className={`${SECTION_TITLE} shrink-0 whitespace-nowrap`}>Watchlist</h2>
+            {/* Title on its own line; tabs, picker and actions share the next
+                one — a narrow column can't hold them all in a single row. */}
+            <div className="flex flex-col gap-2.5">
+                <h2 className={SECTION_TITLE}>Watchlist</h2>
 
-                    {loading ? (
+                <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                        {loading ? (
                         <div role="status" aria-label="Loading watchlists" className="flex h-8 items-center gap-2 text-[var(--ink-tertiary)]">
                             <Loader2 size={16} className="animate-spin" />
                             <span className="font-app-body text-[13px]">Loading watchlists…</span>
@@ -545,19 +582,19 @@ function WatchlistSection({ runs }: { runs: any[] }) {
                             type="single" value={viewMode}
                             onValueChange={(v) => { if (v === "cards" || v === "table") setViewMode(v); }}
                             aria-label="Watchlist view"
-                            className="h-8 shrink-0 gap-0.5 rounded-[6px] border border-[var(--hairline)] bg-transparent p-0.5"
+                            className="h-8 shrink-0 gap-1 rounded-xl border-0 bg-console-recessed p-1"
                         >
                             <ToggleGroupItem
                                 value="cards" aria-label="Card view" title="Card view"
-                                className="h-7 w-8 rounded-[4px] text-[var(--ink-tertiary)] hover:bg-transparent data-[state=on]:bg-[var(--surface-recessed)] data-[state=on]:text-[var(--ink-primary)] data-[state=on]:shadow-none"
+                                className="h-6 w-7 flex-none rounded-[8px] border-0 px-0 text-console-ink-3 hover:bg-console-surface/60 hover:text-console-ink data-[state=on]:bg-console-surface data-[state=on]:text-console-ink data-[state=on]:shadow-none"
                             >
-                                <LayoutGrid size={15} aria-hidden="true" />
+                                <LayoutGrid className="size-3.5" aria-hidden="true" />
                             </ToggleGroupItem>
                             <ToggleGroupItem
                                 value="table" aria-label="Table view" title="Table view"
-                                className="h-7 w-8 rounded-[4px] text-[var(--ink-tertiary)] hover:bg-transparent data-[state=on]:bg-[var(--surface-recessed)] data-[state=on]:text-[var(--ink-primary)] data-[state=on]:shadow-none"
+                                className="h-6 w-7 flex-none rounded-[8px] border-0 px-0 text-console-ink-3 hover:bg-console-surface/60 hover:text-console-ink data-[state=on]:bg-console-surface data-[state=on]:text-console-ink data-[state=on]:shadow-none"
                             >
-                                <Table2 size={15} aria-hidden="true" />
+                                <Table2 className="size-3.5" aria-hidden="true" />
                             </ToggleGroupItem>
                         </ToggleGroup>
                         <button
@@ -574,6 +611,7 @@ function WatchlistSection({ runs }: { runs: any[] }) {
                         </button>
                     </div>
                 )}
+                </div>
             </div>
 
             {loadError && !loading && (
@@ -583,7 +621,10 @@ function WatchlistSection({ runs }: { runs: any[] }) {
             )}
 
             {active && (viewMode === "cards" ? (
-                <div className="mt-3 flex flex-wrap items-start gap-4">
+                // Grid, not flex-wrap: every cell (cards AND the add tile) is
+                // exactly one card wide, full rows reach both edges, and the
+                // add tile can never become a 4th column — 3 max, at any width.
+                <div className="mt-3 grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3">
                     {cardsFor(active).map((card) => (
                         <RunCard
                             key={`${card.symbol}-${card.source || ""}`} run={card}
@@ -737,16 +778,102 @@ export default function HomePage() {
     return (
         <div className="min-h-full bg-[var(--surface-canvas)] text-[var(--ink-primary)]">
             <div>
-                {/* Hero — tagline left, latest runs right (index charts live in the navbar) */}
-                <div className="flex flex-wrap items-start justify-between gap-x-16 gap-y-8 pt-7">
-                    <div>
-                        <h1 ref={titleRef} className="w-fit max-w-full font-[family-name:var(--font-display)] text-[clamp(1.5rem,3vw,2rem)] leading-none font-light tracking-[-0.02em] text-[var(--ink-primary)]">
-                            Agents watch the market, you watch the agents.
-                        </h1>
-                        <p style={{ maxWidth: titleWidth }} className="mt-3 text-sm font-[family-name:var(--font-body)] font-[200] text-[var(--ink-secondary)] leading-relaxed">
-                            Relativity agents evaluate stocks and markets against a specific investment thesis. Every agent's reasoning and verdict is supported by citations to official data sources.
-                        </p>
+                {/* Two columns: tagline → active agents → latest runs on the
+                    left, watchlist (min two cards wide) on the right. Below lg
+                    they stack in reading order, text first. */}
+                <div className="flex flex-wrap items-start gap-x-10 gap-y-10 pt-7">
+                    {/* Right column — watchlist, always room for two cards. */}
+                    <div className="order-2 w-full min-w-0 flex-1 lg:min-w-[464px]">
+                        {/* Watchlist — named lists with pill-tab switching */}
+                        <WatchlistSection runs={runs} />
                     </div>
+
+                    {/* ponytail: fixed left rail — 360px leaves the watchlist
+                        600px+ from 1024 up; 440px from 1280. */}
+                    <div className="order-1 flex w-full flex-col gap-12 pb-12 lg:w-[360px] lg:shrink-0 xl:w-[440px]">
+                        <div>
+                            <h1 ref={titleRef} className="w-fit max-w-full font-[family-name:var(--font-display)] text-[clamp(1.5rem,3vw,2rem)] leading-none font-light tracking-[-0.02em] text-[var(--ink-primary)]">
+                                Agents watch the market, you watch the agents.
+                            </h1>
+                            <p style={{ maxWidth: titleWidth }} className="mt-3 text-sm font-[family-name:var(--font-body)] font-[200] text-[var(--ink-secondary)] leading-relaxed">
+                                Relativity agents evaluate stocks and markets against a specific investment thesis. Every agent's reasoning and verdict is supported by citations to official data sources.
+                            </p>
+                        </div>
+
+                        {/* Active Agents */}
+                        <HomeSection
+                            title="Active Agents"
+                            empty={activeCards.length === 0}
+                            emptyTo="/new-analysis"
+                            emptyIcon={Clock}
+                            emptyLabel="Schedule an agent run"
+                        >
+                            {activeCards.length > 0 && (
+                                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+                                    {activeCards.map(({ schedule: s, agent, last }) => {
+                                        const verdict = last ? (last.verdict || last.status || "") : "";
+                                        const vColor = verdictColor(verdict);
+                                        return (
+                                        <Link
+                                            key={s.id}
+                                            to="/new-analysis"
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            data-solid=""
+                                            className={CARD}
+                                        >
+                                            {/* Header: avatar, who + what it runs on, verdict chip. */}
+                                            <div className="glass-hover-body flex w-full flex-col">
+                                                <div className="flex items-center gap-3">
+                                                    <AgentAvatar
+                                                        agent={agent?.name || s.agent_id || "Agent"}
+                                                        size={64}
+                                                        label={agent?.name}
+                                                    />
+                                                    <div className="min-w-0 flex-1 py-2.5">
+                                                        <div className="truncate font-app-body text-[15px] font-light leading-tight text-[var(--ink-primary)]">
+                                                            {agent?.name || s.agent_id || "Scheduled agent"}
+                                                        </div>
+                                                        <div className="mt-1 truncate font-app-body text-[11px] font-normal text-[var(--ink-tertiary)]">
+                                                            {s.symbol
+                                                                ? `Runs on ${flag(s.source)} ${s.symbol} · ${String(s.source).toUpperCase() === "NSE" ? "Indian equities" : "US equities"}`
+                                                                : "General"}
+                                                        </div>
+                                                    </div>
+                                                    {verdict && (
+                                                        <span
+                                                            className="mr-3 shrink-0 rounded-full px-2 py-0.5 font-app-body text-[11px] font-medium"
+                                                            style={{
+                                                                color: vColor || "var(--ink-secondary)",
+                                                                background: `color-mix(in srgb, ${vColor || "var(--ink-secondary)"} 14%, transparent)`,
+                                                            }}
+                                                        >
+                                                            {verdict}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {/* Footer: schedule and last run, split by a full-bleed rule. */}
+                                                <div className="flex items-center justify-between gap-3 border-t border-[var(--hairline)] px-3 py-2 font-app-body text-[11px] font-normal text-[var(--ink-tertiary)]">
+                                                    <span
+                                                        className="flex min-w-0 items-center gap-1.5 truncate"
+                                                        title={`Daily ${s.time} (${s.timezone})`}
+                                                    >
+                                                        <Clock size={12} className="shrink-0" aria-hidden="true" />
+                                                        Daily {s.time} ({s.timezone})
+                                                    </span>
+                                                    <span className="shrink-0">
+                                                        {last ? `Last run ${timeAgo(last.created_at)}` : "No runs yet"}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <OpenCue />
+                                        </Link>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </HomeSection>
+
                     {/* Latest runs — small vertical cards, last one is View all */}
                     <HomeSection
                         title="Latest runs"
@@ -818,64 +945,8 @@ export default function HomePage() {
                             </div>
                         )}
                     </HomeSection>
+                    </div>
                 </div>
-
-                <div className="mt-12 max-w-[568px] pb-12">
-                        {/* Active Agents */}
-                        <HomeSection
-                            title="Active Agents"
-                            empty={activeCards.length === 0}
-                            emptyTo="/new-analysis"
-                            emptyIcon={Clock}
-                            emptyLabel="Schedule an agent run"
-                        >
-                            {activeCards.length > 0 && (
-                                <div className="grid gap-4 md:grid-cols-2">
-                                    {activeCards.map(({ schedule: s, agent, last }) => (
-                                        <Link
-                                            key={s.id}
-                                            to="/new-analysis"
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            data-solid=""
-                                            className={CARD}
-                                        >
-                                            <div className="glass-hover-body flex w-full items-center gap-3">
-                                                <AgentAvatar
-                                                    agent={agent?.name || s.agent_id || "Agent"}
-                                                    size={112}
-                                                    label={agent?.name}
-                                                />
-                                                <div className="min-w-0 flex-1">
-                                                    <div className="truncate font-app-body text-[16px] font-light leading-tight text-[var(--ink-primary)]">
-                                                        {agent?.name || s.agent_id || "Scheduled agent"}
-                                                    </div>
-                                                    <div className="mt-1.5 flex flex-col gap-1 font-app-body text-[12px] font-normal text-[var(--ink-tertiary)]">
-                                                        {s.symbol ? (
-                                                            <span className="truncate">
-                                                                Runs on {flag(s.source)} {s.symbol} · {String(s.source).toUpperCase() === "NSE" ? "Indian equities" : "US equities"}
-                                                            </span>
-                                                        ) : (
-                                                            <span>General</span>
-                                                        )}
-                                                        <span className="flex items-center gap-1.5">
-                                                            <Clock size={13} /> Daily {s.time} ({s.timezone})
-                                                        </span>
-                                                        <span>Last run {last ? timeAgo(last.created_at) : "no runs yet"}</span>
-                                                        <span>Verdict {last ? (last.verdict || last.status || "no verdict yet") : "no verdict yet"}</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <OpenCue />
-                                        </Link>
-                                    ))}
-                                </div>
-                            )}
-                        </HomeSection>
-                </div>
-
-                {/* Watchlist — named lists with pill-tab switching */}
-                <WatchlistSection runs={runs} />
 
                 {/* Footer */}
                 <footer className="py-8 border-t border-[var(--hairline)]">
