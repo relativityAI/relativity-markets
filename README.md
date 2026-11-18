@@ -22,6 +22,12 @@
 
 ---
 
+<p align="center">
+  <video src="assets/relativity-demo.mp4" controls muted playsinline width="100%">
+    <a href="assets/relativity-demo.mp4">Watch the Relativity demo</a>
+  </video>
+</p>
+
 ## Table of Contents
 
 1. [Prerequisites](#prerequisites)
