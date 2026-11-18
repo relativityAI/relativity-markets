@@ -68,15 +68,23 @@ const wrap = (n: React.ReactNode) => (
 );
 
 describe("home watchlists", () => {
-  it("starts the tagline level with the Latest runs title", async () => {
+  it("stacks tagline, Active Agents and Latest runs in one rail beside the watchlist", async () => {
     render(wrap(<HomePage />));
     const tagline = screen.getByRole("heading", { level: 1 });
-    const latestRuns = screen.getByRole("heading", { name: "Latest runs" });
+    const rail = tagline.parentElement!.parentElement!;
 
-    // Both blocks are the top-level children of the same hero flex row.
-    const hero = latestRuns.closest("section")!.parentElement;
-    expect(tagline.parentElement!.parentElement).toBe(hero);
-    expect(hero!.className).toContain("items-start");
+    // Every right-hand block lives in the same column…
+    for (const name of ["Active Agents", "Latest runs"]) {
+      const section = screen.getByRole("heading", { name }).closest("section")!;
+      expect(section.parentElement).toBe(rail);
+    }
+    expect(rail.className).toContain("flex-col");
+
+    // …and the watchlist is the sibling column of that two-column row.
+    const watchlist = screen.getByRole("heading", { name: "Watchlist" }).closest("section")!;
+    expect(watchlist.parentElement).not.toBe(rail);
+    expect(watchlist.parentElement!.parentElement).toBe(rail.parentElement);
+    expect(rail.parentElement!.className).toContain("items-start");
     expect(tagline.className).toContain("leading-none");
   });
 
@@ -244,22 +252,26 @@ describe("home watchlists", () => {
     expect(section.getByText("Apple Inc.")).toBeTruthy();
   });
 
-  it("splits the header into a left title/picker/add group and a right toggle/edit/delete group", async () => {
+  it("keeps the Watchlist title on its own line, tabs and actions on the next one", async () => {
     render(wrap(<HomePage />));
     const tab = await screen.findByRole("tab", { name: /my watchlist/i });
     const title = screen.getByRole("heading", { name: "Watchlist" });
-    const left = title.parentElement!;
-    const header = left.parentElement!;
 
-    // Left group keeps title, tabs and Add on one row; min-w-0 lets the tab
-    // strip scroll when many watchlists exist instead of pushing the right side.
+    // Title is a line of its own; the row below holds tabs on the left…
+    const stack = title.parentElement!;
+    expect(stack.className).toContain("flex-col");
+    const header = stack.children[1] as HTMLElement;
+    expect(header).toBeTruthy();
+    expect(header.contains(title)).toBe(false);
     expect(header.className).toContain("items-center");
+
+    const left = header.children[0];
     expect(left.className).toContain("min-w-0");
     expect(left.className).toContain("flex-1");
     expect(left.contains(tab)).toBe(true);
     expect(left.querySelector('[aria-label="Add watchlist"]')).toBeTruthy();
 
-    // Right group is pinned and ordered toggle, edit, delete.
+    // …and the pinned right group, ordered toggle, edit, delete.
     const right = [...header.children].find((c) => c.querySelector('[aria-label="Watchlist view"]'))!;
     expect([...right.children].map((c) => c.getAttribute("aria-label"))).toEqual([
       "Watchlist view", "Rename watchlist", "Delete watchlist",

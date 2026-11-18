@@ -7,7 +7,6 @@ import SkillAvatar from "@/components/shared/SkillAvatar";
 import SkillWorkspace from "@/components/skills/SkillWorkspace";
 import SkillImportPane from "@/components/skills/SkillImportPane";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { toaster } from "@/compat/ui";
 import { SkillSourceBadge } from "@/components/console/SkillSourceBadge";
@@ -26,7 +25,8 @@ import { cn } from "@/lib/utils";
 type Mode = "inspect" | "create" | "download";
 
 /** One bordered, rounded list panel — default skills, my skills. */
-const SECTION_BOX = "rounded-xl border-[0.5px] border-[color:var(--hairline)] bg-console-surface/60 p-5";
+/** Sections sit straight on the canvas — no box, no border, no fill. */
+const SECTION_BOX = "";
 
 /** Fixed height: filtering never grows or shrinks the section. */
 /** Mobile: hug the listed rows, capped. Laptop (md+): the original fixed
@@ -112,18 +112,18 @@ export default function AgentSkills() {
         >
             <SkillAvatar skill={s} size={48} round />
             <span className="flex min-w-0 shrink flex-col gap-1">
-                <span className="block truncate font-app-display text-[22px] font-normal leading-[1.1] tracking-[-0.015em] text-console-ink">
+                <span className="block truncate font-app-body text-[18px] leading-tight font-light text-console-ink">
                     {s.name}
                 </span>
-                <span className="block font-app-body text-[12px] font-normal text-console-ink-4">
+                <span className="block font-app-body text-[13px] font-light text-console-ink-4">
                     Created {formatDate(s.created_at)}
                 </span>
                 {s.tags?.length ? (
                     <span className="flex flex-wrap gap-1.5">
                         {s.tags.map((t) => (
-                            <Badge key={t} className="bg-console-recessed font-app-body text-[11px] font-normal text-console-ink-2">
+                            <span key={t} className="font-app-body text-[13px] font-light text-console-ink-3">
                                 {t}
-                            </Badge>
+                            </span>
                         ))}
                     </span>
                 ) : null}
@@ -172,7 +172,7 @@ export default function AgentSkills() {
                             <h2 className="font-app-body text-[20px] leading-none font-light tracking-tight text-console-ink">
                                 Default skills
                             </h2>
-                            <p className="mt-1.5 flex items-center gap-1.5 font-app-body text-[12px] font-normal text-console-ink-3">
+                            <p className="mt-1.5 flex items-center gap-1.5 font-app-body text-[13px] font-light text-console-ink-3">
                                 Relativity verified skills
                                 <BadgeCheck className="size-3.5 shrink-0 text-console-accent" aria-hidden />
                             </p>
@@ -193,7 +193,7 @@ export default function AgentSkills() {
                             <h2 className="font-app-body text-[20px] leading-none font-light tracking-tight text-console-ink">
                                 My skills
                             </h2>
-                            <p className="mt-1.5 font-app-body text-[12px] font-normal text-console-ink-3">
+                            <p className="mt-1.5 font-app-body text-[13px] font-light text-console-ink-3">
                                 Your own — click one to edit.
                             </p>
                         </div>
@@ -235,14 +235,14 @@ export default function AgentSkills() {
                             variant="ghost"
                             size="sm"
                             onClick={startDownload}
-                            className="bg-transparent font-normal text-console-accent hover:bg-transparent hover:text-console-ink!"
+                            className="bg-transparent font-light text-console-accent hover:bg-transparent hover:text-console-ink!"
                         >
                             <Globe /> Download skills
                         </Button>
                     </div>
                 )}
             </div>
-            <p className="mt-2 font-app-body text-[13px] font-normal text-console-ink-3">
+            <p className="mt-2 font-app-body text-[13px] font-light text-console-ink-3">
                 Add on capabilities for your agents.
             </p>
 
@@ -271,7 +271,7 @@ export default function AgentSkills() {
                                 setSearchParams({ skill: skill.id }, { replace: true });
                             }}
                             asideHeader={
-                                <DialogTitle className="truncate font-app-display text-[16px] font-normal text-console-ink">
+                                <DialogTitle className="truncate font-app-body text-[17px] font-light text-console-ink">
                                     New skill
                                 </DialogTitle>
                             }
@@ -289,7 +289,7 @@ export default function AgentSkills() {
                             asideHeader={
                                 <div className="flex items-center gap-2">
                                     <SkillAvatar skill={selected} size={26} round />
-                                    <DialogTitle className="min-w-0 flex-1 truncate font-app-display text-[15px] font-normal text-console-ink">
+                                    <DialogTitle className="min-w-0 flex-1 truncate font-app-body text-[16px] font-light text-console-ink">
                                         {selected.name}
                                     </DialogTitle>
                                     <SkillSourceBadge source={selected.source} />

@@ -42,7 +42,7 @@ services:
     entrypoint:
       - python
       - -c
-      - "from yfmcp.server import mcp; mcp.settings.host='0.0.0.0'; mcp.run(transport='streamable-http')"
+      - "from yfmcp.server import mcp; mcp.settings.host='0.0.0.0'; mcp.settings.transport_security.enable_dns_rebinding_protection=False; mcp.run(transport='streamable-http')"
     restart: unless-stopped
 
   # searxng-mcp — the agent's web-search toolbox, in front of the searxng
@@ -68,6 +68,10 @@ services:
     build:
       context: ./docker/tradingview-mcp
     image: relativity/tradingview-mcp:0.8.1
+    command:
+      - python
+      - -c
+      - "from tradingview_mcp.server import mcp; mcp.settings.host='0.0.0.0'; mcp.settings.port=8000; mcp.settings.transport_security.enable_dns_rebinding_protection=False; mcp.run(transport='streamable-http')"
     ports:
       - "127.0.0.1:8006:8000"
     environment:

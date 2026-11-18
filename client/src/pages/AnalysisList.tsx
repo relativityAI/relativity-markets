@@ -1,29 +1,29 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { MdArrowUpward, MdArrowDownward, MdExpandMore, MdChevronRight } from "react-icons/md";
 import { AnalysisService, AgentService, SkillService } from "@/db";
 import { agentDisplayName } from "@/utils";
 import AgentAvatar from "@/components/shared/AgentAvatar";
+import RunsInsights from "@/components/RunsInsights";
 import { HarnessAgentService } from "@/lib/harnessAgents";
 import { ModelLogo } from "@/lib/modelLogos";
-import { SourceMark, TickerLogo } from "@/lib/sourceLogos";
+import { TickerLogo } from "@/lib/sourceLogos";
 import { motion, AnimatePresence } from "motion/react";
 import { stagger, staggerItem } from "@/lib/motion";
 import { Button } from "@/components/ui/button";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuLabel,
+    DropdownMenuItem,
+    DropdownMenuRadioGroup,
+    DropdownMenuRadioItem,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { cn } from "@/lib/utils";
-import { verdictForScore } from "@/lib/analysisFormat";
-import { Plus, Search } from "lucide-react";
-
-/** Harness quality verdicts (CLI's five-band grade) → the table's signal dot. */
-const QUALITY_SIGNAL: Record<string, "positive" | "caution" | "negative"> = {
-    "Very Poor": "negative",
-    "Poor": "negative",
-    "Fair": "caution",
-    "Good": "positive",
-    "Excellent": "positive",
-};
+import { runVerdict } from "@/lib/analysisFormat";
+import { Calendar, ChevronDown, Clock, MoreHorizontal, Plus, Search } from "lucide-react";
 
 type SortKey = "share" | "created_at" | "score" | "status" | "agent" | "model" | "duration";
 
@@ -37,18 +37,6 @@ interface AnalysisItem {
     agent?: string;
 }
 
-function scoreSignal(score: number): "positive" | "caution" | "negative" {
-    if (score >= 70) return "positive";
-    if (score >= 40) return "caution";
-    return "negative";
-}
-
-function signalColor(signal: "positive" | "caution" | "negative"): string {
-    if (signal === "positive") return "var(--signal-positive)";
-    if (signal === "caution") return "var(--signal-caution)";
-    return "var(--signal-negative)";
-}
-
 function formatDuration(sec: number): string {
     if (sec == null) return "";
     if (sec >= 60) {
@@ -59,26 +47,17 @@ function formatDuration(sec: number): string {
     return `${sec.toFixed(1)}s`;
 }
 
-function timeAgo(dateStr: string): string {
-    if (!dateStr) return "";
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "just now";
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    const days = Math.floor(hrs / 24);
-    if (days < 30) return `${days}d ago`;
-    return new Date(dateStr).toLocaleDateString();
-}
-
-/** Insight labels: light Anek Latin, sentence case — no caps, no box. */
-function SectionLabel({ children }: { children: React.ReactNode }) {
-    return (
-        <div className="font-app-body text-[12.5px] leading-none font-light text-[var(--ink-secondary)]">
-            {children}
-        </div>
-    );
+/** GitHub-style absolute stamp: "Today, 8:00 PM" / "Nov 14, 9:12 AM". */
+function whenLabel(dateStr: string): string {
+    const d = new Date(dateStr);
+    if (isNaN(+d)) return "—";
+    const now = new Date();
+    const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diff = Math.round((startOf(now) - startOf(d)) / 86400000);
+    const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    if (diff === 0) return `Today, ${time}`;
+    if (diff === 1) return `Yesterday, ${time}`;
+    return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${time}`;
 }
 
 /** Two loading states use it; not worth a shadcn wrapper. */
@@ -91,76 +70,159 @@ function Spinner({ className }: { className?: string }) {
     );
 }
 
-/** Dotted legend under the run-health strip; counts live in the SVG tooltip. */
-function DotLegend({ items }: { items: { key: string; label: string; color: string; title?: string }[] }) {
-    return (
-        <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1.5">
-            {items.map((it) => (
-                <div key={it.key} className="flex min-w-0 max-w-[112px] items-center gap-1.5">
-                    <span
-                        className="size-[7px] shrink-0 rounded-full"
-                        style={{ background: it.color }}
-                    />
-                    <span
-                        title={it.title ?? it.label}
-                        className="truncate font-app-body text-[11px] font-light text-[var(--ink-secondary)]"
-                    >
-                        {it.label}
-                    </span>
-                </div>
-            ))}
-        </div>
-    );
-}
+type GroupMode = "individual" | "date" | "agent" | "stock" | "model";
 
 /**
- * One row of a horizontal SVG bar chart: mark on the left, count on the right,
- * the long label only on hover (and to screen readers). The bar is a plain SVG
- * rect stretched to the row — no chart library, colours come from CSS vars.
+ * GitHub's run status glyph: filled check-circle for a completed run,
+ * filled x-circle for a failure, an open dashed ring while running.
  */
-function BarRow({
-    logo,
-    label,
-    extra,
-    value,
-    max,
-}: {
-    logo: React.ReactNode;
-    /** Full name shown on hover + as visually-hidden text. */
-    label: string;
-    /** Extra mark for the hover chip (e.g. the exchange icon). */
-    extra?: React.ReactNode;
-    value: number;
-    max: number;
-}) {
-    const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
+function StatusGlyph({ status }: { status: string }) {
+    if (status === "error" || status === "failed") {
+        return (
+            <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                className="text-[var(--gh-red)]"
+                role="img"
+                aria-label="Failed"
+            >
+                <circle cx="8" cy="8" r="7" fill="currentColor" />
+                <path
+                    d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8"
+                    stroke="#fff"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                />
+            </svg>
+        );
+    }
+    if (status === "complete" || status === "completed" || status === "success") {
+        return (
+            <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                className="text-[var(--gh-green)]"
+                role="img"
+                aria-label="Completed"
+            >
+                <circle cx="8" cy="8" r="7" fill="currentColor" />
+                <path
+                    d="M5 8.2l2 2 4-4.4"
+                    stroke="#fff"
+                    strokeWidth="1.6"
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                />
+            </svg>
+        );
+    }
     return (
-        <div className="group relative flex items-center gap-2.5 py-1">
-            <span className="flex w-4 shrink-0 justify-center">{logo}</span>
-            <div className="h-2.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--surface-recessed)]" aria-hidden="true">
-                <div className="h-full rounded-full bg-[var(--accent-primary)]" style={{ width: `${pct}%` }} />
-            </div>
-            <span className="w-5 shrink-0 text-right font-app-tabular text-[11px] tabular-nums text-[var(--ink-secondary)]">
-                {value}
-            </span>
-            <span className="sr-only">{label}</span>
-            <div className="pointer-events-none absolute right-0 bottom-full z-10 mb-1.5 hidden items-center gap-1.5 whitespace-nowrap border border-[var(--hairline)] bg-[var(--surface-canvas)] px-2 py-1 text-[11.5px] text-[var(--ink-primary)] shadow-sm group-hover:flex">
-                <span className="truncate">{label}</span>
-                {extra}
-            </div>
-        </div>
+        <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            className="text-[var(--gh-amber)]"
+            role="img"
+            aria-label="Running"
+        >
+            <circle
+                cx="8"
+                cy="8"
+                r="6.2"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeDasharray="7 5"
+                strokeLinecap="round"
+            />
+        </svg>
     );
 }
-
-type GroupMode = "individual" | "date" | "agent" | "stock" | "model";
 
 const GROUP_VIEWS: { key: GroupMode; label: string }[] = [
     { key: "individual", label: "All runs" },
-    { key: "date", label: "By date" },
-    { key: "agent", label: "By agent" },
-    { key: "stock", label: "By stock" },
-    { key: "model", label: "By model" },
+    { key: "date", label: "Date" },
+    { key: "agent", label: "Agent" },
+    { key: "stock", label: "Stock" },
+    { key: "model", label: "Model" },
 ];
+
+/** Sort options behind the header's Sort button (the GitHub filter-button row
+    replaced the sortable column headers). */
+const SORTS: { key: string; label: string; k: SortKey; dir: "asc" | "desc" }[] = [
+    { key: "newest", label: "Newest first", k: "created_at", dir: "desc" },
+    { key: "oldest", label: "Oldest first", k: "created_at", dir: "asc" },
+    { key: "longest", label: "Longest run", k: "duration", dir: "desc" },
+    { key: "highest", label: "Highest score", k: "score", dir: "desc" },
+    { key: "lowest", label: "Lowest score", k: "score", dir: "asc" },
+    { key: "share", label: "Share A–Z", k: "share", dir: "asc" },
+];
+
+/** Sentinel radio value for "no filter". */
+const ALL = "all";
+
+/** Sorted unique labels for the header filter menus. */
+const uniq = (xs: (string | null | undefined)[]) =>
+    Array.from(new Set(xs.filter((x): x is string => Boolean(x)))).sort();
+
+/** GitHub's header control: label (or "Label: value" when set) + chevron. */
+function MenuButton({
+    label,
+    value,
+    items,
+    onChange,
+    align = "start",
+    showAll = true,
+    def = ALL,
+}: {
+    label: string;
+    value: string;
+    items: { value: string; label: string }[];
+    onChange: (v: string) => void;
+    align?: "start" | "end";
+    /** Render the "All" sentinel item (filters). Sort/Group supply their own. */
+    showAll?: boolean;
+    /** Value considered "not set" — never painted blue. */
+    def?: string;
+}) {
+    const active = value !== ALL && value !== def;
+    return (
+        <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+                <button
+                    type="button"
+                    className={cn(
+                        "inline-flex items-center gap-1 text-[14px] font-light transition-colors outline-none",
+                        active ? "text-[var(--gh-blue)]" : "text-[var(--gh-fg)] hover:text-[var(--gh-blue)]"
+                    )}
+                >
+                    <span className="truncate max-w-[220px]">
+                        {active ? `${label}: ${items.find((i) => i.value === value)?.label ?? value}` : label}
+                    </span>
+                    <ChevronDown className="size-3.5 shrink-0 text-[var(--gh-muted)]" aria-hidden />
+                </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align={align} className="min-w-[180px]">
+                <DropdownMenuLabel className="text-[12px] text-[var(--gh-muted)]">{label}</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={value} onValueChange={onChange}>
+                    {showAll && (
+                        <DropdownMenuRadioItem value={ALL} className="text-[14px]">
+                            All
+                        </DropdownMenuRadioItem>
+                    )}
+                    {items.map((i) => (
+                        <DropdownMenuRadioItem key={i.value} value={i.value} className="text-[14px]">
+                            {i.label}
+                        </DropdownMenuRadioItem>
+                    ))}
+                </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+        </DropdownMenu>
+    );
+}
 
 function groupAverage(items: any[]): number | null {
     const v = items.map((i) => i.total_score).filter((x: any) => typeof x === "number");
@@ -198,27 +260,27 @@ function GroupHeaderRow({
 }) {
     return (
         <tr
-            className="cursor-pointer bg-[var(--surface-recessed)]"
+            className="cursor-pointer transition-colors hover:bg-[var(--surface-recessed)]"
             onClick={onToggle}
             aria-expanded={expanded}
         >
-            <td colSpan={8} className="px-4 py-2">
+            <td colSpan={5} className="pt-4 pb-1.5">
                 <div className="flex min-w-0 items-center gap-2">
-                    <span className="flex shrink-0">
-                        {expanded ? (
-                            <MdExpandMore size={15} color="var(--ink-tertiary)" />
-                        ) : (
-                            <MdChevronRight size={15} color="var(--ink-tertiary)" />
+                    <ChevronDown
+                        aria-hidden
+                        className={cn(
+                            "size-4 shrink-0 text-[var(--gh-muted)] transition-transform",
+                            expanded ? "" : "-rotate-90"
                         )}
-                    </span>
+                    />
                     {avatar}
-                    <span className="truncate text-[12.5px] font-semibold text-[var(--ink-primary)]">{label}</span>
-                    <span className="shrink-0 font-app-tabular text-[11px] text-[var(--ink-tertiary)]">
+                    <span className="truncate text-[15px] font-light text-[var(--gh-fg)]">{label}</span>
+                    <span className="shrink-0 text-[13px] font-light text-[var(--gh-muted)] tabular-nums">
                         {count} {count === 1 ? "run" : "runs"}
                     </span>
                     {avg != null && (
-                        <span className="ml-auto shrink-0 font-app-tabular text-[11.5px] tabular-nums text-[var(--ink-secondary)]">
-                            avg score {avg.toFixed(0)}%
+                        <span className="ml-auto shrink-0 text-[13px] font-light text-[var(--gh-muted)] tabular-nums">
+                            avg {avg.toFixed(0)}%
                         </span>
                     )}
                 </div>
@@ -237,8 +299,11 @@ export default function AnalysisList() {
     const [uniqueAnalysis, setUniqueAnalysis] = useState<any[]>([]);
     const [fetchError, setFetchError] = useState(false);
     const [loading, setLoading] = useState(false);
-    const [sortKey, setSortKey] = useState<SortKey | null>("created_at");
-    const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+    // Header controls: sort preset + single-select filters (GitHub's table header).
+    const [sort, setSort] = useState("newest");
+    const [agentFilter, setAgentFilter] = useState(ALL);
+    const [verdictFilter, setVerdictFilter] = useState(ALL);
+    const [statusFilter, setStatusFilter] = useState(ALL);
     const [deleteTarget, setDeleteTarget] = useState<AnalysisItem | null>(null);
     const [agents, setAgents] = useState<any[]>([]);
     const [viewMode, setViewMode] = useState<GroupMode>("individual");
@@ -332,19 +397,13 @@ export default function AnalysisList() {
         }
     };
 
-    const toggleSort = (key: SortKey) => {
-        if (sortKey === key) {
-            setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-        } else {
-            setSortKey(key);
-            setSortDir(key === "created_at" ? "desc" : "asc");
-        }
-    };
+    /** A run's agent as the meta line shows it — also the filter's value. */
+    const runAgentLabel = (a: any) => agentName(a.agent_name || a.agent) || promptName(a.system_prompt);
 
     const sorted = useMemo(() => {
         // Free-text search across share, agent, skill and model.
         const q = query.trim().toLowerCase();
-        const base = q
+        let base = q
             ? uniqueAnalysis.filter((a) =>
                   [
                       a.symbol,
@@ -357,10 +416,15 @@ export default function AnalysisList() {
                   ].some((v) => String(v ?? "").toLowerCase().includes(q))
               )
             : uniqueAnalysis;
-        if (!sortKey) return [...base];
+        if (agentFilter !== ALL) base = base.filter((a) => runAgentLabel(a) === agentFilter);
+        if (verdictFilter !== ALL) base = base.filter((a) => runVerdict(a)?.label === verdictFilter);
+        if (statusFilter !== ALL)
+            base = base.filter((a) => String(a.status || "").toLowerCase() === statusFilter);
+
+        const s = SORTS.find((x) => x.key === sort) ?? SORTS[0];
         return [...base].sort((a, b) => {
             let aVal: any, bVal: any;
-            switch (sortKey) {
+            switch (s.k) {
                 case "share":
                     aVal = (a.symbol || a.share_name || "").toLowerCase();
                     bVal = (b.symbol || b.share_name || "").toLowerCase();
@@ -392,20 +456,25 @@ export default function AnalysisList() {
                 default:
                     return 0;
             }
-            if (aVal < bVal) return sortDir === "asc" ? -1 : 1;
-            if (aVal > bVal) return sortDir === "asc" ? 1 : -1;
+            if (aVal < bVal) return s.dir === "asc" ? -1 : 1;
+            if (aVal > bVal) return s.dir === "asc" ? 1 : -1;
             return 0;
         });
-    }, [uniqueAnalysis, sortKey, sortDir, query, agents, skills, systemPrompts]);
+    }, [uniqueAnalysis, sort, query, agentFilter, verdictFilter, statusFilter, agents, skills, systemPrompts]);
 
-    const SortIcon = ({ column }: { column: SortKey }) => {
-        if (sortKey !== column) return null;
-        return sortDir === "asc" ? (
-            <MdArrowUpward size={11} color="var(--ink-tertiary)" />
-        ) : (
-            <MdArrowDownward size={11} color="var(--ink-tertiary)" />
-        );
-    };
+    // Header filter-menu options, derived from the data actually loaded.
+    const agentOptions = useMemo(
+        () => uniq(uniqueAnalysis.map(runAgentLabel).filter((l) => l && l !== "—")),
+        [uniqueAnalysis, agents, systemPrompts]
+    );
+    const verdictOptions = useMemo(
+        () => uniq(uniqueAnalysis.map((a) => runVerdict(a)?.label ?? null)),
+        [uniqueAnalysis]
+    );
+    const statusOptions = useMemo(
+        () => uniq(uniqueAnalysis.map((a) => String(a.status || "").toLowerCase() || null)),
+        [uniqueAnalysis]
+    );
 
     // Grouped sections for the non-individual views. Within each group the
     // current sort order is preserved; groups themselves sort by name (or
@@ -447,77 +516,7 @@ export default function AnalysisList() {
         [viewMode, sections, expanded]
     );
 
-    const completed = useMemo(() => {
-        // Same status rule the table rows use — verdict-carrying runs with no
-        // numeric score are still completed (the score-based rule painted the
-        // bar all-red).
-        const f = (a: any) => (a.status || "").toLowerCase();
-        return uniqueAnalysis.filter(
-            (a) => f(a) === "complete" || f(a) === "completed" || f(a) === "success",
-        );
-    }, [uniqueAnalysis]);
-
-    const failed = useMemo(() => {
-        const f = (a: any) => (a.status || "").toLowerCase();
-        return uniqueAnalysis.filter((a) => f(a) === "failed" || f(a) === "error");
-    }, [uniqueAnalysis]);
-
-    // Top 5 models by run count, ranked for the bar chart.
-    const modelUsage = useMemo(() => {
-        const map = new Map<string, number>();
-        uniqueAnalysis.forEach((a) => {
-            const m = a.model || "unknown";
-            map.set(m, (map.get(m) || 0) + 1);
-        });
-        return Array.from(map.entries())
-            .map(([model, count]) => ({ model, count }))
-            .sort((a, b) => b.count - a.count)
-            .slice(0, 5);
-    }, [uniqueAnalysis]);
-
-    // Top 5 stocks by run count — the bars rank how often each name is run.
-    // Symbol and exchange ride along for the hover chip (full name, flag,
-    // exchange mark), resolved the same way the navbar does it.
-    const topStocks = useMemo(() => {
-        const map = new Map<string, { label: string; symbol: string; source: string; count: number }>();
-        uniqueAnalysis.forEach((a) => {
-            const label = String(a.share_name || a.symbol || "").trim();
-            if (!label) return;
-            const entry = map.get(label) ?? { label, symbol: "", source: "", count: 0 };
-            entry.count += 1;
-            if (!entry.symbol) {
-                const sym = String(a.symbol || "").trim();
-                if (sym) entry.symbol = sym;
-            }
-            if (!entry.source) {
-                const src = String(a.source || "").trim();
-                if (src) entry.source = src;
-            }
-            map.set(label, entry);
-        });
-        return Array.from(map.values())
-            .sort((a, b) => b.count - a.count)
-            .slice(0, 5);
-    }, [uniqueAnalysis]);
-
-    // Completed vs failed share of all runs; counts live in the tooltip only.
-    const healthTotal = completed.length + failed.length;
-
-    const colSpan = 8;
-
-    /**
-     * Completed vs failed as one stacked bar. No segment labels — the counts
-     * only surface on hover, so the strip stays a shape. The colours are
-     * deliberately punchier than the muted signal tokens: the band has to
-     * read as red and green at a glance.
-     */
-    const healthSegments = useMemo(
-        () => [
-            { name: "Completed", value: completed.length, color: "#16A34A" },
-            { name: "Failed", value: failed.length, color: "#DC2626" },
-        ],
-        [completed, failed]
-    );
+    const colSpan = 5;
 
     const onRowClick = (id: string) => {
         navigate("/analysis-result/" + id);
@@ -532,9 +531,14 @@ export default function AnalysisList() {
              */}
             <div className="flex w-full flex-col gap-6 py-6">
                 <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-                    <h1 className="font-app-body text-[26px] leading-[1.1] font-light tracking-[-0.02em] text-[var(--ink-primary)] md:text-[30px]">
-                        Past Runs
-                    </h1>
+                    <div className="min-w-0">
+                        <h1 className="text-[30px] leading-tight font-light tracking-[-0.01em] text-[var(--gh-fg)]">
+                            Past Runs
+                        </h1>
+                        <p className="mt-0.5 text-[15px] font-light text-[var(--gh-muted)]">
+                            Showing runs from all agents
+                        </p>
+                    </div>
                     <motion.div whileHover={{ y: -1 }} whileTap={{ scale: 0.97 }} className="shrink-0">
                         <Button
                             variant="outline"
@@ -547,185 +551,101 @@ export default function AnalysisList() {
                     </motion.div>
                 </header>
 
+                {/* Search — full width, no box: icon + light large text */}
+                <div className="relative">
+                    <Search
+                        aria-hidden
+                        className="pointer-events-none absolute top-1/2 left-0 size-4 -translate-y-1/2 text-[var(--gh-muted)]"
+                    />
+                    <input
+                        type="text"
+                        placeholder="Search runs"
+                        aria-label="Search runs"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        className="h-9 w-full border-0 bg-transparent py-1 pr-3 pl-6 text-[16px] font-light text-[var(--gh-fg)] transition-colors outline-none placeholder:text-[var(--gh-muted)] focus:outline-none"
+                    />
+                </div>
+
                 {/*
-                 * Insights — a flat horizontal strip above the table. No card,
-                 * no borders, no dividers between the plots: a responsive grid
-                 * and whitespace do the separating.
+                 * Two columns: insights stacked on the left (one width each),
+                 * the runs table taking the wide right half.
                  */}
-                <motion.section
-                    variants={stagger}
-                    initial="initial"
-                    animate="animate"
-                    className="flex flex-col gap-3"
-                >
-                    <div className="grid grid-cols-1 items-start gap-x-8 gap-y-7 sm:grid-cols-2 lg:grid-cols-3">
-                        {/* Most run stocks — headline insight */}
-                        <motion.div variants={staggerItem} className="flex min-w-0 flex-col gap-3">
-                            <SectionLabel>Most run stocks</SectionLabel>
-                            {topStocks.length === 0 ? (
-                                <p className="font-app-body text-[12px] font-light text-[var(--ink-tertiary)]">
-                                    No runs yet
-                                </p>
-                            ) : (
-                                <div>
-                                    {topStocks.map((s) => {
-                                        const india = s.source.toLowerCase() === "nse";
-                                        const name =
-                                            s.symbol && s.symbol !== s.label
-                                                ? `${s.label} · ${s.symbol}`
-                                                : s.label;
-                                        return (
-                                            <BarRow
-                                                key={s.label}
-                                                logo={<TickerLogo symbol={s.symbol} size={16} />}
-                                                label={`${name} ${india ? "🇮🇳" : "🇺🇸"} ${india ? "NSE" : "SEC"}`}
-                                                extra={<SourceMark source={india ? "nse" : "sec"} size={13} />}
-                                                value={s.count}
-                                                max={topStocks[0].count}
-                                            />
-                                        );
-                                    })}
-                                </div>
-                            )}
-                        </motion.div>
-
-                        {/* Run health — one stacked strip, counts on hover only */}
-                        <motion.div variants={staggerItem} className="flex min-w-0 flex-col gap-3">
-                            <SectionLabel>Run health</SectionLabel>
-                            {healthTotal === 0 ? (
-                                <p className="font-app-body text-[12px] font-light text-[var(--ink-tertiary)]">
-                                    No runs yet
-                                </p>
-                            ) : (
-                                <div>
-                                    <svg
-                                        className="h-12 w-full overflow-hidden rounded-full"
-                                        viewBox={`0 0 ${healthTotal} 48`}
-                                        preserveAspectRatio="none"
-                                        role="img"
-                                        aria-label={`Run outcomes: ${completed.length} completed, ${failed.length} failed.`}
-                                    >
-                                        {healthSegments.map((s, i) =>
-                                            s.value > 0 ? (
-                                                <rect
-                                                    key={s.name}
-                                                    x={healthSegments
-                                                        .slice(0, i)
-                                                        .reduce((n, m) => n + m.value, 0)}
-                                                    width={s.value}
-                                                    height={48}
-                                                    fill={s.color}
-                                                >
-                                                    <title>{`${s.name} · ${s.value} run${s.value === 1 ? "" : "s"}`}</title>
-                                                </rect>
-                                            ) : null
-                                        )}
-                                    </svg>
-                                    <DotLegend
-                                        items={healthSegments.map((s) => ({
-                                            key: s.name,
-                                            label: s.name,
-                                            color: s.color,
-                                        }))}
-                                    />
-                                </div>
-                            )}
-                        </motion.div>
-
-                        {/* Most used models */}
-                        <motion.div variants={staggerItem} className="flex min-w-0 flex-col gap-3">
-                            <SectionLabel>Most used models</SectionLabel>
-                            {modelUsage.length === 0 ? (
-                                <p className="font-app-body text-[12px] font-light text-[var(--ink-tertiary)]">
-                                    No runs yet
-                                </p>
-                            ) : (
-                                <div>
-                                    {modelUsage.map((m) => (
-                                        <BarRow
-                                            key={m.model}
-                                            logo={<ModelLogo model={m.model} size={16} />}
-                                            label={m.model}
-                                            value={m.count}
-                                            max={modelUsage[0].count}
-                                        />
-                                    ))}
-                                </div>
-                            )}
-                        </motion.div>
+                <div className="grid grid-cols-1 gap-x-16 gap-y-8 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
+                    {/* Left — insights, one below the other */}
+                    <div className="min-w-0">
+                        <RunsInsights runs={uniqueAnalysis} labelAgent={runAgentLabel} />
                     </div>
-                </motion.section>
 
-                {/* Main table */}
-                <div className="min-w-0 flex-1">
-                    {/* Filters + search — one line above the table */}
-                    <div className="mb-3 flex flex-wrap items-center gap-2">
-                        <ToggleGroup
-                            type="single"
-                            value={viewMode}
-                            onValueChange={(v) => v && setViewMode(v as GroupMode)}
-                            className="h-auto flex-wrap gap-1 rounded-full border-0 bg-transparent p-0"
-                        >
-                            {GROUP_VIEWS.map((v) => (
-                                <ToggleGroupItem
-                                    key={v.key}
-                                    value={v.key}
-                                    className="h-auto flex-none rounded-full border px-2.5 py-1 text-[11.5px] font-normal whitespace-nowrap hover:bg-transparent hover:text-[var(--ink-primary)] data-[state=on]:border-[var(--hairline)] data-[state=on]:bg-[var(--surface-recessed)] data-[state=on]:font-semibold data-[state=on]:text-[var(--ink-primary)] data-[state=on]:shadow-none"
-                                >
-                                    {v.label}
-                                </ToggleGroupItem>
-                            ))}
-                        </ToggleGroup>
-                        <div className="relative ml-auto w-full sm:w-[240px]">
-                            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-[var(--ink-tertiary)]" />
-                            {/*
-                             * Same chrome as the new-analysis inputs: hairline
-                             * border, subtle fill, square corners, 36px tall,
-                             * 14px Anek Latin at 400.
-                             */}
-                            <input
-                                type="text"
-                                placeholder="Search share, agent, model…"
-                                aria-label="Search runs"
-                                value={query}
-                                onChange={(e) => setQuery(e.target.value)}
-                                className="h-9 w-full min-w-0 rounded-full border border-[var(--hairline)] bg-[var(--surface-recessed)] py-1 pr-4 pl-8 font-app-body text-[14px] font-normal text-[var(--ink-primary)] transition-colors outline-none placeholder:text-[var(--ink-tertiary)] focus:border-[var(--ink-secondary)]"
-                            />
-                        </div>
-                    </div>
+                    {/* Main table */}
+                    <div className="min-w-0">
                     {loading && uniqueAnalysis.length === 0 ? (
-                        <div className="flex justify-center gap-3 py-16 text-[var(--ink-secondary)]">
+                        <div className="flex justify-center gap-3 py-16 text-[var(--gh-muted)]">
                             <Spinner />
-                            <span className="text-[13px]">Loading runs…</span>
+                            <span className="text-[15px] font-light">Loading runs…</span>
                         </div>
                     ) : (
                             <div className="overflow-x-auto">
-                                <table className="w-full min-w-[1000px] border-collapse text-sm">
+                                <table className="w-full min-w-[560px] border-collapse text-[15px]">
                                     <thead>
-                                        <tr className="bg-[var(--surface-recessed)]">
-                                            {(
-                                                [
-                                                    ["share", "Share"],
-                                                    ["agent", "Agent"],
-                                                    ["model", "Model"],
-                                                    ["score", "Verdict"],
-                                                    ["duration", "Duration"],
-                                                    ["created_at", "Created"],
-                                                    ["status", "Status"],
-                                                ] as const
-                                            ).map(([key, label]) => (
-                                                <th
-                                                    key={key}
-                                                    onClick={() => toggleSort(key)}
-                                                    className="cursor-pointer px-4 py-3 text-left text-[10.5px] font-medium tracking-[0.06em] text-[var(--ink-tertiary)] uppercase select-none"
-                                                >
-                                                    <span className="inline-flex items-center gap-1">
-                                                        {label}
-                                                        <SortIcon column={key} />
-                                                    </span>
-                                                </th>
-                                            ))}
-                                            <th className="w-[48px] px-4 py-3" />
+                                        <tr>
+                                            <th colSpan={colSpan} className="p-0 text-left font-normal">
+                                                <div className="flex flex-wrap items-center justify-between gap-2 py-2">
+                                                    <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+                                                        <span className="text-[15px] font-light text-[var(--gh-fg)] tabular-nums">
+                                                            {sorted.length} runs
+                                                        </span>
+                                                        <MenuButton
+                                                            label="Sort"
+                                                            value={sort}
+                                                            def="newest"
+                                                            showAll={false}
+                                                            items={SORTS.map((s) => ({ value: s.key, label: s.label }))}
+                                                            onChange={setSort}
+                                                        />
+                                                        <MenuButton
+                                                            label="Group by"
+                                                            value={viewMode === "individual" ? ALL : viewMode}
+                                                            showAll={false}
+                                                            items={[
+                                                                { value: ALL, label: "All runs" },
+                                                                ...GROUP_VIEWS.filter((g) => g.key !== "individual").map(
+                                                                    (g) => ({ value: g.key, label: g.label })
+                                                                ),
+                                                            ]}
+                                                            onChange={(v) =>
+                                                                setViewMode((v === ALL ? "individual" : v) as GroupMode)
+                                                            }
+                                                        />
+                                                    </div>
+                                                    <div className="flex flex-wrap items-center gap-1.5">
+                                                        <MenuButton
+                                                            label="Agent"
+                                                            value={agentFilter}
+                                                            items={agentOptions.map((a) => ({ value: a, label: a }))}
+                                                            onChange={setAgentFilter}
+                                                            align="end"
+                                                        />
+                                                        <MenuButton
+                                                            label="Verdict"
+                                                            value={verdictFilter}
+                                                            items={verdictOptions.map((v) => ({ value: v, label: v }))}
+                                                            onChange={setVerdictFilter}
+                                                            align="end"
+                                                        />
+                                                        <MenuButton
+                                                            label="Status"
+                                                            value={statusFilter}
+                                                            items={statusOptions.map((s) => ({
+                                                                value: s,
+                                                                label: s.charAt(0).toUpperCase() + s.slice(1),
+                                                            }))}
+                                                            onChange={setStatusFilter}
+                                                            align="end"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </th>
                                         </tr>
                                     </thead>
                                     <motion.tbody variants={stagger} initial="initial" animate="animate">
@@ -733,30 +653,28 @@ export default function AnalysisList() {
                                         {loading ? (
                                             <motion.tr key="loading" variants={staggerItem} exit={{ opacity: 0 }}>
                                                 <td colSpan={colSpan} className="py-12">
-                                                    <div className="flex justify-center gap-3 text-[var(--ink-secondary)]">
+                                                    <div className="flex justify-center gap-3 text-[var(--gh-muted)]">
                                                         <Spinner />
-                                                        <span className="text-[13px]">Loading runs…</span>
+                                                        <span className="text-[15px] font-light">Loading runs…</span>
                                                     </div>
                                                 </td>
                                             </motion.tr>
                                         ) : fetchError ? (
                                             <motion.tr key="error" variants={staggerItem} exit={{ opacity: 0 }}>
-                                                <td colSpan={colSpan} className="px-4 py-8">
-                                                    <div className="border-l-[3px] border-[var(--signal-negative)] pl-3">
-                                                        <p className="text-[13px] text-[var(--ink-primary)]">
-                                                            Failed to fetch runs.
-                                                        </p>
-                                                        <p className="mt-1 text-[12px] text-[var(--ink-secondary)]">
-                                                            Check if the backend service is running.
-                                                        </p>
-                                                    </div>
+                                                <td colSpan={colSpan} className="py-8">
+                                                    <p className="text-[15px] font-light text-[var(--gh-fg)]">
+                                                        Failed to fetch runs.
+                                                    </p>
+                                                    <p className="mt-1 text-[14px] font-light text-[var(--gh-muted)]">
+                                                        Check if the backend service is running.
+                                                    </p>
                                                 </td>
                                             </motion.tr>
                                         ) : sorted.length === 0 && !loading ? (
                                             <motion.tr key="empty" variants={staggerItem} exit={{ opacity: 0 }}>
                                                 <td
                                                     colSpan={colSpan}
-                                                    className="py-12 text-center text-[13px] text-[var(--ink-tertiary)]"
+                                                    className="py-12 text-center text-[15px] font-light text-[var(--gh-muted)]"
                                                 >
                                                     No runs found.
                                                 </td>
@@ -790,18 +708,9 @@ export default function AnalysisList() {
                                                 ...sec.items.map((item) => {
                                                 const id =
                                                     item.analysis_id || item._id || item.id;
-                                                const itemScore: number | null =
-                                                    item.total_score;
-                                                const sig =
-                                                    itemScore != null
-                                                        ? scoreSignal(itemScore)
-                                                        : null;
                                                 const itemStatus = (
                                                     item.status || ""
                                                 ).toLowerCase();
-                                                const isItemError =
-                                                    itemStatus === "error" ||
-                                                    itemStatus === "failed";
                                                 const isItemComplete =
                                                     itemStatus === "complete" ||
                                                     itemStatus === "completed" ||
@@ -810,16 +719,7 @@ export default function AnalysisList() {
                                                 // grade inside report.verdict (list selects it as
                                                 // the flat `verdict` key via report->verdict);
                                                 // skill-era rows fall back to the score-band label.
-                                                const harnessVerdict: string | undefined =
-                                                    item.verdict;
-                                                const verdictLabel =
-                                                    harnessVerdict ??
-                                                    (itemScore != null
-                                                        ? verdictForScore(itemScore).label
-                                                        : null);
-                                                const verdictSig = harnessVerdict
-                                                    ? QUALITY_SIGNAL[harnessVerdict] ?? null
-                                                    : sig;
+                                                const verdict = runVerdict(item);
                                                 // duration is written by harness runs; older rows
                                                 // fall back to created→updated wall time.
                                                 const durSec =
@@ -862,152 +762,169 @@ export default function AnalysisList() {
                                                             }
                                                             onRowClick(id);
                                                         }}
-                                                        className="cursor-pointer transition-colors duration-[160ms] hover:bg-[var(--surface-recessed)]"
+                                                        className="group cursor-pointer transition-colors duration-[160ms] hover:bg-[var(--surface-recessed)]"
                                                     >
-                                                        {/* Share — plain text, not badge */}
-                                                        <td className="px-4 py-3">
-                                                            <div className="flex items-center gap-2.5">
-                                                                <TickerLogo symbol={item.symbol} size={22} />
-                                                                <div className="flex flex-col">
-                                                                    <span className="text-[13.5px] leading-snug font-medium text-[var(--ink-primary)]">
-                                                                        {item.share_name ||
-                                                                            item.symbol ||
-                                                                            "—"}
-                                                                    </span>
-                                                                    {item.share_name &&
-                                                                        item.symbol && (
-                                                                            <span className="font-app-mono text-[11px] text-[var(--ink-tertiary)]">
-                                                                                {item.symbol}
-                                                                            </span>
-                                                                        )}
-                                                                </div>
-                                                            </div>
+                                                        {/* Status glyph — leading check/x */}
+                                                        <td className="w-[42px] py-3.5 pr-2 align-top">
+                                                            <StatusGlyph status={itemStatus} />
                                                         </td>
 
-                                                        {/* Agent */}
-                                                        <td className="max-w-[220px] overflow-hidden px-4 py-3">
+                                                        {/* Run — title line + meta line; agent and model
+                                                            fold into the meta cell */}
+                                                        <td className="max-w-[420px] py-3.5 pr-4 align-top">
                                                             <div className="flex min-w-0 items-center gap-2">
-                                                                <AgentAvatar
-                                                                    agent={item.agent_name || item.agent || item.system_prompt}
-                                                                    size={26}
-                                                                />
-                                                                <span className="min-w-0">
-                                                                    <span className="block truncate text-[13px] text-[var(--ink-secondary)]" title={agentLabel}>
-                                                                        {agentLabel}
-                                                                    </span>
-                                                                    {item.run_mode !== "agent" && (
-                                                                        <span className="block text-[10px] font-medium uppercase tracking-wide text-[var(--accent-primary)]">
-                                                                            Skill run
-                                                                        </span>
-                                                                    )}
+                                                                <TickerLogo symbol={item.symbol} size={18} />
+                                                                <span className="truncate text-[16px] font-light text-[var(--gh-fg)]">
+                                                                    {item.share_name || item.symbol || "—"}
                                                                 </span>
                                                             </div>
-                                                        </td>
-
-                                                        {/* Model */}
-                                                        <td
-                                                            className="max-w-[200px] overflow-hidden px-4 py-3"
-                                                            title={item.model || undefined}
-                                                        >
-                                                            <div className="flex min-w-0 items-center gap-2">
-                                                                <ModelLogo model={item.model} size={13} />
-                                                                <span className="truncate font-app-mono text-[13px] text-[var(--ink-secondary)]">
+                                                            <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] font-light text-[var(--gh-muted)]">
+                                                                {item.share_name &&
+                                                                    item.symbol &&
+                                                                    item.share_name !== item.symbol && (
+                                                                        <>
+                                                                            <span>{item.symbol}</span>
+                                                                            <span aria-hidden="true">·</span>
+                                                                        </>
+                                                                    )}
+                                                                <AgentAvatar
+                                                                    agent={
+                                                                        item.agent_name ||
+                                                                        item.agent ||
+                                                                        item.system_prompt
+                                                                    }
+                                                                    size={16}
+                                                                />
+                                                                <span className="truncate" title={agentLabel}>
+                                                                    {agentLabel}
+                                                                </span>
+                                                                {item.run_mode !== "agent" && (
+                                                                    <span aria-hidden="true">·</span>
+                                                                )}
+                                                                {item.run_mode !== "agent" && (
+                                                                    <span className="text-[13px] text-[var(--gh-muted)]">
+                                                                        skill run
+                                                                    </span>
+                                                                )}
+                                                                <span aria-hidden="true">·</span>
+                                                                <ModelLogo model={item.model} size={14} />
+                                                                <span
+                                                                    className="truncate"
+                                                                    title={item.model || undefined}
+                                                                >
                                                                     {item.model || "—"}
                                                                 </span>
                                                             </div>
                                                         </td>
 
-                                                        {/* Verdict — word + signal dot */}
-                                                        <td className="px-4 py-3">
-                                                            {verdictLabel != null ? (
-                                                                <span className="inline-flex items-center gap-1.5">
-                                                                    {verdictSig && (
-                                                                        <span
-                                                                            className="h-[5px] w-[5px] shrink-0 rounded-full"
-                                                                            style={{ background: signalColor(verdictSig) }}
-                                                                        />
-                                                                    )}
-                                                                    <span className="text-[13.5px] font-medium text-[var(--ink-primary)]">
-                                                                        {verdictLabel}
-                                                                    </span>
+                                                        {/* Verdict — tinted word, no pill */}
+                                                        <td className="py-3.5 pr-4 align-top">
+                                                            {verdict ? (
+                                                                <span
+                                                                    className="gh-chip text-[15px]"
+                                                                    data-tone={verdict.tone}
+                                                                >
+                                                                    {verdict.label}
                                                                 </span>
                                                             ) : (
-                                                                <span className="text-[13px] text-[var(--ink-tertiary)]">—</span>
+                                                                <span className="text-[15px] font-light text-[var(--gh-muted)]">
+                                                                    —
+                                                                </span>
                                                             )}
                                                         </td>
 
-                                                        {/* Duration — tabular */}
-                                                        <td className="px-4 py-3 font-app-tabular text-[13px] tabular-nums text-[var(--ink-secondary)]">
-                                                            {durSec != null && durSec >= 0
-                                                                ? formatDuration(durSec)
-                                                                : "—"}
-                                                        </td>
-
-                                                        {/* Created — relative time */}
-                                                        <td
-                                                            className="px-4 py-3 text-[13px] text-[var(--ink-secondary)]"
-                                                            title={
-                                                                item.created_at
-                                                                    ? new Date(
-                                                                          item.created_at
-                                                                      ).toLocaleString()
-                                                                    : undefined
-                                                            }
-                                                        >
-                                                            {item.created_at
-                                                                ? timeAgo(item.created_at)
-                                                                : "—"}
-                                                        </td>
-
-                                                        {/* Status — dot + label */}
-                                                        <td className="px-4 py-3">
-                                                            <span className="inline-flex items-center gap-1.5">
-                                                                <span
-                                                                    className="h-[5px] w-[5px] shrink-0 rounded-full"
-                                                                    style={{
-                                                                        background: isItemError
-                                                                            ? "var(--signal-negative)"
-                                                                            : isItemComplete
-                                                                            ? "var(--signal-positive)"
-                                                                            : "var(--signal-caution)",
-                                                                    }}
+                                                        {/* When + duration — icon-stacked right block */}
+                                                        <td className="py-3.5 pr-4 align-top">
+                                                            <div className="grid grid-cols-[16px_1fr] items-center gap-x-2 gap-y-1">
+                                                                <Calendar
+                                                                    aria-hidden
+                                                                    className="size-4 text-[var(--gh-muted)]"
                                                                 />
-                                                                <span className="text-[12px] text-[var(--ink-secondary)]">
-                                                                    {isItemError
-                                                                        ? "Failed"
-                                                                        : isItemComplete
-                                                                        ? "Complete"
-                                                                        : "Running"}
+                                                                <span
+                                                                    className="text-[15px] font-light whitespace-nowrap text-[var(--gh-fg)]"
+                                                                    title={
+                                                                        item.created_at
+                                                                            ? new Date(
+                                                                                  item.created_at
+                                                                              ).toLocaleString()
+                                                                            : undefined
+                                                                    }
+                                                                >
+                                                                    {item.created_at
+                                                                        ? whenLabel(item.created_at)
+                                                                        : "—"}
                                                                 </span>
-                                                            </span>
+                                                                <Clock
+                                                                    aria-hidden
+                                                                    className="size-4 text-[var(--gh-muted)]"
+                                                                />
+                                                                <span className="text-[15px] font-light whitespace-nowrap text-[var(--gh-muted)] tabular-nums">
+                                                                    {durSec != null && durSec >= 0
+                                                                        ? formatDuration(durSec)
+                                                                        : "—"}
+                                                                </span>
+                                                            </div>
                                                         </td>
 
-                                                        {/* Delete — hover-revealed */}
-                                                        <td className="px-2 py-3">
-                                                            <button
-                                                                type="button"
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    setDeleteTarget(item);
-                                                                }}
-                                                                aria-label="Delete run"
-                                                                className="flex size-9 shrink-0 items-center justify-center rounded-[4px] text-[var(--ink-tertiary)] opacity-70 transition-[color,opacity,background-color] hover:bg-[var(--surface-recessed)] hover:text-[var(--signal-negative)] focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none md:opacity-60 md:[tr:hover_&]:opacity-100"
-                                                            >
-                                                                <svg
-                                                                    width="16"
-                                                                    height="16"
-                                                                    viewBox="0 0 24 24"
-                                                                    fill="none"
-                                                                    stroke="currentColor"
-                                                                    strokeWidth="1.5"
-                                                                    strokeLinecap="round"
-                                                                    strokeLinejoin="round"
+                                                        {/* Row actions — GitHub's kebab */}
+                                                        <td className="w-[44px] py-3 pr-3 text-right align-top">
+                                                            <DropdownMenu>
+                                                                <DropdownMenuTrigger asChild>
+                                                                    <button
+                                                                        type="button"
+                                                                        aria-label="Run actions"
+                                                                        onClick={(e) => e.stopPropagation()}
+                                                                        className="inline-flex size-7 items-center justify-center rounded-md text-[var(--gh-muted)] transition-opacity hover:bg-[var(--surface-raised)] focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100"
+                                                                    >
+                                                                        <MoreHorizontal
+                                                                            aria-hidden
+                                                                            className="size-4"
+ />
+                                                                    </button>
+                                                                </DropdownMenuTrigger>
+                                                                <DropdownMenuContent
+                                                                    align="end"
+                                                                    className="min-w-[190px]"
                                                                 >
-                                                                    <path d="M3 6h18" />
-                                                                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                                                                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                                                                </svg>
-                                                            </button>
+                                                                    <DropdownMenuItem
+                                                                        className="text-[14px]"
+                                                                        onSelect={() => onRowClick(id)}
+                                                                    >
+                                                                        Open run
+                                                                    </DropdownMenuItem>
+                                                                    <DropdownMenuItem
+                                                                        className="text-[14px]"
+                                                                        onSelect={() =>
+                                                                            window.open(
+                                                                                "/analysis-result/" + id,
+                                                                                "_blank"
+                                                                            )
+                                                                        }
+                                                                    >
+                                                                        Open in new tab
+                                                                    </DropdownMenuItem>
+                                                                    <DropdownMenuItem
+                                                                        className="text-[14px]"
+                                                                        onSelect={() =>
+                                                                            navigator.clipboard?.writeText(
+                                                                                `${window.location.origin}/analysis-result/${id}`
+                                                                            )
+                                                                        }
+                                                                    >
+                                                                        Copy link
+                                                                    </DropdownMenuItem>
+                                                                    <DropdownMenuSeparator />
+                                                                    <DropdownMenuItem
+                                                                        variant="destructive"
+                                                                        className="text-[14px]"
+                                                                        onSelect={() =>
+                                                                            setDeleteTarget(item)
+                                                                        }
+                                                                    >
+                                                                        Delete
+                                                                    </DropdownMenuItem>
+                                                                </DropdownMenuContent>
+                                                            </DropdownMenu>
                                                         </td>
                                                     </motion.tr>
                                                 );
@@ -1019,6 +936,7 @@ export default function AnalysisList() {
                                 </table>
                             </div>
                     )}
+                    </div>
                 </div>
             </div>
 

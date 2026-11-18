@@ -4,7 +4,6 @@ import { Plus, Trash2, X, BadgeCheck, Square } from "lucide-react";
 import { AnalysisService, AgentService, SkillService, type ScheduleRow, type SkillSummary } from "@/db";
 import AgentAvatar from "@/components/shared/AgentAvatar";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -95,9 +94,9 @@ function CategorySelect({ value, onChange, categories, invalid }: { value: strin
 const FIELD_INPUT =
     "h-9 rounded-[6px] border-[0.5px] border-[color:var(--hairline)] bg-transparent px-2.5 text-sm shadow-none placeholder:text-console-ink-4 focus-visible:ring-1 focus-visible:ring-console-accent/40 dark:bg-transparent";
 
-/** One bordered, rounded list panel — default agents, my agents. Kept close
- *  to the page canvas so the panels read as soft groupings, not cards. */
-const SECTION_BOX = "rounded-xl border-[0.5px] border-[color:var(--hairline)] bg-console-surface/30 p-5";
+/** Sections sit straight on the canvas — no box, no border, no fill (the
+ *  grid gap does the separating), matching the runs/insights page. */
+const SECTION_BOX = "";
 
 /** Mobile: hug the listed rows, capped. Laptop (md+): the original fixed
  *  height so all boxes stay uniform. */
@@ -108,7 +107,7 @@ function FormRow({ label, children }: { label: string; children: ReactNode }) {
     return (
         <div className="flex flex-col gap-1 md:flex-row md:items-center">
             <div className="w-full shrink-0 md:w-36 md:px-1 md:py-2">
-                <span className="font-app-body text-[11px] font-medium tracking-[0.08em] text-console-ink-3 uppercase">{label}</span>
+                <span className="font-app-body text-[12px] font-light tracking-[0.06em] text-console-ink-3">{label}</span>
             </div>
             <div className="flex min-w-0 flex-1 flex-col gap-1.5 px-1 py-1">{children}</div>
         </div>
@@ -118,7 +117,7 @@ function FormRow({ label, children }: { label: string; children: ReactNode }) {
 function FormSection({ title, children }: { title: string; children: ReactNode }) {
     return (
         <div className="pt-3">
-            <p className="px-1 pb-1 font-app-body text-[13px] font-medium text-console-ink-2">{title}</p>
+            <p className="px-1 pb-1 font-app-body text-[14px] font-light text-console-ink-2">{title}</p>
             {children}
         </div>
     );
@@ -409,7 +408,7 @@ export default function AgentLibrary() {
                     <h1 className="font-app-body shrink-0 text-[30px] leading-none font-light tracking-tight text-console-ink">
                         Agents
                     </h1>
-                    <p className="mt-1.5 font-app-body text-[12px] font-normal text-console-ink-3">
+                    <p className="mt-1 text-[15px] font-light text-console-ink-3">
                         Investment agents to analyze, track and monitor the markets.
                     </p>
                 </div>
@@ -423,10 +422,10 @@ export default function AgentLibrary() {
                     <div className="flex items-center gap-5 pt-1">
                         <AgentAvatar agent={newDraft.name.trim() || "New agent"} size={112} label="New agent" />
                         <div className="min-w-0 flex-1">
-                            <p className="truncate font-app-display text-[28px] leading-[1.1] font-normal tracking-[-0.015em] text-console-ink">
+                            <p className="truncate font-app-body text-[24px] leading-tight font-light text-console-ink">
                                 {newDraft.name.trim() || "New agent"}
                             </p>
-                            <p className="mt-1.5 font-app-body text-[12px] font-normal text-console-ink-3">
+                            <p className="mt-1.5 font-app-body text-[13px] font-light text-console-ink-3">
                                 Investment agent — one category, one skill.
                             </p>
                         </div>
@@ -487,7 +486,7 @@ export default function AgentLibrary() {
             </Dialog>
 
             {/* ── Three boxes side by side: defaults, yours, scheduled runs ── */}
-            <div className="mt-6 grid gap-6 lg:grid-cols-3">
+            <div className="mt-8 grid gap-x-10 gap-y-10 lg:grid-cols-3">
                 {/* ── Default agents — file-defined, listed from the API ── */}
                 <section className={SECTION_BOX}>
                     <div className="flex flex-wrap items-center gap-3">
@@ -495,7 +494,7 @@ export default function AgentLibrary() {
                             <h2 className="font-app-body text-[20px] leading-none font-light tracking-tight text-console-ink">
                                 Default agents
                             </h2>
-                            <p className="mt-1.5 flex items-center gap-1.5 font-app-body text-[12px] font-normal text-console-ink-3">
+                            <p className="mt-1.5 flex items-center gap-1.5 font-app-body text-[13px] font-light text-console-ink-3">
                                 Relativity verified agents
                                 <BadgeCheck className="size-3.5 shrink-0 text-console-accent" aria-hidden />
                             </p>
@@ -517,8 +516,8 @@ export default function AgentLibrary() {
                             <div key={d.name} className="-mx-2 ws-row flex w-full cursor-pointer items-center gap-3 rounded-[8px] px-2 py-3">
                                 <AgentAvatar agent={d.name} size={48} />
                                 <div className="min-w-0 flex-1">
-                                    <p className="truncate font-app-display text-[22px] leading-[1.1] font-normal tracking-[-0.015em] text-console-ink">{d.name}</p>
-                                    <p className="truncate font-app-body text-[12px] font-normal text-console-ink-3">
+                                    <p className="truncate font-app-body text-[18px] leading-tight font-light text-console-ink">{d.name}</p>
+                                    <p className="truncate font-app-body text-[13px] font-light text-console-ink-3">
                                         {d.skill_name ? `Skill · ${d.skill_name}` : "No skill attached"}
                                     </p>
                                 </div>
@@ -534,7 +533,7 @@ export default function AgentLibrary() {
                             <h2 className="font-app-body text-[20px] leading-none font-light tracking-tight text-console-ink">
                                 My agents
                             </h2>
-                            <p className="mt-1.5 font-app-body text-[12px] font-normal text-console-ink-3">
+                            <p className="mt-1.5 font-app-body text-[13px] font-light text-console-ink-3">
                                 Your own — click a row to edit.
                             </p>
                         </div>
@@ -562,12 +561,12 @@ export default function AgentLibrary() {
                         </div>
                     ) : fetchError ? (
                         <div className="mt-4 flex max-h-[22rem] flex-col items-center justify-center py-12 text-center md:h-[22rem] md:py-0">
-                            <p className="font-app-display text-lg font-normal text-console-ink">The Agent Console could not reach the server.</p>
+                            <p className="font-app-body text-lg font-light text-console-ink">The Agent Console could not reach the server.</p>
                             <p className="mt-1 font-app-body text-sm text-console-ink-2">The agent API may be unavailable. Reload to try again.</p>
                         </div>
                     ) : agents.length === 0 ? (
                         <div className="mt-4 flex max-h-[22rem] flex-col items-center justify-center py-12 text-center md:h-[22rem] md:py-0">
-                            <p className="font-app-display text-lg font-normal text-console-ink">No agents yet.</p>
+                            <p className="font-app-body text-lg font-light text-console-ink">No agents yet.</p>
                             <p className="mx-auto mt-1.5 max-w-[46ch] font-app-body text-sm text-console-ink-2">
                                 An agent is a name, a category and a skill. Create one to start.
                             </p>
@@ -595,18 +594,18 @@ export default function AgentLibrary() {
                                                 <AgentAvatar agent={agent} size={48} label={agent.name || "Agent"} />
                                                 {/* Left: name over the created date */}
                                                 <span className="flex min-w-0 flex-1 flex-col gap-1">
-                                                    <span className="block truncate font-app-display text-[22px] font-normal leading-[1.1] tracking-[-0.015em] text-console-ink">
+                                                    <span className="block truncate font-app-body text-[18px] leading-tight font-light text-console-ink">
                                                         {agent.name || "Untitled agent"}
                                                     </span>
-                                                    <span className="block font-app-body text-[12px] font-normal text-console-ink-4">
+                                                    <span className="block font-app-body text-[13px] font-light text-console-ink-4">
                                                         Created {formatDate(agent.created_at)}
                                                     </span>
                                                     {tagsFor(id).length > 0 && (
                                                         <span className="flex flex-wrap gap-1.5">
                                                             {tagsFor(id).map((t) => (
-                                                                <Badge key={t} className="bg-console-recessed font-app-body text-[11px] font-normal text-console-ink-2">
+                                                                <span key={t} className="font-app-body text-[13px] font-light text-console-ink-3">
                                                                     {t}
-                                                                </Badge>
+                                                                </span>
                                                             ))}
                                                         </span>
                                                     )}
@@ -630,7 +629,7 @@ export default function AgentLibrary() {
                 </section>
 
                 {/* ── Scheduled runs — transparent panel with a light border ── */}
-                <section className="rounded-xl border-[0.5px] border-[color:var(--hairline)] p-5">
+                <section className={SECTION_BOX}>
                     <div className="flex items-center gap-3">
                         <h2 className="min-w-0 font-app-body text-[20px] leading-none font-light tracking-tight text-console-ink">
                             Scheduled runs
@@ -644,7 +643,7 @@ export default function AgentLibrary() {
                             <Plus /> Schedule another
                         </Button>
                     </div>
-                    <p className="mt-1.5 font-app-body text-[12px] font-normal text-console-ink-3">
+                    <p className="mt-1.5 font-app-body text-[13px] font-light text-console-ink-3">
                         Agent runs that fire on a schedule.
                     </p>
                     <div className={cn("mt-2 w-full", SECTION_LIST)}>
@@ -660,10 +659,10 @@ export default function AgentLibrary() {
                                     <div key={s.id} className="-mx-2 flex w-full items-center gap-3 rounded-[8px] px-2 py-3">
                                         <AgentAvatar agent={agent?.name || s.agent_id || "Agent"} size={48} label={agent?.name} />
                                         <div className="min-w-0 flex-1">
-                                            <p className="truncate font-app-display text-[22px] leading-[1.1] font-normal tracking-[-0.015em] text-console-ink">
+                                            <p className="truncate font-app-body text-[18px] leading-tight font-light text-console-ink">
                                                 {agent?.name || s.agent_id || "Scheduled agent"}
                                             </p>
-                                            <p className="truncate font-app-body text-[12px] font-normal text-console-ink-3">
+                                            <p className="truncate font-app-body text-[13px] font-light text-console-ink-3">
                                                 {{ daily: "Daily", weekly: "Weekly", biweekly: "Biweekly", monthly: "Monthly" }[s.frequency] || "Daily"} {s.time} ({s.timezone}) · {s.share_name || s.symbol || "General"}
                                             </p>
                                         </div>
@@ -694,16 +693,16 @@ export default function AgentLibrary() {
                         <div className="flex items-center gap-5 pt-1">
                             <AgentAvatar agent={draft.name.trim() || "Agent"} size={112} label="Agent" />
                             <div className="min-w-0 flex-1">
-                                <p className="truncate font-app-display text-[28px] leading-[1.1] font-normal tracking-[-0.015em] text-console-ink">
+                                <p className="truncate font-app-body text-[24px] leading-tight font-light text-console-ink">
                                     {draft.name.trim() || "Untitled agent"}
                                 </p>
-                                <p className="mt-1.5 font-app-body text-[12px] font-normal text-console-ink-3">
+                                <p className="mt-1.5 font-app-body text-[13px] font-light text-console-ink-3">
                                     Created {formatDate(agents.find((a) => (a.id || a._id) === expanded)?.created_at)}
                                 </p>
                             </div>
                             <span className="flex shrink-0 items-center gap-1.5 self-start pt-2">
                                 <span className={cn("size-1.5 rounded-full", saveState.cls)} />
-                                <span className="font-app-body text-[11px] font-medium text-console-ink-3">{saveState.label}</span>
+                                <span className="font-app-body text-[13px] font-light text-console-ink-3">{saveState.label}</span>
                             </span>
                         </div>
                         <FormSection title="Details">

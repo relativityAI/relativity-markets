@@ -87,6 +87,46 @@ html.dark {
   --signal-live: #60A5FA;
 }
 
+/* ── GitHub Primer accents ──────────────────────────────────────────────────
+   Used by the runs page (insights cards + runs table). Flat and borderless —
+   colour lives in glyphs and words, never in boxes. */
+:root {
+  --gh-fg: #1f2328;
+  --gh-muted: #57606a;
+  --gh-blue: #0969da;
+  --gh-green: #1a7f37;
+  --gh-amber: #9a6700;
+  --gh-red: #cf222e;
+}
+
+html.dark {
+  --gh-fg: #e6edf3;
+  --gh-muted: #8b949e;
+  --gh-blue: #4493f8;
+  --gh-green: #3fb950;
+  --gh-amber: #d29922;
+  --gh-red: #f85149;
+}
+
+/* Verdict / grade words: colour only, no pill. Size comes from the caller. */
+.gh-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--gh-muted);
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.gh-chip[data-tone="good"] {
+  color: var(--gh-green);
+}
+.gh-chip[data-tone="caution"] {
+  color: var(--gh-amber);
+}
+.gh-chip[data-tone="bad"] {
+  color: var(--gh-red);
+}
+
 /* Base canvas */
 html,
 body {
