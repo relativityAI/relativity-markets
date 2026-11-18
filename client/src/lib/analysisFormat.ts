@@ -147,3 +147,52 @@ export const MIN_COVERAGE_DEFAULT = 0.6;
 export function insufficientCoverage(coverage?: number | null, min: number = MIN_COVERAGE_DEFAULT): boolean {
   return coverage != null && Number.isFinite(coverage) && coverage < min;
 }
+
+/* ── Run verdicts ───────────────────────────────────────────────────────────
+   The runs table and the insights cards grade a run identically, so the
+   harness five-band mapping and the score fallback live here beside the
+   other band tables. */
+
+/** Harness quality verdict (report.verdict) → the 3-signal palette. */
+export const QUALITY_SIGNAL: Record<string, "positive" | "caution" | "negative"> = {
+  "Very Poor": "negative",
+  Poor: "negative",
+  Fair: "caution",
+  Good: "positive",
+  Excellent: "positive",
+};
+
+export type VerdictTone = "good" | "caution" | "bad" | "neutral";
+
+/** Chip colour for a verdict label — covers the harness five-band words and
+    verdictForScore's score-band words. */
+export function verdictTone(label: string | null | undefined): VerdictTone {
+  if (!label) return "neutral";
+  const q = QUALITY_SIGNAL[label];
+  if (q === "positive") return "good";
+  if (q === "caution") return "caution";
+  if (q === "negative") return "bad";
+  if (label === "Outstanding" || label === "Strong") return "good";
+  if (label === "Fair" || label === "Underwhelming") return "caution";
+  if (label === "Subpar") return "bad";
+  return "neutral";
+}
+
+export interface RunVerdict {
+  label: string;
+  tone: VerdictTone;
+  /** 3-signal palette, for dots/indicators. */
+  signal: "positive" | "caution" | "negative";
+}
+
+/**
+ * A run's verdict: the harness grade inside report.verdict wins; skill-era
+ * rows without one fall back to the score band. null = no verdict at all.
+ */
+export function runVerdict(a: { verdict?: string | null; total_score?: number | null }): RunVerdict | null {
+  const score = typeof a.total_score === "number" && Number.isFinite(a.total_score) ? a.total_score : null;
+  const label = a.verdict || (score != null ? verdictForScore(score).label : null);
+  if (!label) return null;
+  const tone = verdictTone(label);
+  return { label, tone, signal: tone === "good" ? "positive" : tone === "bad" ? "negative" : "caution" };
+}

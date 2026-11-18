@@ -9,6 +9,8 @@ import {
     coverageLabel,
     insufficientCoverage,
     DEFAULT_BANDS,
+    runVerdict,
+    verdictTone,
 } from "../lib/analysisFormat";
 
 describe("currencyForSource (E4)", () => {
@@ -109,5 +111,42 @@ describe("coverage chip semantics (E8)", () => {
         // Coverage expressed 0–100 is also accepted.
         expect(insufficientCoverage(45, 0.6)).toBe(false);
         expect(insufficientCoverage(0.45, 0.6)).toBe(true);
+    });
+});
+
+describe("runVerdict (runs table + insights grade runs the same way)", () => {
+    it("prefers the harness grade and maps it to a chip tone", () => {
+        expect(runVerdict({ verdict: "Good", total_score: 10 })).toEqual({
+            label: "Good",
+            tone: "good",
+            signal: "positive",
+        });
+        expect(runVerdict({ verdict: "Poor" })?.tone).toBe("bad");
+        expect(runVerdict({ verdict: "Fair" })?.tone).toBe("caution");
+        expect(runVerdict({ verdict: "Excellent" })?.tone).toBe("good");
+    });
+
+    it("falls back to the score band when the run has no harness grade", () => {
+        expect(runVerdict({ total_score: 88 })).toEqual({
+            label: "Strong",
+            tone: "good",
+            signal: "positive",
+        });
+        expect(runVerdict({ total_score: 60 })?.label).toBe("Fair");
+        expect(runVerdict({ total_score: 60 })?.tone).toBe("caution");
+        expect(runVerdict({ total_score: 30 })?.tone).toBe("bad");
+    });
+
+    it("returns null when there is no verdict at all", () => {
+        expect(runVerdict({})).toBeNull();
+        expect(runVerdict({ verdict: null, total_score: null })).toBeNull();
+    });
+
+    it("verdictTone covers both vocabularies and defaults to neutral", () => {
+        expect(verdictTone("Outstanding")).toBe("good");
+        expect(verdictTone("Underwhelming")).toBe("caution");
+        expect(verdictTone("Subpar")).toBe("bad");
+        expect(verdictTone("Anything else")).toBe("neutral");
+        expect(verdictTone(null)).toBe("neutral");
     });
 });
