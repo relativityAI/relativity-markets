@@ -12,6 +12,11 @@ updates:
         # @assistant-ui/* internals break under the package.json overrides
         # when bumped in bulk (exports drift) — updates individually.
         exclude-dependency-name: "@assistant-ui/*"
+      # Majors batch too: one PR per directory instead of one per dependency.
+      client-major:
+        update-types:
+          - major
+        exclude-dependency-name: "@assistant-ui/*"
     ignore:
       # TS7 is the Go-based rewrite — migrate deliberately, not via dependabot.
       - dependency-name: typescript
@@ -31,6 +36,11 @@ updates:
           - patch
         # langfuse 6.x pulls an @opentelemetry/sdk-node that conflicts with
         # other pins in the group (npm ERESOLVE) — updates individually fine.
+        exclude-dependency-name: "@langfuse/*"
+      # Majors batch too: one PR per directory instead of one per dependency.
+      services-major:
+        update-types:
+          - major
         exclude-dependency-name: "@langfuse/*"
     ignore:
       - dependency-name: typescript
