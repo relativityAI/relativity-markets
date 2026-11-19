@@ -1,6 +1,7 @@
 /**
- * Scheduled runs: compute when a wall-clock time in an IANA timezone last
- * occurred (DST-safe, stdlib Intl only) and fire due rows once per local day.
+ * Alert ticker: computes when a wall-clock time in an IANA timezone last
+ * occurred (DST-safe, stdlib Intl only) and fires due alert rules once per
+ * local day, then turns completed runs into alerts.
  *
  * Frequencies: daily fires every day; weekly / biweekly fire on the start
  * date's weekday (biweekly on alternating weeks from the start date); monthly
@@ -9,13 +10,26 @@
  * date is a distinct calendar day, so one fire per date is one fire per due
  * occurrence.
  *
+ * Alerts: after a fire, the rule remembers its run id; each tick checks that
+ * run and, once it COMPLETED with a verdict, records an alert — but only when
+ * the verdict differs from the rule's last alert (dedupe: no ping for an
+ * unchanged verdict).
+ *
  * The ticker runs in-process like the stale-run sweeper — nothing survives a
  * restart beyond `last_fired_date` (one catch-up fire on boot). ponytail:
  * whole missed occurrences are skipped; if that ever matters, drive `tick()`
  * from an external cron hitting an internal HTTP trigger.
  */
 
-import { listAllScheduleRows, claimSchedule, type ScheduleRow } from "../db/repo.js";
+import {
+  listAllAlertRuleRows,
+  claimAlertRule,
+  setAlertRuleRun,
+  insertAlertRow,
+  lastAlertVerdict,
+  getRunRow,
+  type AlertRuleRow,
+} from "../db/repo.js";
 import { log } from "./logger.js";
 import { startAnalysisRun } from "./runs.js";
 
@@ -120,7 +134,7 @@ export function dateQualifies(frequency: string, start: string, date: string): b
  *  the candidates (walk-back capped at ~11 weeks, the monthly worst case) is
  *  on or after the start date. */
 export function dueOccurrence(
-  s: Pick<ScheduleRow, "time" | "timezone" | "frequency" | "start_date" | "created_at">,
+  s: Pick<AlertRuleRow, "time" | "timezone" | "frequency" | "start_date" | "created_at">,
   now: number,
 ): { at: number; date: string } | null {
   const start = s.start_date || dateInTz(+new Date(s.created_at || 0) || now, s.timezone);
@@ -152,39 +166,69 @@ export function latestOccurrence(
     : { at: occurrence(yest, hhmm, tz), date: yest };
 }
 
+/** The run a rule fired → an alert once its verdict lands and changes.
+ *  Re-checked every tick until the verdict arrives; after an alert it
+ *  short-circuits on the unchanged-verdict dedupe. ponytail: a run whose
+ *  background grade never lands is re-looked-up once a minute forever —
+ *  one indexed row read, cheaper than tracking give-up state. */
+export async function evaluateAlert(s: AlertRuleRow): Promise<void> {
+  if (!s.last_run_id) return;
+  const run = await getRunRow(s.user_id, s.last_run_id);
+  if (!run) return; // run purged; the next fire overwrites last_run_id
+  if (run.status !== "COMPLETED") return; // running, failed, or paused — no verdict coming
+  const verdict = typeof (run.report as any)?.verdict === "string" ? ((run.report as any).verdict as string) : null;
+  if (!verdict) return; // background grade hasn't landed yet
+  if (lastAlertVerdict(s.id) === verdict) return; // unchanged — no new development
+  await insertAlertRow({
+    user_id: s.user_id,
+    rule_id: s.id,
+    run_id: run.id,
+    symbol: run.symbol,
+    share_name: run.share_name || s.share_name,
+    agent_name: run.agent_name,
+    verdict,
+  });
+  log.info("[alerts]", `${s.symbol}: ${verdict} (${run.agent_name})`);
+}
+
 async function tick(): Promise<void> {
   try {
-    const schedules = await listAllScheduleRows();
+    const rules = await listAllAlertRuleRows();
     const now = Date.now();
-    for (const s of schedules) {
+    for (const s of rules) {
+      // Alerts only for enabled rules — paused rules neither fire nor alert.
+      if (!s.enabled) continue;
       const due = dueOccurrence(s, now);
-      if (!due) continue;
-      if (due.at < +new Date(s.created_at)) continue; // occurrence predates the schedule
-      if (s.last_fired_date && s.last_fired_date >= due.date) continue;
-      // Atomic claim: only one tick may win a given local day.
-      if (!claimSchedule(s.id, due.date)) continue;
-      log.info("[schedules]", `firing ${s.symbol} @ ${s.time} ${s.timezone}`);
-      startAnalysisRun({
-        userId: s.user_id,
-        symbol: s.symbol,
-        source: s.source,
-        agentId: s.agent_id || undefined,
-        model: s.model || undefined,
-        systemPrompt: s.system_prompt || undefined,
-        skillIds: s.skill_ids?.length ? s.skill_ids : undefined,
-        budget: {
-          ...(s.max_steps ? { maxSteps: s.max_steps } : {}),
-          ...(s.max_tokens ? { maxTokens: s.max_tokens } : {}),
-        },
-      }).catch((e: any) => log.warn("[schedules]", `fire failed: ${e?.message || e}`));
+      if (due && due.at >= +new Date(s.created_at) && !(s.last_fired_date && s.last_fired_date >= due.date)) {
+        // Atomic claim: only one tick may win a given local day.
+        if (claimAlertRule(s.id, due.date)) {
+          log.info("[alerts]", `firing ${s.symbol} @ ${s.time} ${s.timezone}`);
+          startAnalysisRun({
+            userId: s.user_id,
+            symbol: s.symbol,
+            source: s.source,
+            agentId: s.agent_id || undefined,
+            model: s.model || undefined,
+            systemPrompt: s.system_prompt || undefined,
+            skillIds: s.skill_ids?.length ? s.skill_ids : undefined,
+            budget: {
+              ...(s.max_steps ? { maxSteps: s.max_steps } : {}),
+              ...(s.max_tokens ? { maxTokens: s.max_tokens } : {}),
+            },
+          })
+            .then((runId) => setAlertRuleRun(s.id, runId))
+            .catch((e: any) => log.warn("[alerts]", `fire failed: ${e?.message || e}`));
+        }
+      }
+      await evaluateAlert(s).catch((e: any) => log.warn("[alerts]", `evaluate failed: ${e?.message || e}`));
     }
   } catch (e: any) {
-    log.warn("[schedules]", `tick error: ${e?.message || e}`);
+    log.warn("[alerts]", `tick error: ${e?.message || e}`);
   }
 }
 
 /** Boot + periodic calls used by the server's listen callback. */
-export function startScheduleTicker(): void {
+export function startAlertTicker(): void {
   void tick();
   setInterval(() => void tick(), TICK_MS).unref?.();
 }

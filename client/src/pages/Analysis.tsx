@@ -2,7 +2,7 @@ import { Flex, Text, Spinner, Box } from "@/compat/ui";
 import { useEffect, useState, useCallback, useRef, type ReactNode, type CSSProperties } from "react";
 import { MdCheck, MdClose } from "react-icons/md";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { AgentService, AnalysisService, API_BASE, type ScheduleRow } from "@/db";
+import { AgentService, AnalysisService, API_BASE, type AlertRuleRow } from "@/db";
 import { HarnessAgentService, type HarnessAgent } from "@/lib/harnessAgents";
 import { formatSeconds } from "@/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -205,7 +205,7 @@ function RunFooter({
                         </ResumingButton>
                     ) : (
                         <PrimaryButton onClick={onRun} disabled={!canRun} style={runAction}>
-                            {scheduled ? <><CalendarDays size={16} /> Start</> : <><Play size={16} /> Run analysis</>}
+                            {scheduled ? <><CalendarDays size={16} /> Create alert</> : <><Play size={16} /> Run analysis</>}
                         </PrimaryButton>
                     ))}
                 {status === "PENDING" && (
@@ -423,20 +423,20 @@ export default function Analysis() {
         setRunError(message);
         setStatus("ERROR");
     }, []);
-    // "Schedule another" on the workspace opens ?mode=schedule — scheduled preselected.
-    const [runMode, setRunMode] = useState<RunMode>(() => (searchParams.get("mode") === "schedule" ? "scheduled" : "once"));
+    // "New alert" on the workspace opens ?mode=alert — alert mode preselected.
+    const [runMode, setRunMode] = useState<RunMode>(() => (searchParams.get("mode") === "alert" ? "scheduled" : "once"));
     const [frequency, setFrequency] = useState<Frequency>("daily");
     const [scheduleAt, setScheduleAt] = useState<DateTimeValue>(() => ({ date: toDateKey(new Date()), time: "09:00" }));
-    const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
-    const [scheduleToDelete, setScheduleToDelete] = useState<ScheduleRow | null>(null);
+    const [alertRules, setAlertRules] = useState<AlertRuleRow[]>([]);
+    const [ruleToDelete, setRuleToDelete] = useState<AlertRuleRow | null>(null);
 
-    const loadSchedules = useCallback(() => {
-        AnalysisService.listSchedules().then(setSchedules).catch(() => {});
+    const loadAlertRules = useCallback(() => {
+        AnalysisService.listAlertRules().then(setAlertRules).catch(() => {});
     }, []);
 
     useEffect(() => {
-        loadSchedules();
-    }, [loadSchedules]);
+        loadAlertRules();
+    }, [loadAlertRules]);
 
     const runAnalysis = async () => {
         if (starting || status !== "EMPTY") return;
@@ -475,14 +475,14 @@ export default function Analysis() {
         }
     };
 
-    const startScheduled = async () => {
+    const createAlert = async () => {
         if (starting || status !== "EMPTY" || !config.share || !selectedAgent) return;
 
         setStarting(true);
         setRunError(null);
         try {
             const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-            await AnalysisService.createSchedule({
+            await AnalysisService.createAlertRule({
                 symbol: config.share,
                 share_name: config.shareName || config.share,
                 source: config.source,
@@ -496,19 +496,19 @@ export default function Analysis() {
                 timezone,
             });
             toaster.create({
-                title: `${FREQ_LABEL[frequency]} run scheduled`,
+                title: `${FREQ_LABEL[frequency]} alert set`,
                 description: `${config.shareName || config.share} · from ${scheduleAt.date} at ${scheduleAt.time} (${timezone})`,
                 type: "success",
             });
-            loadSchedules();
+            loadAlertRules();
         } catch (error) {
-            console.error("Schedule error:", error);
+            console.error("Alert error:", error);
             toaster.create({
-                title: "Couldn't schedule the run",
+                title: "Couldn't set the alert",
                 description:
                     (error as { response?: { data?: { error?: string } } })?.response?.data?.error ||
                     (error as Error)?.message ||
-                    "The schedule could not be created.",
+                    "The alert could not be created.",
                 type: "error",
             });
         } finally {
@@ -674,7 +674,7 @@ export default function Analysis() {
                             New Run
                         </h1>
                         <p className="mt-1.5 font-app-body text-[12px] font-normal text-console-ink-3">
-                            Launch a single analysis now, or schedule it to run every day.
+                            Run one analysis now, or set an alert that checks on a schedule.
                         </p>
                     </div>
 
@@ -686,16 +686,16 @@ export default function Analysis() {
                                         key={m}
                                         selected={runMode === m}
                                         onClick={() => setRunMode(m)}
-                                        testId={m === "scheduled" ? "mode-scheduled" : undefined}
+                                        testId={m === "scheduled" ? "mode-alert" : undefined}
                                     >
-                                        {m === "once" ? "Single" : <><Clock className="size-3.5" aria-hidden /> Scheduled</>}
+                                        {m === "once" ? "Single" : <><Clock className="size-3.5" aria-hidden /> Alert</>}
                                     </ModeButton>
                                 ))}
                             </div>
                         </FormRow>
                         {runMode === "scheduled" && (
                             <>
-                                <FormRow label="Repeats">
+                                <FormRow label="Checks">
                                     <div className="flex flex-wrap gap-2">
                                         {(["daily", "weekly", "biweekly", "monthly"] as const).map((f) => (
                                             <ModeButton key={f} selected={frequency === f} onClick={() => setFrequency(f)}>
@@ -704,7 +704,7 @@ export default function Analysis() {
                                         ))}
                                     </div>
                                 </FormRow>
-                                <FormRow label="First run">
+                                <FormRow label="First check">
                                     <DateTimePicker value={scheduleAt} onChange={setScheduleAt} />
                                 </FormRow>
                             </>
@@ -976,7 +976,7 @@ export default function Analysis() {
                         canRun={canRunAnalysis && !starting}
                         hint={runHint}
                         scheduled={runMode === "scheduled"}
-                        onRun={runMode === "scheduled" ? startScheduled : runAnalysis}
+                        onRun={runMode === "scheduled" ? createAlert : runAnalysis}
                         onReset={() => {
                             navigate("/analysis");
                             setStatus("EMPTY");
@@ -989,10 +989,10 @@ export default function Analysis() {
                     />
                 </Box>
 
-                {status === "EMPTY" && schedules.length > 0 && (
+                {status === "EMPTY" && alertRules.length > 0 && (
                     <Box mt={5}>
-                        <Text {...microLabel} mb={2}>Active schedules</Text>
-                        {schedules.map((s) => (
+                        <Text {...microLabel} mb={2}>Your alerts</Text>
+                        {alertRules.map((s) => (
                             <Flex key={s.id} align="center" gap={2.5} py={1.5}>
                                 <TickerLogo symbol={s.symbol} size={16} />
                                 <Text
@@ -1012,8 +1012,8 @@ export default function Analysis() {
                                 </Text>
                                 <Box
                                     as="button"
-                                    aria-label={`Delete schedule for ${s.share_name || s.symbol}`}
-                                    onClick={() => setScheduleToDelete(s)}
+                                    aria-label={`Delete alert for ${s.share_name || s.symbol}`}
+                                    onClick={() => setRuleToDelete(s)}
                                     display="flex"
                                     flexShrink={0}
                                     border="none"
@@ -1030,25 +1030,25 @@ export default function Analysis() {
                 )}
 
                 <ConfirmDialog
-                    open={!!scheduleToDelete}
-                    title="Delete schedule?"
-                    message={`The ${FREQ_LABEL[scheduleToDelete?.frequency ?? "daily"]} run for ${scheduleToDelete?.share_name || scheduleToDelete?.symbol || ""} will stop. This can't be undone.`}
+                    open={!!ruleToDelete}
+                    title="Delete this alert?"
+                    message={`The ${FREQ_LABEL[ruleToDelete?.frequency ?? "daily"]} check for ${ruleToDelete?.share_name || ruleToDelete?.symbol || ""} will stop. This can't be undone.`}
                     confirmLabel="Delete"
-                    onCancel={() => setScheduleToDelete(null)}
+                    onCancel={() => setRuleToDelete(null)}
                     onConfirm={async () => {
-                        const target = scheduleToDelete;
-                        setScheduleToDelete(null);
+                        const target = ruleToDelete;
+                        setRuleToDelete(null);
                         if (!target) return;
                         try {
-                            await AnalysisService.deleteSchedule(target.id);
-                            loadSchedules();
+                            await AnalysisService.deleteAlertRule(target.id);
+                            loadAlertRules();
                         } catch (error) {
                             toaster.create({
-                                title: "Couldn't delete the schedule",
+                                title: "Couldn't delete the alert",
                                 description:
                                     (error as { response?: { data?: { error?: string } } })?.response?.data?.error ||
                                     (error as Error)?.message ||
-                                    "The schedule could not be deleted.",
+                                    "The alert could not be deleted.",
                                 type: "error",
                             });
                         }

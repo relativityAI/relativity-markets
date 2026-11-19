@@ -6,6 +6,7 @@ import { useAuth } from "@/auth/useAuth";
 import { LOCAL_AUTH } from "@/auth/AuthContext";
 import { useColorMode } from "@/components/ui/color-mode";
 import UserAvatar from "@/components/shared/UserAvatar";
+import AlertBell from "@/components/AlertBell";
 import { AgentService, AnalysisService, API_BASE, SettingsService, SkillService, type SkillSummary } from "@/db";
 import { TickerLogo } from "@/lib/sourceLogos";
 import { cn } from "@/lib/utils";
@@ -504,6 +505,7 @@ export default function NavBar() {
         </div>
 
         <div className="order-2 flex items-center gap-5 md:order-none">
+          {user && <AlertBell />}
           <button
             aria-label="Toggle color mode"
             onClick={toggleColorMode}

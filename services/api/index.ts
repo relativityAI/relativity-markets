@@ -7,9 +7,13 @@ import { config } from "./config.js";
 import { encrypt, decrypt } from "./crypto.js";
 import { getUserSettings, upsertUserSettings } from "../db/settings.js";
 import {
-  insertScheduleRow,
-  listScheduleRows,
-  deleteScheduleRow,
+  insertAlertRuleRow,
+  listAlertRuleRows,
+  deleteAlertRuleRow,
+  setAlertRuleEnabled,
+  listAlertRows,
+  markAlertRead,
+  markAllAlertsRead,
   listWatchlistRows,
   getWatchlistRow,
   insertWatchlistRow,
@@ -66,7 +70,7 @@ import {
   type Verdict,
 } from "../harness/index.js";
 import { runHarnessSymbol, resumePausedRun, startAnalysisRun, startStaleRunSweeper } from "./runs.js";
-import { startScheduleTicker, isValidTime, isValidTimeZone, isValidFrequency, todayInTz } from "./schedule.js";
+import { startAlertTicker, isValidTime, isValidTimeZone, isValidFrequency, todayInTz } from "./schedule.js";
 import { extractText } from "./upload.js";
 import multer from "multer";
 import { requireAuth, type AuthedRequest } from "./auth.js";
@@ -407,6 +411,11 @@ app.get("/agents/defaults", (_req, res) => {
       return {
         name: a.name,
         skill_name: (skillId && builtins.find((s) => s.id === skillId)?.name) || skillId,
+        category: a.category || null,
+        model: a.modelId || null,
+        // The soul prompt body is the agent's own description — shown
+        // read-only in the workspace viewer popup.
+        description: (a.soulPrompt || "").trim() || null,
       };
     }),
   );
@@ -718,7 +727,11 @@ app.post("/analysis/:id/resume", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/schedules", requireAuth, async (req, res) => {
+// ── Alert rules ─────────────────────────────────────────────────────────────
+// A rule watches one symbol on a cadence; each fired run's verdict becomes an
+// alert (see the ticker in schedule.ts). Routes kept at /alert-rules.
+
+app.post("/alert-rules", requireAuth, async (req, res) => {
   try {
     const body = req.body || {};
     const symbol = String(body.symbol || "").trim();
@@ -740,7 +753,7 @@ app.post("/schedules", requireAuth, async (req, res) => {
     const skillIds = Array.isArray(body.skills) && body.skills.length ? body.skills.map(String).slice(0, 1) : null;
     const maxSteps = body.max_steps != null && body.max_steps !== "" && Number.isFinite(Number(body.max_steps)) ? Number(body.max_steps) : null;
     const maxTokens = body.max_tokens != null && body.max_tokens !== "" && Number.isFinite(Number(body.max_tokens)) ? Number(body.max_tokens) : null;
-    const data = await insertScheduleRow({
+    const data = await insertAlertRuleRow({
       user_id: userId,
       symbol,
       share_name: String(body.share_name || symbol),
@@ -758,27 +771,69 @@ app.post("/schedules", requireAuth, async (req, res) => {
     });
     res.json(data);
   } catch (e: any) {
-    console.error("POST /schedules ERROR:", e);
-    res.status(503).json({ error: e?.message || "Schedule failed" });
+    console.error("POST /alert-rules ERROR:", e);
+    res.status(503).json({ error: e?.message || "Could not create the alert" });
   }
 });
 
-app.get("/schedules", requireAuth, async (req, res) => {
+app.get("/alert-rules", requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
-    res.json(await listScheduleRows(userId));
+    res.json(await listAlertRuleRows(userId));
   } catch (e: any) {
-    res.status(503).json({ error: e?.message || "Could not list schedules" });
+    res.status(503).json({ error: e?.message || "Could not list alerts" });
   }
 });
 
-app.delete("/schedules/:id", requireAuth, async (req, res) => {
+app.patch("/alert-rules/:id", requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
-    await deleteScheduleRow(userId, String(req.params.id));
+    const enabled = Boolean(req.body?.enabled);
+    await setAlertRuleEnabled(userId, String(req.params.id), enabled);
+    res.json({ ok: true, enabled });
+  } catch (e: any) {
+    res.status(503).json({ error: e?.message || "Could not update the alert" });
+  }
+});
+
+app.delete("/alert-rules/:id", requireAuth, async (req, res) => {
+  try {
+    const userId = (req as AuthedRequest).user.id;
+    await deleteAlertRuleRow(userId, String(req.params.id));
     res.json({ ok: true });
   } catch (e: any) {
-    res.status(503).json({ error: e?.message || "Could not delete schedule" });
+    res.status(503).json({ error: e?.message || "Could not delete the alert" });
+  }
+});
+
+// ── Alerts (fired verdicts) ─────────────────────────────────────────────────
+
+app.get("/alerts", requireAuth, async (req, res) => {
+  try {
+    const userId = (req as AuthedRequest).user.id;
+    res.json(await listAlertRows(userId));
+  } catch (e: any) {
+    res.status(503).json({ error: e?.message || "Could not list alerts" });
+  }
+});
+
+app.post("/alerts/:id/read", requireAuth, async (req, res) => {
+  try {
+    const userId = (req as AuthedRequest).user.id;
+    await markAlertRead(userId, String(req.params.id));
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(503).json({ error: e?.message || "Could not mark the alert read" });
+  }
+});
+
+app.post("/alerts/read-all", requireAuth, async (req, res) => {
+  try {
+    const userId = (req as AuthedRequest).user.id;
+    await markAllAlertsRead(userId);
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(503).json({ error: e?.message || "Could not mark alerts read" });
   }
 });
 
@@ -1462,7 +1517,7 @@ const server = app.listen(config.port, host, async () => {
   // PENDING/RUNNING from a previous process is dead. Clear it, then keep
   // sweeping hangs.
   startStaleRunSweeper();
-  startScheduleTicker();
+  startAlertTicker();
 });
 
 async function shutdown() {

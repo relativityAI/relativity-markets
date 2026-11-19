@@ -277,9 +277,9 @@ export function failStaleRunRows(error: string, olderThanMs: number): void {
     .run(error, now(), olderThanMs, cutoff);
 }
 
-// ── Schedules ───────────────────────────────────────────────────────────────
+// ── Alert rules (a rule watches one symbol on a cadence) ────────────────────
 
-export interface ScheduleRow {
+export interface AlertRuleRow {
   id: string;
   user_id: string;
   symbol: string;
@@ -296,48 +296,108 @@ export interface ScheduleRow {
   frequency: string;
   start_date: string | null;
   last_fired_date: string | null;
+  last_run_id: string | null;
+  enabled: number;
   created_at: string;
 }
 
-function scheduleRowOut(r: any): ScheduleRow {
+function alertRuleRowOut(r: any): AlertRuleRow {
   return { ...r, skill_ids: fromJson(r.skill_ids, null) };
 }
 
-export async function insertScheduleRow(row: Record<string, any>): Promise<ScheduleRow> {
+export async function insertAlertRuleRow(row: Record<string, any>): Promise<AlertRuleRow> {
   const r: Record<string, any> = { ...row, skill_ids: toJson(row.skill_ids ?? null) };
   if (!r.id) r.id = randomUUID();
   if (!r.created_at) r.created_at = now();
   const cols = Object.keys(r);
   getSqlite()
-    .prepare(`INSERT INTO schedules (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`)
+    .prepare(`INSERT INTO alert_rules (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`)
     .run(...cols.map((c) => (r as Record<string, unknown>)[c] as SQLInputValue));
-  const out = getSqlite().prepare("SELECT * FROM schedules WHERE id = ?").get(r.id) as any;
-  return scheduleRowOut(out);
+  const out = getSqlite().prepare("SELECT * FROM alert_rules WHERE id = ?").get(r.id) as any;
+  return alertRuleRowOut(out);
 }
 
-export async function listScheduleRows(userId: string): Promise<ScheduleRow[]> {
+export async function listAlertRuleRows(userId: string): Promise<AlertRuleRow[]> {
   return getSqlite()
-    .prepare("SELECT * FROM schedules WHERE user_id = ? ORDER BY created_at DESC")
+    .prepare("SELECT * FROM alert_rules WHERE user_id = ? ORDER BY created_at DESC")
     .all(userId)
-    .map(scheduleRowOut);
+    .map(alertRuleRowOut);
 }
 
-export async function listAllScheduleRows(): Promise<ScheduleRow[]> {
-  return getSqlite().prepare("SELECT * FROM schedules").all().map(scheduleRowOut);
+export async function listAllAlertRuleRows(): Promise<AlertRuleRow[]> {
+  return getSqlite().prepare("SELECT * FROM alert_rules").all().map(alertRuleRowOut);
 }
 
-export async function deleteScheduleRow(userId: string, id: string): Promise<void> {
-  getSqlite().prepare("DELETE FROM schedules WHERE id = ? AND user_id = ?").run(id, userId);
+export async function deleteAlertRuleRow(userId: string, id: string): Promise<void> {
+  getSqlite().prepare("DELETE FROM alert_rules WHERE id = ? AND user_id = ?").run(id, userId);
+}
+
+export async function setAlertRuleEnabled(userId: string, id: string, enabled: boolean): Promise<void> {
+  getSqlite().prepare("UPDATE alert_rules SET enabled = ? WHERE id = ? AND user_id = ?").run(enabled ? 1 : 0, id, userId);
 }
 
 /** Atomic per-day claim: true when this tick won the fire for `date`. */
-export function claimSchedule(id: string, date: string): boolean {
+export function claimAlertRule(id: string, date: string): boolean {
   const res = getSqlite()
     .prepare(
-      "UPDATE schedules SET last_fired_date = ? WHERE id = ? AND (last_fired_date IS NULL OR last_fired_date <> ?)",
+      "UPDATE alert_rules SET last_fired_date = ? WHERE id = ? AND (last_fired_date IS NULL OR last_fired_date <> ?)",
     )
     .run(date, id, date);
   return res.changes > 0;
+}
+
+/** Remember which run a rule fired, so completion can become an alert. */
+export function setAlertRuleRun(id: string, runId: string): void {
+  getSqlite().prepare("UPDATE alert_rules SET last_run_id = ? WHERE id = ?").run(runId, id);
+}
+
+// ── Alerts (fired verdicts, newest first, until read) ────────────────────────
+
+export interface AlertRow {
+  id: string;
+  user_id: string;
+  rule_id: string;
+  run_id: string | null;
+  symbol: string;
+  share_name: string;
+  agent_name: string | null;
+  verdict: string;
+  created_at: string;
+  read_at: string | null;
+}
+
+export async function insertAlertRow(row: Record<string, any>): Promise<AlertRow> {
+  const r: Record<string, any> = { ...row };
+  if (!r.id) r.id = randomUUID();
+  if (!r.created_at) r.created_at = now();
+  const cols = Object.keys(r);
+  getSqlite()
+    .prepare(`INSERT INTO alerts (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`)
+    .run(...cols.map((c) => (r as Record<string, unknown>)[c] as SQLInputValue));
+  const out = getSqlite().prepare("SELECT * FROM alerts WHERE id = ?").get(r.id) as any;
+  return out as AlertRow;
+}
+
+export async function listAlertRows(userId: string, limit = 50): Promise<AlertRow[]> {
+  return getSqlite()
+    .prepare("SELECT * FROM alerts WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+    .all(userId, limit) as unknown as AlertRow[];
+}
+
+/** The rule's most recent alert verdict — the dedupe key for "changed?" */
+export function lastAlertVerdict(ruleId: string): string | null {
+  const r = getSqlite()
+    .prepare("SELECT verdict FROM alerts WHERE rule_id = ? ORDER BY created_at DESC LIMIT 1")
+    .get(ruleId) as { verdict: string } | undefined;
+  return r?.verdict ?? null;
+}
+
+export async function markAlertRead(userId: string, id: string): Promise<void> {
+  getSqlite().prepare("UPDATE alerts SET read_at = ? WHERE id = ? AND user_id = ? AND read_at IS NULL").run(now(), id, userId);
+}
+
+export async function markAllAlertsRead(userId: string): Promise<void> {
+  getSqlite().prepare("UPDATE alerts SET read_at = ? WHERE user_id = ? AND read_at IS NULL").run(now(), userId);
 }
 
 // ── Watchlists ───────────────────────────────────────────────────────────────

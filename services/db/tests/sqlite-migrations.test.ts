@@ -18,6 +18,9 @@ describe("sqlite migrations", () => {
     expect(tableExists(d, "agents")).toBe(true);
     expect(tableExists(d, "analysis_runs")).toBe(true);
     expect(tableExists(d, "watchlists")).toBe(true);
+    expect(tableExists(d, "alert_rules")).toBe(true);
+    expect(tableExists(d, "alerts")).toBe(true);
+    expect(tableExists(d, "schedules")).toBe(false);
     expect(version(d)).toBe(SCHEMA_VERSION);
     expect(d.prepare("SELECT value FROM app_meta WHERE key='first_run_at'").get()).toBeTruthy();
   });
@@ -25,6 +28,13 @@ describe("sqlite migrations", () => {
   it("v4 adds watchlists to an existing v3 database", () => {
     const d = new DatabaseSync(":memory:");
     d.exec("CREATE TABLE legacy (x TEXT)");
+    // A real v3 database carries the v1 schema — including schedules, which
+    // v5 renames. Without it the forward migrations can't run.
+    d.exec(`CREATE TABLE schedules (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, symbol TEXT NOT NULL, share_name TEXT NOT NULL,
+      source TEXT NOT NULL, time TEXT NOT NULL, timezone TEXT NOT NULL, last_fired_date TEXT,
+      created_at TEXT NOT NULL DEFAULT 'now'
+    )`);
     d.exec("PRAGMA user_version = 3");
     migrateSqlite(d);
     expect(version(d)).toBe(SCHEMA_VERSION);
@@ -62,9 +72,47 @@ describe("sqlite migrations", () => {
     expect(version(d)).toBe(SCHEMA_VERSION);
     expect((d.prepare("SELECT x FROM legacy").get() as { x: string }).x).toBe("keep-me");
     // The v2 migration landed: new columns exist, existing rows keep firing daily.
-    const freq = d.prepare("SELECT frequency, start_date FROM schedules WHERE id='s1'").get() as { frequency: string; start_date: string | null };
-    expect(freq.frequency).toBe("daily");
-    expect(freq.start_date).toBeNull();
+    // v5 renamed the table: the same row is now an alert rule, enabled by default.
+    const rule = d.prepare("SELECT frequency, start_date, enabled, last_run_id FROM alert_rules WHERE id='s1'").get() as {
+      frequency: string;
+      start_date: string | null;
+      enabled: number;
+      last_run_id: string | null;
+    };
+    expect(rule.frequency).toBe("daily");
+    expect(rule.start_date).toBeNull();
+    expect(rule.enabled).toBe(1);
+    expect(rule.last_run_id).toBeNull();
+    expect(tableExists(d, "alerts")).toBe(true);
+  });
+
+  it("v5 turns a v4 schedules row into an enabled alert rule, data preserved", () => {
+    const d = new DatabaseSync(":memory:");
+    d.exec(`CREATE TABLE schedules (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, symbol TEXT NOT NULL, share_name TEXT NOT NULL,
+      source TEXT NOT NULL, agent_id TEXT, model TEXT, system_prompt TEXT, skill_ids TEXT,
+      max_steps INTEGER, max_tokens INTEGER, time TEXT NOT NULL, timezone TEXT NOT NULL,
+      frequency TEXT NOT NULL DEFAULT 'daily', start_date TEXT, last_fired_date TEXT,
+      created_at TEXT NOT NULL DEFAULT 'now'
+    )`);
+    d.exec("CREATE INDEX schedules_user_idx ON schedules (user_id)");
+    d.exec(`CREATE TABLE user_settings (user_id TEXT PRIMARY KEY, llm_keys_encrypted TEXT, prefs TEXT NOT NULL DEFAULT '{}')`);
+    d.exec("PRAGMA user_version = 4");
+    d.prepare(
+      "INSERT INTO schedules (id, user_id, symbol, share_name, source, time, timezone, frequency, last_fired_date) VALUES ('r1','u1','RELIANCE','Reliance','NSE','09:00','Asia/Kolkata','daily','2026-11-18')",
+    ).run();
+    migrateSqlite(d);
+    expect(version(d)).toBe(SCHEMA_VERSION);
+    expect(tableExists(d, "schedules")).toBe(false);
+    const row = d.prepare("SELECT symbol, frequency, last_fired_date, enabled FROM alert_rules WHERE id='r1'").get() as {
+      symbol: string;
+      frequency: string;
+      last_fired_date: string;
+      enabled: number;
+    };
+    expect(row).toEqual({ symbol: "RELIANCE", frequency: "daily", last_fired_date: "2026-11-18", enabled: 1 });
+    const cols = (d.prepare("SELECT name FROM pragma_table_info('alerts')").all() as { name: string }[]).map((c) => c.name);
+    expect(cols).toEqual(["id", "user_id", "rule_id", "run_id", "symbol", "share_name", "agent_name", "verdict", "created_at", "read_at"]);
   });
 
   it("pending migrations run once, in order", () => {
