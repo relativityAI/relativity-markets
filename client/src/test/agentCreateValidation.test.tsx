@@ -33,15 +33,16 @@ vi.mock("@/db", () => ({
     ]),
   },
   AnalysisService: {
-    listSchedules: vi.fn(async () => []),
-    deleteSchedule: vi.fn(async () => {}),
+    listAlertRules: vi.fn(async () => []),
+    deleteAlertRule: vi.fn(async () => {}),
+    setAlertRuleEnabled: vi.fn(async () => ({ ok: true, enabled: true })),
   },
 }));
 
 vi.mock("../pages/console/AgentSkills", () => ({ default: () => null }));
 
 import AgentLibrary from "../pages/console/AgentLibrary";
-import { AgentService, AnalysisService, type ScheduleRow } from "@/db";
+import { AgentService, AnalysisService, type AlertRuleRow } from "@/db";
 
 const create = vi.mocked(AgentService.createAgent);
 const wrap = (n: React.ReactNode) => (
@@ -78,18 +79,18 @@ describe("agent create popup validation", () => {
     expect(screen.queryByText("Pick a category before creating.")).not.toBeInTheDocument();
   });
 
-  it("stops a scheduled run only after it is confirmed", async () => {
-    vi.mocked(AnalysisService.listSchedules).mockResolvedValueOnce([
-      { id: "sc1", agent_id: "a9", frequency: "daily", time: "09:00", timezone: "UTC", symbol: "ACME", share_name: "Acme" } as ScheduleRow,
+  it("stops an alert only after it is confirmed", async () => {
+    vi.mocked(AnalysisService.listAlertRules).mockResolvedValueOnce([
+      { id: "sc1", agent_id: "a9", frequency: "daily", time: "09:00", timezone: "UTC", symbol: "ACME", share_name: "Acme", enabled: 1, last_run_id: null } as AlertRuleRow,
     ]);
     render(wrap(<AgentLibrary />));
 
     fireEvent.click(await screen.findByRole("button", { name: /^stop$/i }));
     // Confirmation first — nothing is deleted until it is accepted.
-    expect(screen.getByRole("button", { name: /stop schedule/i })).toBeTruthy();
-    expect(AnalysisService.deleteSchedule).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /stop alert/i })).toBeTruthy();
+    expect(AnalysisService.deleteAlertRule).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: /stop schedule/i }));
-    await waitFor(() => expect(AnalysisService.deleteSchedule).toHaveBeenCalledWith("sc1"));
+    fireEvent.click(screen.getByRole("button", { name: /stop alert/i }));
+    await waitFor(() => expect(AnalysisService.deleteAlertRule).toHaveBeenCalledWith("sc1"));
   });
 });

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type ComponentType, type DragEvent } from "react";
 import { Link } from "react-router-dom";
 import { Clock, Play, ArrowRight, List, Plus, X, Search, Loader2, Pencil, Trash2, LayoutGrid, Table2 } from "lucide-react";
-import { AnalysisService, AgentService, API_BASE, WatchlistService, type ScheduleRow, type WatchlistRow, type WatchlistItem } from "@/db";
+import { AnalysisService, AgentService, API_BASE, WatchlistService, AlertService, type AlertRuleRow, type AlertRow, type WatchlistRow, type WatchlistItem } from "@/db";
 import { TickerLogo } from "@/lib/sourceLogos";
 import AgentAvatar from "@/components/shared/AgentAvatar";
 import { DropdownItem } from "@/pages/shared/AnalysisControls";
@@ -786,22 +786,28 @@ export default function HomePage() {
         return () => ro.disconnect();
     }, []);
 
-    const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
+    const [alertRules, setAlertRules] = useState<AlertRuleRow[]>([]);
+    const [alerts, setAlerts] = useState<AlertRow[]>([]);
     const [runs, setRuns] = useState<any[]>([]);
     const [agents, setAgents] = useState<any[]>([]);
 
     useEffect(() => {
-        Promise.allSettled([AnalysisService.listSchedules(), AnalysisService.listAnalyses(), AgentService.listAgents()])
-            .then(([s, r, a]) => {
-                if (s.status === "fulfilled" && Array.isArray(s.value)) setSchedules(s.value);
-                if (r.status === "fulfilled" && Array.isArray(r.value)) setRuns(r.value);
-                if (a.status === "fulfilled" && Array.isArray(a.value)) setAgents(a.value);
-            });
+        Promise.allSettled([
+            AnalysisService.listAlertRules(),
+            AnalysisService.listAnalyses(),
+            AgentService.listAgents(),
+            AlertService.listAlerts(),
+        ]).then(([s, r, a, al]) => {
+            if (s.status === "fulfilled" && Array.isArray(s.value)) setAlertRules(s.value);
+            if (r.status === "fulfilled" && Array.isArray(r.value)) setRuns(r.value);
+            if (a.status === "fulfilled" && Array.isArray(a.value)) setAgents(a.value);
+            if (al.status === "fulfilled" && Array.isArray(al.value)) setAlerts(al.value);
+        });
     }, []);
 
     // Active agents: one card per schedule, shown in two columns. Last run is
     // matched by agent name (run rows carry no agent_id).
-    const activeCards = schedules.map((s) => {
+    const activeCards = alertRules.map((s) => {
         const agent = agents.find((a) => (a._id || a.id) === s.agent_id) || null;
         const name = agent?.name;
         const last = name
@@ -844,13 +850,68 @@ export default function HomePage() {
                             </p>
                         </div>
 
+                        {/* Alerts — verdicts that changed while you were away */}
+                        <HomeSection
+                            title="Alerts"
+                            empty={alerts.length === 0}
+                            emptyTo="/new-analysis?mode=alert"
+                            emptyIcon={Clock}
+                            emptyLabel="Set up an alert"
+                        >
+                            {alerts.length > 0 && (
+                                <div className="flex flex-col gap-2.5">
+                                    {alerts.slice(0, 5).map((a) => (
+                                        <Link
+                                            key={a.id}
+                                            to={a.run_id ? `/analysis-result/${a.run_id}` : "/analysis-list"}
+                                            data-solid=""
+                                            className={CARD}
+                                            onClick={() => {
+                                                if (!a.read_at) AlertService.markRead(a.id).catch(() => {});
+                                            }}
+                                        >
+                                            <div className="glass-hover-body flex w-full items-center gap-3 px-3 py-2.5">
+                                                <TickerLogo symbol={a.symbol} size={32} />
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="flex items-center gap-1.5">
+                                                        {!a.read_at && (
+                                                            <span
+                                                                aria-label="Unread"
+                                                                className="h-1.5 w-1.5 shrink-0 rounded-full"
+                                                                style={{ background: "var(--signal-negative)" }}
+                                                            />
+                                                        )}
+                                                        <span className="truncate font-app-body text-[14px] font-light text-[var(--ink-primary)]">
+                                                            {a.share_name || a.symbol}
+                                                        </span>
+                                                    </div>
+                                                    <div className="truncate font-app-body text-[11px] font-normal text-[var(--ink-tertiary)]">
+                                                        {a.agent_name || "Agent"} · {timeAgo(a.created_at)}
+                                                    </div>
+                                                </div>
+                                                <span
+                                                    className="shrink-0 rounded-full px-2 py-0.5 font-app-body text-[11px] font-medium"
+                                                    style={{
+                                                        color: verdictColor(a.verdict) || "var(--ink-secondary)",
+                                                        background: `color-mix(in srgb, ${verdictColor(a.verdict) || "var(--ink-secondary)"} 14%, transparent)`,
+                                                    }}
+                                                >
+                                                    {a.verdict}
+                                                </span>
+                                            </div>
+                                        </Link>
+                                    ))}
+                                </div>
+                            )}
+                        </HomeSection>
+
                         {/* Active Agents */}
                         <HomeSection
                             title="Active Agents"
                             empty={activeCards.length === 0}
                             emptyTo="/new-analysis"
                             emptyIcon={Clock}
-                            emptyLabel="Schedule an agent run"
+                            emptyLabel="Set up an alert"
                         >
                             {activeCards.length > 0 && (
                                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">

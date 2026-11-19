@@ -13,10 +13,13 @@ axios.interceptors.request.use(async (config) => {
     return config;
 });
 
-/** A scheduled run (schedules table). `time` is wall clock in `timezone`;
- *  `frequency` picks daily / weekly / biweekly / monthly; `start_date`
- *  ("YYYY-MM-DD") anchors the recurrence. */
-export interface ScheduleRow {
+/** An alert rule (alert_rules table): the agent checks one symbol on this
+ *  cadence and its verdict becomes an alert. `time` is wall clock in
+ *  `timezone`; `frequency` picks daily / weekly / biweekly / monthly;
+ *  `start_date` ("YYYY-MM-DD") anchors the recurrence. */
+export interface AlertRuleRow {
+    enabled: number;
+    last_run_id: string | null;
     id: string;
     symbol: string;
     share_name: string;
@@ -218,9 +221,9 @@ export const AnalysisService = {
         };
     },
 
-    /** Scheduled run: run config + frequency + anchor date + wall-clock time
-     *  in an IANA timezone. */
-    async createSchedule(config: {
+    /** Create an alert rule: run config + frequency + anchor date +
+     *  wall-clock time in an IANA timezone. */
+    async createAlertRule(config: {
         symbol: string;
         share_name?: string;
         source?: string;
@@ -234,17 +237,22 @@ export const AnalysisService = {
         time: string;
         timezone: string;
     }) {
-        const response = await axios.post(`${API_BASE}/schedules`, config);
-        return response.data as ScheduleRow;
+        const response = await axios.post(`${API_BASE}/alert-rules`, config);
+        return response.data as AlertRuleRow;
     },
 
-    async listSchedules() {
-        const response = await axios.get(`${API_BASE}/schedules`);
-        return response.data as ScheduleRow[];
+    async listAlertRules() {
+        const response = await axios.get(`${API_BASE}/alert-rules`);
+        return response.data as AlertRuleRow[];
     },
 
-    async deleteSchedule(id: string) {
-        const response = await axios.delete(`${API_BASE}/schedules/${encodeURIComponent(id)}`);
+    async setAlertRuleEnabled(id: string, enabled: boolean) {
+        const response = await axios.patch(`${API_BASE}/alert-rules/${encodeURIComponent(id)}`, { enabled });
+        return response.data as { ok: boolean; enabled: boolean };
+    },
+
+    async deleteAlertRule(id: string) {
+        const response = await axios.delete(`${API_BASE}/alert-rules/${encodeURIComponent(id)}`);
         return response.data;
     },
 
@@ -472,5 +480,35 @@ export const BuilderService = {
             qualitative_params: { parameter: string; content: string; weightage: number }[];
             quantitative_rules: { metric: string; metric_name: string; metric_type: string; operator: string; value: number; weightage: number }[];
         };
+    },
+};
+
+/** Fired verdicts — the navbar bell and homepage feed off these. */
+export interface AlertRow {
+    id: string;
+    rule_id: string;
+    run_id: string | null;
+    symbol: string;
+    share_name: string;
+    agent_name: string | null;
+    verdict: string;
+    created_at: string;
+    read_at: string | null;
+}
+
+export const AlertService = {
+    async listAlerts() {
+        const response = await axios.get(`${API_BASE}/alerts`);
+        return response.data as AlertRow[];
+    },
+
+    async markRead(id: string) {
+        const response = await axios.post(`${API_BASE}/alerts/${encodeURIComponent(id)}/read`);
+        return response.data;
+    },
+
+    async markAllRead() {
+        const response = await axios.post(`${API_BASE}/alerts/read-all`);
+        return response.data;
     },
 };

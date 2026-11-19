@@ -32,9 +32,10 @@ const state = vi.hoisted(() => ({
 vi.mock("@/db", () => ({
   API_BASE: "/api",
   AnalysisService: {
-    listSchedules: vi.fn(async () => []),
+    listAlertRules: vi.fn(async () => []),
     listAnalyses: vi.fn(async () => []),
   },
+  AlertService: { listAlerts: vi.fn(async () => []), markRead: vi.fn(async () => {}), markAllRead: vi.fn(async () => {}) },
   AgentService: { listAgents: vi.fn(async () => []) },
   WatchlistService: {
     list: vi.fn(async () => state.lists.map((l) => ({ ...l }))),

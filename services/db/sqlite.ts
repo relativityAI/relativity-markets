@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS skills (
   UNIQUE (user_id, skill_id)
 );
 CREATE INDEX IF NOT EXISTS skills_user_idx ON skills (user_id);
-CREATE TABLE IF NOT EXISTS schedules (
+CREATE TABLE IF NOT EXISTS alert_rules (
   id             TEXT PRIMARY KEY,
   user_id        TEXT NOT NULL,
   symbol         TEXT NOT NULL,
@@ -89,9 +89,24 @@ CREATE TABLE IF NOT EXISTS schedules (
   frequency      TEXT NOT NULL DEFAULT 'daily',
   start_date     TEXT,
   last_fired_date TEXT,
+  last_run_id    TEXT,
+  enabled        INTEGER NOT NULL DEFAULT 1,
   created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
-CREATE INDEX IF NOT EXISTS schedules_user_idx ON schedules (user_id);
+CREATE INDEX IF NOT EXISTS alert_rules_user_idx ON alert_rules (user_id);
+CREATE TABLE IF NOT EXISTS alerts (
+  id          TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL,
+  rule_id     TEXT NOT NULL,
+  run_id      TEXT,
+  symbol      TEXT NOT NULL,
+  share_name  TEXT NOT NULL,
+  agent_name  TEXT,
+  verdict     TEXT NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  read_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS alerts_user_idx ON alerts (user_id, created_at);
 CREATE TABLE IF NOT EXISTS watchlists (
   id          TEXT PRIMARY KEY,
   user_id     TEXT NOT NULL,
@@ -191,7 +206,7 @@ function ensureSchema(d: DatabaseSync): void {
  * When the schema changes: append a {version, sql} entry (never edit old
  * ones), bump SCHEMA_VERSION to match, and cover it in db/tests.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 // v2: scheduled-run frequencies (daily/weekly/biweekly/monthly) — frequency
 // plus the first-run date the recurrence is anchored to. Existing rows keep
@@ -216,6 +231,30 @@ export const MIGRATIONS: { version: number; sql: string }[] = [
   updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS watchlists_user_idx ON watchlists (user_id);`,
+  },
+  // v5: schedules -> alert_rules (the feature is alerts: a rule watches a
+  // symbol on a cadence, each fired run's verdict becomes an alert row).
+  // Renamed in place so existing rows keep firing; enabled defaults to 1.
+  {
+    version: 5,
+    // ponytail: the old schedules_user_idx index keeps its name on migrated
+    // DBs (SQLite has no ALTER INDEX IF EXISTS; index names don't matter).
+    sql: `ALTER TABLE schedules RENAME TO alert_rules;
+ALTER TABLE alert_rules ADD COLUMN last_run_id TEXT;
+ALTER TABLE alert_rules ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
+CREATE TABLE IF NOT EXISTS alerts (
+  id          TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL,
+  rule_id     TEXT NOT NULL,
+  run_id      TEXT,
+  symbol      TEXT NOT NULL,
+  share_name  TEXT NOT NULL,
+  agent_name  TEXT,
+  verdict     TEXT NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  read_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS alerts_user_idx ON alerts (user_id, created_at);`,
   },
 ];
 

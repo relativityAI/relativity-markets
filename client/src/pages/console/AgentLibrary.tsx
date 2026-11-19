@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, Trash2, X, BadgeCheck, Square } from "lucide-react";
-import { AnalysisService, AgentService, SkillService, type ScheduleRow, type SkillSummary } from "@/db";
+import { Plus, Trash2, X, BadgeCheck, Square, Pause, Play } from "lucide-react";
+import { AnalysisService, AgentService, SkillService, type AlertRuleRow, type SkillSummary } from "@/db";
 import AgentAvatar from "@/components/shared/AgentAvatar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
@@ -125,7 +125,13 @@ function FormSection({ title, children }: { title: string; children: ReactNode }
 }
 
 /** A default agent as served by GET /agents/defaults (from agents/defaults/*.md). */
-type DefaultAgentRow = { name: string; skill_name?: string };
+type DefaultAgentRow = {
+    name: string;
+    skill_name?: string;
+    category?: string | null;
+    model?: string | null;
+    description?: string | null;
+};
 
 const AGENT_FILTERS = [
     { value: "all", label: "All" },
@@ -143,6 +149,9 @@ export default function AgentLibrary() {
     const [fetchError, setFetchError] = useState(false);
     const [query, setQuery] = useState("");
     const [expanded, setExpanded] = useState<string | null>(null);
+    // Default agents are file-defined and read-only — viewing one opens this,
+    // not the editable draft popup.
+    const [viewDefault, setViewDefault] = useState<DefaultAgentRow | null>(null);
     const [draft, setDraft] = useState<Draft | null>(null);
     const [dirty, setDirty] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -153,9 +162,9 @@ export default function AgentLibrary() {
     const [deleting, setDeleting] = useState(false);
     const [defaults, setDefaults] = useState<DefaultAgentRow[]>([]);
     const [categories, setCategories] = useState<string[]>([]);
-    const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
+    const [alertRules, setAlertRules] = useState<AlertRuleRow[]>([]);
     const [stopping, setStopping] = useState<string | null>(null);
-    const [stopTarget, setStopTarget] = useState<ScheduleRow | null>(null);
+    const [stopTarget, setStopTarget] = useState<AlertRuleRow | null>(null);
     // One merged agent list: which group to show (All / Default / Mine).
     const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
 
@@ -180,8 +189,8 @@ export default function AgentLibrary() {
         AgentService.listCategories()
             .then((data) => { if (!cancelled && Array.isArray(data)) setCategories(data); })
             .catch(() => {});
-        AnalysisService.listSchedules()
-            .then((data) => { if (!cancelled && Array.isArray(data)) setSchedules(data); })
+        AnalysisService.listAlertRules()
+            .then((data) => { if (!cancelled && Array.isArray(data)) setAlertRules(data); })
             .catch(() => {});
         return () => { cancelled = true; };
     }, []);
@@ -358,17 +367,32 @@ export default function AgentLibrary() {
         }
     };
 
-    /* ── Stop a scheduled run ─────────────────────────────────────────── */
+    /* ── Alert rules: pause/resume and stop ───────────────────────────── */
+
+    const handleToggle = async (rule: AlertRuleRow) => {
+        const next = rule.enabled ? 0 : 1;
+        setAlertRules((prev) => prev.map((r) => (r.id === rule.id ? { ...r, enabled: next } : r)));
+        try {
+            await AnalysisService.setAlertRuleEnabled(rule.id, Boolean(next));
+        } catch (e: any) {
+            setAlertRules((prev) => prev.map((r) => (r.id === rule.id ? { ...r, enabled: rule.enabled } : r)));
+            toaster.create({
+                title: "Couldn't update the alert",
+                description: e?.response?.data?.error || e?.message || "Please try again.",
+                type: "error",
+            });
+        }
+    };
 
     const handleStop = async (id: string) => {
         setStopping(id);
         try {
-            await AnalysisService.deleteSchedule(id);
-            setSchedules((prev) => prev.filter((s) => s.id !== id));
-            toaster.create({ title: "Schedule stopped", type: "success" });
+            await AnalysisService.deleteAlertRule(id);
+            setAlertRules((prev) => prev.filter((s) => s.id !== id));
+            toaster.create({ title: "Alert stopped", type: "success" });
         } catch (e: any) {
             toaster.create({
-                title: "Couldn't stop the schedule",
+                title: "Couldn't stop the alert",
                 description: e?.response?.data?.error || e?.message || "Please try again.",
                 type: "error",
             });
@@ -580,17 +604,24 @@ export default function AgentLibrary() {
                     ) : (
                         <div className={cn("mt-2 w-full", SECTION_LIST)}>
                             {visibleAgents.map((row) => (row.kind === "default" ? (
-                                <div key={`default-${row.name}`} className="-mx-2 ws-row flex w-full items-center gap-3 rounded-[8px] px-2 py-3">
-                                    <AgentAvatar agent={row.name} size={48} />
-                                    <div className="min-w-0 flex-1">
-                                        <p className="flex items-center gap-1.5 font-app-body text-[18px] leading-tight font-light text-console-ink">
-                                            <span className="truncate">{row.name}</span>
-                                            <BadgeCheck className="size-3.5 shrink-0 text-console-accent" aria-hidden />
-                                        </p>
-                                        <p className="truncate font-app-body text-[13px] font-light text-console-ink-3">
-                                            {row.skill_name ? `Skill · ${row.skill_name}` : "No skill attached"}
-                                        </p>
-                                    </div>
+                                <div key={`default-${row.name}`} className="-mx-2 ws-row group w-full cursor-pointer rounded-[8px] px-2 py-3">
+                                    <button
+                                        type="button"
+                                        onClick={() => setViewDefault(row)}
+                                        aria-label={`View ${row.name}`}
+                                        className="flex w-full min-w-0 items-center gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/40"
+                                    >
+                                        <AgentAvatar agent={row.name} size={48} />
+                                        <span className="min-w-0 flex-1">
+                                            <span className="flex items-center gap-1.5 font-app-body text-[18px] leading-tight font-light text-console-ink">
+                                                <span className="truncate">{row.name}</span>
+                                                <BadgeCheck className="size-3.5 shrink-0 text-console-accent" aria-hidden />
+                                            </span>
+                                            <span className="block truncate font-app-body text-[13px] font-light text-console-ink-3">
+                                                {row.skill_name ? `Skill · ${row.skill_name}` : "No skill attached"}
+                                            </span>
+                                        </span>
+                                    </button>
                                 </div>
                             ) : (() => {
                                 const agent = row.agent;
@@ -640,45 +671,57 @@ export default function AgentLibrary() {
                     )}
                 </section>
 
-                {/* ── Scheduled runs — transparent panel with a light border ── */}
-                {/* Scheduled runs sits straight on the canvas — no box */}
+                {/* ── Alerts sits straight on the canvas — no box ── */}
+                {/* ── Alerts — the rules that watch symbols for you ── */}
                 <section>
                     <div className="flex items-center gap-3">
                         <h2 className="min-w-0 font-app-body text-[20px] leading-none font-light tracking-tight text-console-ink">
-                            Scheduled runs
+                            Alerts
                         </h2>
                         <Button
                             size="sm"
                             variant="outline"
                             className="ml-auto shrink-0 px-4"
-                            onClick={() => navigate("/new-analysis?mode=schedule")}
+                            onClick={() => navigate("/new-analysis?mode=alert")}
                         >
-                            <Plus /> Schedule another
+                            <Plus /> New alert
                         </Button>
                     </div>
                     <p className="mt-1.5 font-app-body text-[13px] font-light text-console-ink-3">
-                        Agent runs that fire on a schedule.
+                        An agent checks a symbol on a schedule. When its verdict changes, you get an alert.
                     </p>
                     <div className={cn("mt-2 w-full", SECTION_LIST)}>
-                        {schedules.length === 0 ? (
+                        {alertRules.length === 0 ? (
                             <p className="flex h-full items-center justify-center text-center font-app-body text-sm text-console-ink-3">
-                                No scheduled runs.
+                                No alerts yet.
                             </p>
                         ) : (
                             <div className="h-full">
-                            {schedules.map((s) => {
+                            {alertRules.map((s) => {
                                 const agent = agents.find((a) => (a._id || a.id) === s.agent_id);
+                                const paused = !s.enabled;
                                 return (
-                                    <div key={s.id} className="-mx-2 flex w-full items-center gap-3 rounded-[8px] px-2 py-3">
+                                    <div key={s.id} className={cn("-mx-2 flex w-full items-center gap-3 rounded-[8px] px-2 py-3", paused && "opacity-60")}>
                                         <AgentAvatar agent={agent?.name || s.agent_id || "Agent"} size={48} label={agent?.name} />
                                         <div className="min-w-0 flex-1">
                                             <p className="truncate font-app-body text-[18px] leading-tight font-light text-console-ink">
-                                                {agent?.name || s.agent_id || "Scheduled agent"}
+                                                {agent?.name || s.agent_id || "Agent"}
                                             </p>
                                             <p className="truncate font-app-body text-[13px] font-light text-console-ink-3">
                                                 {{ daily: "Daily", weekly: "Weekly", biweekly: "Biweekly", monthly: "Monthly" }[s.frequency] || "Daily"} {s.time} ({s.timezone}) · {s.share_name || s.symbol || "General"}
+                                                {paused && <span className="text-console-ink-4"> · Paused</span>}
                                             </p>
                                         </div>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="shrink-0 px-3"
+                                            aria-label={`${paused ? "Resume" : "Pause"} alert for ${s.share_name || s.symbol}`}
+                                            onClick={() => void handleToggle(s)}
+                                        >
+                                            {paused ? <Play /> : <Pause />}
+                                            {paused ? "Resume" : "Pause"}
+                                        </Button>
                                         <Button
                                             variant="outline"
                                             size="sm"
@@ -696,6 +739,54 @@ export default function AgentLibrary() {
                     </div>
                 </section>
             </div>
+
+            {/* ── View a default agent — read-only (file-defined, not editable) ── */}
+            <Dialog open={!!viewDefault} onOpenChange={(open) => { if (!open) setViewDefault(null); }}>
+                {viewDefault && (
+                    <DialogContent className="sm:max-w-2xl" data-testid="default-agent-viewer">
+                        <DialogTitle className="sr-only">View default agent</DialogTitle>
+                        <div className="flex items-center gap-5 pt-1">
+                            <AgentAvatar agent={viewDefault.name} size={112} label="Agent" />
+                            <div className="min-w-0 flex-1">
+                                <p className="flex items-center gap-2 font-app-body text-[24px] leading-tight font-light text-console-ink">
+                                    <span className="truncate">{viewDefault.name}</span>
+                                    <BadgeCheck className="size-5 shrink-0 text-console-accent" aria-hidden />
+                                </p>
+                                <p className="mt-1.5 font-app-body text-[13px] font-light text-console-ink-3">
+                                    Relativity verified default · read-only
+                                </p>
+                            </div>
+                        </div>
+                        <FormSection title="Details">
+                            <FormRow label="Skill">
+                                <span className="font-app-body text-[14px] font-light text-console-ink">
+                                    {viewDefault.skill_name || "No skill attached"}
+                                </span>
+                            </FormRow>
+                            {viewDefault.category && (
+                                <FormRow label="Category">
+                                    <span className="font-app-body text-[14px] font-light text-console-ink">{viewDefault.category}</span>
+                                </FormRow>
+                            )}
+                            {viewDefault.model && (
+                                <FormRow label="Model">
+                                    <span className="font-app-body text-[14px] font-light text-console-ink">{viewDefault.model}</span>
+                                </FormRow>
+                            )}
+                        </FormSection>
+                        {viewDefault.description && (
+                            <FormSection title="What this agent does">
+                                <p className="whitespace-pre-wrap px-1 font-app-body text-[14px] leading-relaxed font-light text-console-ink-2">
+                                    {viewDefault.description}
+                                </p>
+                            </FormSection>
+                        )}
+                        <div className="flex justify-end pt-3">
+                            <Button size="sm" onClick={() => setViewDefault(null)}>Close</Button>
+                        </div>
+                    </DialogContent>
+                )}
+            </Dialog>
 
             {/* ── Edit my agent — popup ── */}
             <Dialog open={!!expanded && !!draft} onOpenChange={(open) => { if (!open) closeEditor(); }}>
@@ -762,16 +853,16 @@ export default function AgentLibrary() {
                 <AgentSkills heading="h2" />
             </div>
 
-            {/* ── Stop a scheduled run — destructive, so it confirms first ── */}
+            {/* ── Stop an alert — destructive, so it confirms first ── */}
             <ConfirmDialog
                 open={stopTarget !== null}
-                title="Stop this scheduled run?"
+                title="Stop this alert?"
                 message={
                     stopTarget
-                        ? `"${agents.find((a) => (a._id || a.id) === stopTarget.agent_id)?.name || stopTarget.agent_id || "This schedule"}" will stop firing and the schedule will be removed. This cannot be undone.`
+                        ? `"${agents.find((a) => (a._id || a.id) === stopTarget.agent_id)?.name || stopTarget.agent_id || "This alert"}" will stop watching ${stopTarget.share_name || stopTarget.symbol}. This cannot be undone.`
                         : ""
                 }
-                confirmLabel="Stop schedule"
+                confirmLabel="Stop alert"
                 onCancel={() => setStopTarget(null)}
                 onConfirm={() => {
                     const id = stopTarget?.id;
