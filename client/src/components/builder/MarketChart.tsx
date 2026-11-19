@@ -9,7 +9,7 @@
  * anything other than `date`) stay on recharts in ReportBlockRenderer.
  */
 import { useEffect, useMemo, useRef } from "react";
-import { Box, Flex, Text } from "@chakra-ui/react";
+import { Box, Flex, Text } from "@/compat/ui";
 import {
   createChart,
   AreaSeries,

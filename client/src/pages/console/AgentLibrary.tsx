@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Plus, Trash2, X, BadgeCheck, Square } from "lucide-react";
 import { AnalysisService, AgentService, SkillService, type ScheduleRow, type SkillSummary } from "@/db";
 import AgentAvatar from "@/components/shared/AgentAvatar";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -18,11 +19,12 @@ import { SectionSearch } from "@/components/console/SectionSearch";
 import AgentSkills from "./AgentSkills";
 
 /**
- * Agents & Skills — one workspace page. Default agents and My agents side by
- * side; clicking a row opens the editor (name, category, ONE skill, tags) in
- * a popup, as does "New agent" — there is no separate editor page. A blank
- * name is never persisted: the last saved text is restored on blur, so a
- * stray select-all-delete can't wipe it. The skill library sits underneath.
+ * Workspace — one page: agents (verified defaults + yours, one search over
+ * both) beside scheduled runs, with the skill library collapsed at the
+ * bottom. Clicking your row opens the editor (name, category, ONE skill,
+ * tags) in a popup, as does "New agent" — there is no separate editor page.
+ * A blank name is never persisted: the last saved text is restored on blur,
+ * so a stray select-all-delete can't wipe it.
  */
 
 interface Agent {
@@ -50,7 +52,7 @@ function toDraft(a: Agent): Draft {
 }
 
 function formatDate(dateStr?: string): string {
-    if (!dateStr) return "—";
+    if (!dateStr) return "-";
     return new Date(dateStr).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
@@ -94,9 +96,8 @@ function CategorySelect({ value, onChange, categories, invalid }: { value: strin
 const FIELD_INPUT =
     "h-9 rounded-[6px] border-[0.5px] border-[color:var(--hairline)] bg-transparent px-2.5 text-sm shadow-none placeholder:text-console-ink-4 focus-visible:ring-1 focus-visible:ring-console-accent/40 dark:bg-transparent";
 
-/** Sections sit straight on the canvas — no box, no border, no fill (the
- *  grid gap does the separating), matching the runs/insights page. */
-const SECTION_BOX = "";
+/** Very thin hairline box with medium (12px) corners — the Agents section. */
+const SECTION_BOX = "rounded-xl border-[0.5px] border-[color:var(--hairline)] p-5";
 
 /** Mobile: hug the listed rows, capped. Laptop (md+): the original fixed
  *  height so all boxes stay uniform. */
@@ -126,6 +127,13 @@ function FormSection({ title, children }: { title: string; children: ReactNode }
 /** A default agent as served by GET /agents/defaults (from agents/defaults/*.md). */
 type DefaultAgentRow = { name: string; skill_name?: string };
 
+const AGENT_FILTERS = [
+    { value: "all", label: "All" },
+    { value: "defaults", label: "Default" },
+    { value: "mine", label: "Mine" },
+] as const;
+type AgentFilter = (typeof AGENT_FILTERS)[number]["value"];
+
 export default function AgentLibrary() {
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
@@ -147,7 +155,9 @@ export default function AgentLibrary() {
     const [categories, setCategories] = useState<string[]>([]);
     const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
     const [stopping, setStopping] = useState<string | null>(null);
-    const [defaultQuery, setDefaultQuery] = useState("");
+    const [stopTarget, setStopTarget] = useState<ScheduleRow | null>(null);
+    // One merged agent list: which group to show (All / Default / Mine).
+    const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
 
     /* ── Load ─────────────────────────────────────────────────────────── */
 
@@ -241,7 +251,7 @@ export default function AgentLibrary() {
         setDraft({ ...draft, name: saved.name || "" });
         toaster.create({
             title: "Blank name restored",
-            description: "An agent's name can't be empty — the last saved name came back.",
+            description: "An agent's name can't be empty. The last saved name came back.",
             type: "info",
         });
     };
@@ -381,37 +391,60 @@ export default function AgentLibrary() {
     }, [agents, query, skills]);
 
     const filteredDefaults = useMemo(() => {
-        const q = defaultQuery.trim().toLowerCase();
+        const q = query.trim().toLowerCase();
         if (!q) return defaults;
         return defaults.filter(
             (d) =>
                 d.name?.toLowerCase().includes(q) ||
                 (d.skill_name || "").toLowerCase().includes(q),
         );
-    }, [defaults, defaultQuery]);
+    }, [defaults, query]);
+
+    // The one list: verified defaults (read-only, badged) + yours (clickable).
+    const visibleAgents = useMemo(() => {
+        const rows: ({ kind: "default"; name: string; skill_name?: string } | { kind: "mine"; agent: Agent })[] = [];
+        if (agentFilter !== "mine") rows.push(...filteredDefaults.map((d) => ({ kind: "default" as const, ...d })));
+        if (agentFilter !== "defaults") rows.push(...filtered.map((a) => ({ kind: "mine" as const, agent: a })));
+        return rows;
+    }, [agentFilter, filteredDefaults, filtered]);
 
     const blank = !!draft && !draft.name.trim();
     const FLASH = "bg-console-negative animate-[pulse_3s_ease-in-out_infinite]";
     const saveState = saving
         ? { label: "Saving…", cls: "bg-console-accent animate-pulse" }
         : blank
-            ? { label: "Blank — last saved version kept", cls: FLASH }
+            ? { label: "Blank - last saved version kept", cls: FLASH }
             : dirty
                 ? { label: "Unsaved changes", cls: FLASH }
                 : { label: "Saved", cls: "bg-console-positive" };
 
     return (
         <div className="w-full py-8">
-            {/* Header — title only; the New agent action lives in My agents */}
+            {/* Header — title left; the one search + New agent action right */}
             <div className="flex flex-wrap items-center gap-3">
                 <div className="min-w-0">
                     <h1 className="font-app-body shrink-0 text-[30px] leading-none font-light tracking-tight text-console-ink">
-                        Agents
+                        Workspace
                     </h1>
                     <p className="mt-1 text-[15px] font-light text-console-ink-3">
                         Investment agents to analyze, track and monitor the markets.
                     </p>
                 </div>
+                <SectionSearch
+                    label="Search agents"
+                    placeholder="Search agents…"
+                    value={query}
+                    onChange={setQuery}
+                />
+                <Button
+                    size="sm"
+                    variant="outline"
+                    className="px-4"
+                    onClick={openCreate}
+                    data-testid="new-agent"
+                >
+                    <Plus /> New agent
+                </Button>
             </div>
 
             {/* ── Create agent — popup ── */}
@@ -426,7 +459,7 @@ export default function AgentLibrary() {
                                 {newDraft.name.trim() || "New agent"}
                             </p>
                             <p className="mt-1.5 font-app-body text-[13px] font-light text-console-ink-3">
-                                Investment agent — one category, one skill.
+                                Investment agent: one category, one skill.
                             </p>
                         </div>
                     </div>
@@ -485,73 +518,37 @@ export default function AgentLibrary() {
                 </DialogContent>
             </Dialog>
 
-            {/* ── Three boxes side by side: defaults, yours, scheduled runs ── */}
+            {/* ── Agents (defaults + yours) | scheduled runs ── */}
             <div className="mt-8 grid gap-x-10 gap-y-10 lg:grid-cols-3">
-                {/* ── Default agents — file-defined, listed from the API ── */}
-                <section className={SECTION_BOX}>
+                <section className={`lg:col-span-2 ${SECTION_BOX}`}>
                     <div className="flex flex-wrap items-center gap-3">
                         <div className="min-w-0">
                             <h2 className="font-app-body text-[20px] leading-none font-light tracking-tight text-console-ink">
-                                Default agents
-                            </h2>
-                            <p className="mt-1.5 flex items-center gap-1.5 font-app-body text-[13px] font-light text-console-ink-3">
-                                Relativity verified agents
-                                <BadgeCheck className="size-3.5 shrink-0 text-console-accent" aria-hidden />
-                            </p>
-                        </div>
-                        <SectionSearch
-                            label="Search default agents"
-                            placeholder="Search default agents…"
-                            value={defaultQuery}
-                            onChange={setDefaultQuery}
-                        />
-                    </div>
-                    <div className={cn("mt-2 w-full", SECTION_LIST)}>
-                        {filteredDefaults.length === 0 && (
-                            <p className="py-6 text-center font-app-body text-sm text-console-ink-3">
-                                {defaults.length === 0 ? "No default agents found." : "No default agents match that search."}
-                            </p>
-                        )}
-                        {filteredDefaults.map((d) => (
-                            <div key={d.name} className="-mx-2 ws-row flex w-full cursor-pointer items-center gap-3 rounded-[8px] px-2 py-3">
-                                <AgentAvatar agent={d.name} size={48} />
-                                <div className="min-w-0 flex-1">
-                                    <p className="truncate font-app-body text-[18px] leading-tight font-light text-console-ink">{d.name}</p>
-                                    <p className="truncate font-app-body text-[13px] font-light text-console-ink-3">
-                                        {d.skill_name ? `Skill · ${d.skill_name}` : "No skill attached"}
-                                    </p>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </section>
-
-                {/* ── My agents ── */}
-                <section className={SECTION_BOX}>
-                    <div className="flex flex-wrap items-center gap-3">
-                        <div className="min-w-0">
-                            <h2 className="font-app-body text-[20px] leading-none font-light tracking-tight text-console-ink">
-                                My agents
+                                Agents
                             </h2>
                             <p className="mt-1.5 font-app-body text-[13px] font-light text-console-ink-3">
-                                Your own — click a row to edit.
+                                Relativity verified defaults and yours. Click yours to edit.
                             </p>
                         </div>
-                        <SectionSearch
-                            label="Search my agents"
-                            placeholder="Search my agents…"
-                            value={query}
-                            onChange={setQuery}
-                        />
-                        <Button
-                            size="sm"
-                            variant="outline"
-                            className="px-4"
-                            onClick={openCreate}
-                            data-testid="new-agent"
-                        >
-                            <Plus /> New agent
-                        </Button>
+                        {/* One segmented filter for the merged list */}
+                        <div className="ml-auto flex shrink-0 items-center rounded-full border-[0.5px] border-[color:var(--hairline)] p-0.5">
+                            {AGENT_FILTERS.map((f) => (
+                                <button
+                                    key={f.value}
+                                    type="button"
+                                    aria-pressed={agentFilter === f.value}
+                                    onClick={() => setAgentFilter(f.value)}
+                                    className={cn(
+                                        "cursor-pointer rounded-full px-3 py-1 font-app-body text-[13px] font-light transition-colors",
+                                        agentFilter === f.value
+                                            ? "bg-[var(--surface-recessed)] text-console-ink"
+                                            : "text-console-ink-3 hover:text-console-ink",
+                                    )}
+                                >
+                                    {f.label}
+                                </button>
+                            ))}
+                        </div>
                     </div>
                     {loading ? (
                         <div className="mt-4 max-h-[22rem] space-y-4 overflow-hidden md:h-[22rem]">
@@ -561,27 +558,43 @@ export default function AgentLibrary() {
                         </div>
                     ) : fetchError ? (
                         <div className="mt-4 flex max-h-[22rem] flex-col items-center justify-center py-12 text-center md:h-[22rem] md:py-0">
-                            <p className="font-app-body text-lg font-light text-console-ink">The Agent Console could not reach the server.</p>
+                            <p className="font-app-body text-lg font-light text-console-ink">The Workspace could not reach the server.</p>
                             <p className="mt-1 font-app-body text-sm text-console-ink-2">The agent API may be unavailable. Reload to try again.</p>
                         </div>
-                    ) : agents.length === 0 ? (
-                        <div className="mt-4 flex max-h-[22rem] flex-col items-center justify-center py-12 text-center md:h-[22rem] md:py-0">
-                            <p className="font-app-body text-lg font-light text-console-ink">No agents yet.</p>
-                            <p className="mx-auto mt-1.5 max-w-[46ch] font-app-body text-sm text-console-ink-2">
-                                An agent is a name, a category and a skill. Create one to start.
+                    ) : visibleAgents.length === 0 ? (
+                        defaults.length + agents.length === 0 ? (
+                            <div className="mt-4 flex max-h-[22rem] flex-col items-center justify-center py-12 text-center md:h-[22rem] md:py-0">
+                                <p className="font-app-body text-lg font-light text-console-ink">No agents yet.</p>
+                                <p className="mx-auto mt-1.5 max-w-[46ch] font-app-body text-sm text-console-ink-2">
+                                    An agent is a name, a category and a skill. Create one to start.
+                                </p>
+                                <Button className="mt-5" onClick={openCreate}>
+                                    <Plus /> Create an agent
+                                </Button>
+                            </div>
+                        ) : (
+                            <p className="py-6 text-center font-app-body text-sm text-console-ink-3">
+                                {query.trim() ? "No agents match that search." : "No agents in this group yet."}
                             </p>
-                            <Button className="mt-5" onClick={openCreate}>
-                                <Plus /> Create an agent
-                            </Button>
-                        </div>
+                        )
                     ) : (
-                        <div className={cn("mt-1 w-full", SECTION_LIST)}>
-                            {filtered.length === 0 && (
-                                <p className="py-6 text-center text-sm text-console-ink-3">No agents match that search.</p>
-                            )}
-                            {filtered.map((agent) => {
+                        <div className={cn("mt-2 w-full", SECTION_LIST)}>
+                            {visibleAgents.map((row) => (row.kind === "default" ? (
+                                <div key={`default-${row.name}`} className="-mx-2 ws-row flex w-full items-center gap-3 rounded-[8px] px-2 py-3">
+                                    <AgentAvatar agent={row.name} size={48} />
+                                    <div className="min-w-0 flex-1">
+                                        <p className="flex items-center gap-1.5 font-app-body text-[18px] leading-tight font-light text-console-ink">
+                                            <span className="truncate">{row.name}</span>
+                                            <BadgeCheck className="size-3.5 shrink-0 text-console-accent" aria-hidden />
+                                        </p>
+                                        <p className="truncate font-app-body text-[13px] font-light text-console-ink-3">
+                                            {row.skill_name ? `Skill · ${row.skill_name}` : "No skill attached"}
+                                        </p>
+                                    </div>
+                                </div>
+                            ) : (() => {
+                                const agent = row.agent;
                                 const id = agent._id || agent.id || "";
-                                const isOpen = expanded === id && !!draft;
                                 return (
                                     <div key={id} className="-mx-2 ws-row group w-full cursor-pointer rounded-[8px] px-2 py-3">
                                         <div className="flex items-center gap-3">
@@ -592,7 +605,6 @@ export default function AgentLibrary() {
                                                 className="flex min-w-0 flex-1 items-center gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/40"
                                             >
                                                 <AgentAvatar agent={agent} size={48} label={agent.name || "Agent"} />
-                                                {/* Left: name over the created date */}
                                                 <span className="flex min-w-0 flex-1 flex-col gap-1">
                                                     <span className="block truncate font-app-body text-[18px] leading-tight font-light text-console-ink">
                                                         {agent.name || "Untitled agent"}
@@ -623,13 +635,14 @@ export default function AgentLibrary() {
                                         </div>
                                     </div>
                                 );
-                            })}
+                            })()))}
                         </div>
                     )}
                 </section>
 
                 {/* ── Scheduled runs — transparent panel with a light border ── */}
-                <section className={SECTION_BOX}>
+                {/* Scheduled runs sits straight on the canvas — no box */}
+                <section>
                     <div className="flex items-center gap-3">
                         <h2 className="min-w-0 font-app-body text-[20px] leading-none font-light tracking-tight text-console-ink">
                             Scheduled runs
@@ -671,7 +684,7 @@ export default function AgentLibrary() {
                                             size="sm"
                                             className="shrink-0 border-console-negative/40! text-console-negative"
                                             disabled={stopping === s.id}
-                                            onClick={() => handleStop(s.id)}
+                                            onClick={() => setStopTarget(s)}
                                         >
                                             <Square /> Stop
                                         </Button>
@@ -746,8 +759,26 @@ export default function AgentLibrary() {
 
             {/* ── Skills, as they are (its own py-8 separates the sections) ── */}
             <div className="mt-10">
-                <AgentSkills />
+                <AgentSkills heading="h2" />
             </div>
+
+            {/* ── Stop a scheduled run — destructive, so it confirms first ── */}
+            <ConfirmDialog
+                open={stopTarget !== null}
+                title="Stop this scheduled run?"
+                message={
+                    stopTarget
+                        ? `"${agents.find((a) => (a._id || a.id) === stopTarget.agent_id)?.name || stopTarget.agent_id || "This schedule"}" will stop firing and the schedule will be removed. This cannot be undone.`
+                        : ""
+                }
+                confirmLabel="Stop schedule"
+                onCancel={() => setStopTarget(null)}
+                onConfirm={() => {
+                    const id = stopTarget?.id;
+                    setStopTarget(null);
+                    if (id) void handleStop(id);
+                }}
+            />
 
             <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open && !deleting) setDeleteTarget(null); }}>
                 <AlertDialogContent>

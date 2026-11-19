@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { ChakraProvider, createSystem, defaultConfig } from "@chakra-ui/react";
 
 beforeAll(() => {
   if (!window.matchMedia) {
@@ -62,9 +61,9 @@ import HomePage from "@/pages/HomePage";
 import { AnalysisService, WatchlistService } from "@/db";
 
 const wrap = (n: React.ReactNode) => (
-  <ChakraProvider value={createSystem(defaultConfig)}>
+  <>
     <MemoryRouter>{n}</MemoryRouter>
-  </ChakraProvider>
+  </>
 );
 
 describe("home watchlists", () => {

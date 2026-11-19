@@ -5,6 +5,9 @@ import { AnimatePresence, motion } from "motion/react";
  * The My Workspace shell — the animated content area only. Scrolling belongs
  * to the page itself (App's route container), so this renders plain flow:
  * content grows the page and the window scrollbar does the rest.
+ *
+ * No section sub-nav: the workspace is one page (agents + the embedded
+ * skills list); the separate skills/builder/tools pages and routes are gone.
  */
 
 export default function ConsoleLayout() {
@@ -12,7 +15,9 @@ export default function ConsoleLayout() {
 
     return (
         <div className="flex min-h-full flex-col bg-console-canvas">
-            <main className="flex-1" id="console-content">
+            {/* Plain div, not <main>: App's scroll container is the page's
+                single main landmark. */}
+            <div className="flex-1" id="console-content">
                 <AnimatePresence mode="wait" initial={false}>
                     <motion.div
                         key={location.pathname}
@@ -25,7 +30,7 @@ export default function ConsoleLayout() {
                         <Outlet />
                     </motion.div>
                 </AnimatePresence>
-            </main>
+            </div>
         </div>
     );
 }

@@ -7,7 +7,7 @@ import {
   Navigate
 } from 'react-router';
 
-import { Box, Flex, Spinner, Center } from "@chakra-ui/react";
+import { Box, Flex, Spinner, Center } from "@/compat/ui";
 import { AuthProvider } from "./auth/AuthContext";
 import { useAuth } from "./auth/useAuth";
 import Login from "./pages/Login";
@@ -26,15 +26,13 @@ import ThankYou from "./pages/ThankYou";
 import NavBar from "./components/NavBar";
 import Footer from "./components/Footer";
 import ApiKeySetupDialog from "./components/ApiKeySetupDialog";
+import RunWatcher from "./components/RunWatcher";
 import { MotionConfig, AnimatePresence, motion } from "motion/react";
 import { page, dur, ease } from "@/lib/motion";
 import { Toaster } from "./components/ui/toaster";
-// My Workspace (shadcn/Tailwind island inside the Chakra app)
+// My Workspace — the single agents+skills page (shell + inline agent redirects).
 import ConsoleLayout from "./pages/console/ConsoleLayout";
 import AgentLibrary from "./pages/console/AgentLibrary";
-import AgentSkills from "./pages/console/AgentSkills";
-import AgentTools from "./pages/console/AgentTools";
-import AiBuilder from "./pages/console/AiBuilder";
 
 // App is usable without a sign-in — no auth gate, no redirect to /login.
 function Protected({ children }: { children: ReactNode }) {
@@ -107,10 +105,10 @@ function AppRoutes() {
 
   useEffect(() => {
     const getTitle = (path: string) => {
+      // One name per concept (same words as the nav): New Run / Runs / Workspace.
       if (path === "/login") return "Sign in";
       if (path === "/") return "Relativity";
-      if (path === "/new-analysis") return "New Analysis";
-      if (path === "/analysis") return "New Analysis";
+      if (path === "/new-analysis" || path === "/analysis") return "New Run";
       if (path === "/agents") return "Agents";
       if (path === "/agent/builder" || path.startsWith("/agent/builder/")) return "Agent Detail";
       if (path.startsWith("/agent/")) return "Agent Detail";
@@ -118,8 +116,8 @@ function AppRoutes() {
       if (path.startsWith("/analysis-result/")) return "Run Result";
       if (path.startsWith("/stock/")) return "Stock";
       if (path === "/settings") return "Settings";
-      if (path === "/my-workspace" || path.startsWith("/my-workspace/")) return "My Workspace";
-      return "Relativity AI";
+      if (path === "/my-workspace" || path.startsWith("/my-workspace/")) return "Workspace";
+      return "Relativity";
     };
 
     const title = getTitle(locationPath);
@@ -142,11 +140,22 @@ function AppRoutes() {
 
   return (
     <Flex direction="column" h="100dvh" overflow="hidden">
+      {/* First tab stop on every page — the audit's "first 5 stops are the
+          data-source chips" defect. */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[2000] focus:rounded-[2px] focus:border focus:border-[var(--hairline)] focus:bg-[var(--surface-panel)] focus:px-3 focus:py-2 focus:font-[family-name:var(--font-body)] focus:text-sm focus:text-[var(--ink-primary)] focus:shadow-[0_8px_24px_rgba(0,0,0,0.2)]"
+      >
+        Skip to content
+      </a>
       {user && locationPath !== "/settings" && <ApiKeySetupDialog key={user.id} user={user} />}
+      {user && <RunWatcher />}
       {showNav && <NavBar />}
 
-        {/* One natural page scroller for every route — no inner scroll boxes. */}
-        <Box ref={scrollRef} w="100%" flex={1} overflowY="auto" overflowX="hidden" paddingX={0}>
+        {/* One natural page scroller for every route — no inner scroll boxes.
+            This is the app's single <main> landmark (the console's inner
+            container is a plain div so there is never a second one). */}
+        <Box as="main" id="main-content" ref={scrollRef} w="100%" flex={1} overflowY="auto" overflowX="hidden" paddingX={0}>
             <AnimatePresence mode="wait">
               <motion.div key={isConsole ? "console" : location.pathname} variants={page} style={{ height: "100%", maxWidth: "1200px", margin: "0 auto", paddingLeft: "1.5rem", paddingRight: "1.5rem" }} initial="initial" animate="animate" exit="exit">
                 <Suspense fallback={<PageFallback />}>
@@ -238,9 +247,6 @@ function AppRoutes() {
                       }
                     >
                       <Route index element={<AgentLibrary />} />
-                      <Route path="skills" element={<AgentSkills />} />
-                      <Route path="builder" element={<AiBuilder />} />
-                      <Route path="tools" element={<AgentTools />} />
                       {/* No agent editor page — the workspace list edits inline. */}
                       <Route path="agent/new" element={<AgentRedirect />} />
                       <Route path="agent/:id" element={<AgentRedirect />} />

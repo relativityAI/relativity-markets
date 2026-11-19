@@ -1,43 +1,43 @@
 "use client"
 
-import {
-  Toaster as ChakraToaster,
-  Portal,
-  Spinner,
-  Stack,
-  Toast,
-  createToaster,
-} from "@chakra-ui/react"
+/**
+ * Toaster — the Chakra Toast API (`toaster.create({ title, description, type })`)
+ * backed by sonner, which the app already ships. The Chakra runtime is gone;
+ * App.tsx still mounts <Toaster /> in the same place.
+ */
+import { toast, Toaster as SonnerToaster } from "sonner";
 
-export const toaster = createToaster({
-  placement: "bottom-end",
-  pauseOnPageIdle: true,
-})
+interface ToastInput {
+    title?: string;
+    description?: string;
+    type?: "info" | "success" | "warning" | "error" | "loading";
+    duration?: number;
+    action?: { label: string; onClick: () => void };
+}
 
-export const Toaster = () => {
-  return (
-    <Portal>
-      <ChakraToaster toaster={toaster} insetInline={{ mdDown: "4" }}>
-        {(toast) => (
-          <Toast.Root width={{ md: "sm" }}>
-            {toast.type === "loading" ? (
-              <Spinner size="sm" color="blue.solid" />
-            ) : (
-              <Toast.Indicator />
-            )}
-            <Stack gap="1" flex="1" maxWidth="100%">
-              {toast.title && <Toast.Title>{toast.title}</Toast.Title>}
-              {toast.description && (
-                <Toast.Description>{toast.description}</Toast.Description>
-              )}
-            </Stack>
-            {toast.action && (
-              <Toast.ActionTrigger>{toast.action.label}</Toast.ActionTrigger>
-            )}
-            {toast.closable && <Toast.CloseTrigger />}
-          </Toast.Root>
-        )}
-      </ChakraToaster>
-    </Portal>
-  )
+type ToastTitle = Parameters<typeof toast.info>[0];
+type ToastData = Parameters<typeof toast.info>[1];
+type Emit = (message: ToastTitle, data?: ToastData) => string | number;
+
+const EMIT: Record<string, Emit> = {
+    success: toast.success,
+    error: toast.error,
+    warning: toast.warning,
+    info: toast.info,
+    loading: toast.loading,
+};
+
+export const toaster = {
+    create(input: ToastInput) {
+        const emit = EMIT[input.type ?? "info"] ?? toast;
+        return emit(input.title, {
+            description: input.description,
+            duration: input.duration,
+            action: input.action,
+        });
+    },
+};
+
+export function Toaster() {
+    return <SonnerToaster position="bottom-right" richColors closeButton />;
 }

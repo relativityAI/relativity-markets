@@ -47,6 +47,9 @@ function token(v: unknown): unknown {
         case "bg": case "bg.subtle": case "bg.muted": return "var(--surface-recessed)";
         case "bg.panel": case "bg.canvas": return v === "bg.canvas" ? "var(--surface-canvas)" : "var(--surface-panel)";
         case "border": return "var(--hairline)";
+        // Chakra semantic colors that died with the runtime.
+        case "red.solid": return "var(--signal-negative)";
+        case "gray.300": return "var(--hairline)";
         case "white": return "#ffffff";
         case "black": return "#000000";
         case "transparent": return "transparent";
@@ -54,27 +57,48 @@ function token(v: unknown): unknown {
     }
 }
 
+/** Chakra `textStyle` shorthand → the app's type scale. */
+const TEXT_STYLES: Record<string, string> = {
+    xs: "11.5px", sm: "12.5px", md: "14px", lg: "16px", xl: "18px",
+};
+
 /**
- * Chakra responsive values ({ base: x, md: y }) → base style + a min-width
- * media query injected via a <style> tag is heavy; instead, when the window
- * is md+ we apply the md value. A CSS variable hook (useMediaQuery-like via
- * matchMedia, module-level singleton) keeps this cheap.
+ * Chakra responsive values ({ base, sm, md … }) → the value for the current
+ * width: walk the breakpoints ascending so the largest matching one wins,
+ * falling back to `base`. Test environments that stub matchMedia to
+ * `matches: false` resolve to `base` (correct for a narrow viewport).
  */
-let mdListenerAttached = false;
-let isMd = true;
-function ensureMdListener() {
-    if (mdListenerAttached || typeof window === "undefined" || typeof window.matchMedia !== "function") return;
-    mdListenerAttached = true;
-    isMd = window.matchMedia("(min-width: 768px)").matches;
-    const mq = window.matchMedia("(min-width: 768px)");
-    mq.addEventListener("change", (e) => { isMd = e.matches; });
+const BREAKPOINTS: Record<string, string> = { sm: "640px", md: "768px", lg: "1024px", xl: "1280px", "2xl": "1536px" };
+const bpCache = new Map<string, boolean>();
+let bpResizeBound = false;
+function bpMatches(bp: string): boolean {
+    const px = BREAKPOINTS[bp];
+    if (!px) return false;
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+    let hit = bpCache.get(bp);
+    if (hit === undefined) {
+        hit = window.matchMedia(`(min-width: ${px})`).matches;
+        bpCache.set(bp, hit);
+        // ponytail: cache invalidates on resize only — inline styles never
+        // re-evaluate without a re-render anyway; live CSS breakpoints would
+        // need a <style>-tag strategy instead.
+        if (!bpResizeBound) {
+            bpResizeBound = true;
+            window.addEventListener("resize", () => bpCache.clear(), { passive: true });
+        }
+    }
+    return hit;
 }
 function responsive(v: unknown): unknown {
     if (v && typeof v === "object" && !Array.isArray(v)) {
-        ensureMdListener();
         const o = v as Record<string, unknown>;
-        if (isMd) return o.md ?? o.base;
-        return o.base ?? o.md;
+        if (!("base" in o) && !Object.keys(o).some((k) => k in BREAKPOINTS)) return v;
+        let out = o.base;
+        for (const bp of Object.keys(BREAKPOINTS)) {
+            if (bp in o && bpMatches(bp)) out = o[bp];
+        }
+        if (out === undefined) out = o.base ?? Object.values(o)[0];
+        return out;
     }
     return v;
 }
@@ -150,13 +174,21 @@ function styleOf(props: Props): CSSProperties {
     if (p.wrap != null) s.flexWrap = responsive(p.wrap) === "wrap" || responsive(p.wrap) === true ? "wrap" : responsive(p.wrap);
     if (p.flexWrap != null) s.flexWrap = responsive(p.flexWrap);
     if (p.textAlign != null) s.textAlign = p.textAlign;
-    if (p.fontSize != null) s.fontSize = typeof p.fontSize === "number" ? `${p.fontSize}px` : p.fontSize;
+    if (p.fontSize != null) { const fs = responsive(p.fontSize); s.fontSize = (typeof fs === "number" ? `${fs}px` : fs) as CSSProperties["fontSize"]; }
     if (p.fontWeight != null) s.fontWeight = p.fontWeight;
     if (p.fontFamily != null) s.fontFamily = p.fontFamily;
     if (p.fontStyle != null) s.fontStyle = p.fontStyle;
     if (p.lineHeight != null) s.lineHeight = typeof p.lineHeight === "number" ? `${p.lineHeight * 0.4 + 1}rem` : p.lineHeight;
     if (p.letterSpacing != null) s.letterSpacing = p.letterSpacing;
     if (p.textTransform != null) s.textTransform = p.textTransform;
+    if (p.textStyle != null && TEXT_STYLES[p.textStyle as string]) s.fontSize = TEXT_STYLES[p.textStyle as string];
+    // Chakra noOfLines={n} — line clamp (element only, not a truncated string).
+    if (p.noOfLines != null) {
+        s.display = "-webkit-box";
+        s.WebkitLineClamp = p.noOfLines as number;
+        s.WebkitBoxOrient = "vertical";
+        s.overflow = "hidden";
+    }
     if (p.whiteSpace != null) s.whiteSpace = p.whiteSpace;
     if (p.wordBreak != null) s.wordBreak = p.wordBreak;
     if (p.overflowWrap != null) s.overflowWrap = p.overflowWrap;
@@ -182,7 +214,7 @@ function styleOf(props: Props): CSSProperties {
     if (p.scrollBehavior != null) s.scrollBehavior = p.scrollBehavior;
     if (p.aspectRatio != null) s.aspectRatio = p.aspectRatio;
     if (p.objectFit != null) s.objectFit = p.objectFit;
-    if (p.gridTemplateColumns != null) s.gridTemplateColumns = p.gridTemplateColumns;
+    if (p.gridTemplateColumns != null) s.gridTemplateColumns = responsive(p.gridTemplateColumns) as string;
     if (p.clip != null) s.clipPath = p.clip === "clip" ? "inset(50%)" : p.clip;
     if (p.srOnly) {
         s.position = "absolute"; s.width = "1px"; s.height = "1px";
@@ -190,6 +222,43 @@ function styleOf(props: Props): CSSProperties {
         s.clipPath = "inset(50%)"; s.whiteSpace = "nowrap"; s.borderWidth = "0";
     }
     return s;
+}
+
+/* ── Pseudo-selector props (_hover/_focus/_active) ─────────────────────────
+ * Inline styles can't express `:hover`, so a shared rule is registered once
+ * in a single <style> element and referenced by class. Identical rule objects
+ * share one class. ponytail: no per-element <style>, hover rules only —
+ * escalate to CSS-in-JS if a call site needs nested selectors.
+ */
+const pseudoCss = { _hover: "hover", _focus: "focus", _active: "active", _focusVisible: "focus-visible" } as const;
+const pseudoRules = new Map<string, string>();
+let pseudoSeq = 0;
+let pseudoEl: HTMLStyleElement | null = null;
+
+function kebab(k: string): string {
+    return k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+}
+
+function pseudoClass(prop: keyof typeof pseudoCss, value: unknown): string | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const rules = Object.entries(styleOf(value as Props))
+        .map(([k, v]) => `${kebab(k)}:${v}`)
+        .join(";");
+    if (!rules) return undefined;
+    let cls = pseudoRules.get(rules);
+    if (!cls) {
+        cls = `cp-${pseudoSeq++}`;
+        pseudoRules.set(rules, cls);
+        if (typeof document !== "undefined") {
+            if (!pseudoEl) {
+                pseudoEl = document.createElement("style");
+                pseudoEl.dataset.compat = "pseudo";
+                document.head.appendChild(pseudoEl);
+            }
+            pseudoEl.appendChild(document.createTextNode(`.${cls}:${pseudoCss[prop]}{${rules}}`));
+        }
+    }
+    return cls;
 }
 
 /** Props consumed by the style mapper (never passed to the DOM). */
@@ -207,20 +276,51 @@ const STYLE_PROPS = new Set([
     "overflowWrap", "truncate", "textDecoration", "cursor", "pointerEvents",
     "userSelect", "boxShadow", "filter", "transform", "transition", "animation",
     "resize", "visibility", "scrollMarginTop", "scrollBehavior", "aspectRatio",
-    "objectFit", "gridTemplateColumns", "clip", "lineClamp",
+    "objectFit", "gridTemplateColumns", "clip", "lineClamp", "noOfLines",
     "_hover", "_focus", "_active", "css", "textStyle", "colorPalette", "variant", "size", "as", "srOnly",
 ]);
 
 function split(props: Props): [CSSProperties, Record<string, unknown>] {
     const style = styleOf(props);
     const rest: Record<string, unknown> = {};
+    const extra: string[] = [];
     for (const [k, v] of Object.entries(props)) {
+        // `style` is merged below — forwarded raw it would clobber every
+        // mapped prop (the avatar chips lost their w/h to exactly this).
+        if (k === "style") continue;
+        if (k in pseudoCss) {
+            const cls = pseudoClass(k as keyof typeof pseudoCss, v);
+            if (cls) extra.push(cls);
+            continue;
+        }
         if (STYLE_PROPS.has(k)) continue;
         if (style[k as keyof CSSProperties] !== undefined) continue;
         // Keep handlers, aria, data, standard attrs
         rest[k] = v;
     }
+    // Raw style wins over mapped props — same order make() merged them in.
+    if (props.style) Object.assign(style, props.style);
+    if (extra.length) {
+        rest.className = [rest.className, ...extra].filter(Boolean).join(" ").trim();
+    }
     return [style, rest];
+}
+
+/** Pseudo-prop extraction for components that build their own style object
+ *  and spread the rest onto the DOM (Button, Tabs.Trigger, Table.*). */
+export function pseudoProps(props: Record<string, unknown>): Record<string, unknown> {
+    const rest: Record<string, unknown> = {};
+    const extra: string[] = [];
+    for (const [k, v] of Object.entries(props)) {
+        if (k in pseudoCss) {
+            const cls = pseudoClass(k as keyof typeof pseudoCss, v);
+            if (cls) extra.push(cls);
+            continue;
+        }
+        rest[k] = v;
+    }
+    if (extra.length) rest.className = [props.className, ...extra].filter(Boolean).join(" ").trim();
+    return rest;
 }
 
 function make<Tag extends keyof JSX.IntrinsicElements>(tag: Tag, defaults?: CSSProperties) {

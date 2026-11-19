@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Center, Spinner } from "@chakra-ui/react";
+import { Center, Spinner } from "@/compat/ui";
 import { useAuth } from "@/auth/useAuth";
 
 export default function AuthCallback() {

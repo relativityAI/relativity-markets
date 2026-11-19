@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { Box, Flex, Text, type BoxProps } from "@chakra-ui/react";
-import { API_BASE } from "@/db";
-import { supabase } from "@/lib/supabase";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties } from "react";
+import { Box, Flex, Text } from "@/compat/ui";
+import { useSseTrace } from "@/lib/useSseTrace";
 import type { TraceEvent } from "@/pages/shared/TracePanel";
 import AgentAvatar from "@/components/shared/AgentAvatar";
 import type { AgentSeedLike } from "@/lib/agentIdentity";
@@ -10,70 +9,6 @@ import { GenerationLoader } from "@/components/assistant-ui/elements/loading-sta
 import { AgentPlan } from "@/components/assistant-ui/elements/agent-plan";
 import { WebSearch, type WebSearchResult } from "@/components/assistant-ui/elements/web-search";
 import { ToolError } from "@/components/assistant-ui/elements/tool-error";
-
-/* ─── Live SSE hook (generic over any trace stream URL) ────────────────── */
-
-function useSseTrace(url: string | undefined, onEvent: (ev: TraceEvent) => void): boolean {
-    const [connected, setConnected] = useState(false);
-    const cbRef = useRef(onEvent);
-    cbRef.current = onEvent;
-
-    useEffect(() => {
-        if (!url) return;
-        const controller = new AbortController();
-        let cancelled = false;
-
-        const connect = async () => {
-            try {
-                const { data } = await supabase.auth.getSession();
-                const token = data.session?.access_token;
-                const res = await fetch(`${API_BASE}${url}`, {
-                    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-                    signal: controller.signal,
-                });
-                if (!res.ok || !res.body) {
-                    setConnected(false);
-                    return;
-                }
-                setConnected(true);
-                const reader = res.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = "";
-                for (;;) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-                    const frames = buffer.split("\n\n");
-                    buffer = frames.pop() || "";
-                    for (const frame of frames) {
-                        const dataLine = frame.split("\n").find((l) => l.startsWith("data:"));
-                        if (!dataLine) continue;
-                        try {
-                            const payload = JSON.parse(dataLine.slice(5).trim());
-                            if (payload?.type === "trace" && payload.event) {
-                                cbRef.current(payload.event);
-                            }
-                            if (payload?.type === "ready") setConnected(true);
-                        } catch {
-                            // ignore malformed frames
-                        }
-                    }
-                }
-            } catch {
-                if (!cancelled) setConnected(false);
-            }
-        };
-
-        connect();
-        return () => {
-            cancelled = true;
-            controller.abort();
-            setConnected(false);
-        };
-    }, [url]);
-
-    return connected;
-}
 
 /* ─── Activity rows ────────────────────────────────────────────────────── */
 
@@ -168,7 +103,7 @@ const FADE_STYLE: CSSProperties = {
  * ellipsis. Only when the text overflows its container does the tail fade, so
  * a line that ends mid-row never gets washed out.
  */
-function FadeLine({ children, ...rest }: { children: string } & BoxProps) {
+function FadeLine({ children, ...rest }: { children: string } & ComponentProps<typeof Box>) {
     const ref = useRef<HTMLDivElement>(null);
     const [clipped, setClipped] = useState(false);
 

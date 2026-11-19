@@ -1,14 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
-import { Menu, Flex, Text, Box } from "@chakra-ui/react";
-import { Search, Menu as MenuIcon, X, LogOut, Moon, Sun, Bolt, Check, TriangleAlert, SquareArrowRightEnter } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { Link, NavLink, useNavigate } from "react-router-dom";
+import { Menu, Flex, Text, Box } from "@/compat/ui";
+import { Search, LogOut, Moon, Sun, Bolt, Check, TriangleAlert, SquareArrowRightEnter } from "lucide-react";
 import { useAuth } from "@/auth/useAuth";
 import { LOCAL_AUTH } from "@/auth/AuthContext";
 import { useColorMode } from "@/components/ui/color-mode";
 import UserAvatar from "@/components/shared/UserAvatar";
-import { API_BASE, SettingsService } from "@/db";
+import { AgentService, AnalysisService, API_BASE, SettingsService, SkillService, type SkillSummary } from "@/db";
 import { TickerLogo } from "@/lib/sourceLogos";
-import { DropdownItem } from "@/pages/shared/AnalysisControls";
 import { cn } from "@/lib/utils";
 import searxngLogo from "@/assets/searxng.svg";
 import yahooLogo from "@/assets/yahoo_finance.png";
@@ -65,12 +64,15 @@ function IndexSpark({ name, symbol }: { name: string; symbol: string }) {
     .join(" ");
   const up = (changePct ?? 0) >= 0;
   const color = up ? "#22C55E" : "#EF4444";
+  // Text twin: the bright hex is for the graphic (≥3:1 as a line), but at
+  // 12px the original was 2.18:1 as text.
+  const textColor = up ? "var(--signal-positive-text)" : "var(--signal-negative-text)";
 
   return (
     <div className="w-40">
       <div className="flex items-baseline justify-between gap-2">
         <span className="font-app-body text-[12px] font-normal text-[var(--ink-secondary)]">{name}</span>
-        <span className="font-app-tabular text-[12px] font-medium" style={{ color }}>
+        <span className="font-app-tabular text-[12px] font-medium" style={{ color: textColor }}>
           {changePct == null ? "" : `${changePct > 0 ? "+" : ""}${changePct.toFixed(2)}%`}
         </span>
       </div>
@@ -86,9 +88,7 @@ export default function NavBar() {
   const { user, signOut } = useAuth();
   const { colorMode, toggleColorMode } = useColorMode();
   const navigate = useNavigate();
-  const location = useLocation();
   const email = user?.email ?? "";
-  const [mobileOpen, setMobileOpen] = useState(false);
   const [sources, setSources] = useState<Record<string, SourceStatus>>({});
 
   const dataSources = useMemo<{ id: string; name: string; img: string }[]>(
@@ -130,40 +130,88 @@ export default function NavBar() {
     };
   }, [user]);
 
-  // Stock search — same logic as the new-analysis company picker:
-  // 300ms debounce + AbortController against /stocks/search.
+  // Global search — stocks, agents, skills and runs in one listbox; ⌘K/Ctrl-K
+  // focuses it from anywhere. 300ms debounce: stocks stream from
+  // /stocks/search and agents from /agents/search, while skills and runs are
+  // small stable lists — fetched once per session, filtered locally.
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<StockRow[]>([]);
+  const [agentHits, setAgentHits] = useState<{ id: string; name: string }[]>([]);
+  const [skillHits, setSkillHits] = useState<{ id: string; name: string }[]>([]);
+  const [runHits, setRunHits] = useState<{ id: string; label: string; symbol?: string; status?: string }[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [activeIdx, setActiveIdx] = useState(-1);
   const searchWrapRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const catalogRef = useRef<{ skills?: SkillSummary[]; runs?: any[] }>({});
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     abortRef.current?.abort();
     const q = query.trim();
+    setActiveIdx(-1);
     debounceRef.current = setTimeout(async () => {
       if (!q) {
         setResults([]);
+        setAgentHits([]);
+        setSkillHits([]);
+        setRunHits([]);
         setSearching(false);
         return;
       }
       setSearching(true);
       const controller = new AbortController();
       abortRef.current = controller;
-      try {
-        const response = await fetch(`${API_BASE}/stocks/search?${new URLSearchParams({ query: q })}`, {
-          signal: controller.signal,
+      const live = () => !controller.signal.aborted;
+      const lower = q.toLowerCase();
+      const match = (s: string) => s.toLowerCase().includes(lower);
+
+      const stocks = fetch(`${API_BASE}/stocks/search?${new URLSearchParams({ query: q })}`, {
+        signal: controller.signal,
+      })
+        .then((r) => r.json())
+        .then((d) => { if (live()) setResults(Array.isArray(d) ? d : []); })
+        .catch((err) => {
+          if (live() && (!(err instanceof DOMException) || err.name !== "AbortError")) setResults([]);
         });
-        const data = await response.json();
-        if (!controller.signal.aborted) setResults(Array.isArray(data) ? data : []);
-      } catch (err) {
-        if (!(err instanceof DOMException) || err.name !== "AbortError") setResults([]);
-      } finally {
-        if (!controller.signal.aborted) setSearching(false);
-      }
+
+      const agents = AgentService.searchAgents(q)
+        .then((d) => { if (live()) setAgentHits((Array.isArray(d) ? d : []).slice(0, 5)); })
+        .catch(() => {});
+
+      const skills = (catalogRef.current.skills
+          ? Promise.resolve(catalogRef.current.skills)
+          : SkillService.listSkills().then((s) => { catalogRef.current.skills = s; return s; }))
+        .then((s) => { if (live()) setSkillHits(s.filter((x) => match(`${x.name} ${x.description || ""}`)).slice(0, 5)); })
+        .catch(() => {});
+
+      const runs = (catalogRef.current.runs
+          ? Promise.resolve(catalogRef.current.runs)
+          : AnalysisService.listAnalyses().then((r) => {
+              catalogRef.current.runs = Array.isArray(r) ? r : [];
+              return catalogRef.current.runs;
+            }))
+        .then((rows) => {
+          if (!live()) return;
+          setRunHits(
+            rows
+              .filter((a: any) => match(`${a.share_name || ""} ${a.symbol || ""} ${a.model || ""}`))
+              .slice(0, 5)
+              .map((a: any) => ({
+                id: String(a.analysis_id || a._id || a.id || ""),
+                label: a.share_name || a.symbol || "Run",
+                symbol: a.symbol || undefined,
+                status: a.status ? String(a.status) : undefined,
+              })),
+          );
+        })
+        .catch(() => {});
+
+      await Promise.allSettled([stocks, agents, skills, runs]);
+      if (live()) setSearching(false);
     }, 300);
     return () => clearTimeout(debounceRef.current);
   }, [query]);
@@ -176,6 +224,19 @@ export default function NavBar() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  // ⌘K / Ctrl-K focuses the search box from anywhere in the app.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+        searchInputRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
   const pickStock = (stock: StockRow) => {
     const sym = stock.ticker || stock.SYMBOL || "";
     const src = String(stock.source || "").toUpperCase();
@@ -184,11 +245,95 @@ export default function NavBar() {
     navigate(`/stock/${encodeURIComponent(sym)}?source=${src}`);
   };
 
+  // Hits are flattened in render order — that index is the keyboard cursor.
+  type Hit = { label: string; sub?: string; logo?: ReactNode; select: () => void };
+  const rawGroups: { label: string; hits: Hit[] }[] = [
+    {
+      label: "Stocks",
+      hits: results.map((stock) => {
+        const sym = stock.ticker || stock.SYMBOL || "";
+        const india = String(stock.source || "").toLowerCase() === "nse";
+        return {
+          label: stock.name || stock.NAME || sym,
+          sub: `${india ? "🇮🇳" : "🇺🇸"} ${india ? "NSE" : "SEC"}:${sym}`,
+          logo: <TickerLogo symbol={sym} size={18} />,
+          select: () => pickStock(stock),
+        };
+      }),
+    },
+    {
+      label: "Agents",
+      hits: agentHits.map((a) => ({
+        label: a.name,
+        sub: "Agent",
+        select: () => navigate(`/my-workspace?agent=${encodeURIComponent(a.id)}`),
+      })),
+    },
+    {
+      label: "Skills",
+      hits: skillHits.map((s) => ({
+        label: s.name,
+        sub: "Skill",
+        select: () => navigate(`/my-workspace?skill=${encodeURIComponent(s.id)}`),
+      })),
+    },
+    {
+      label: "Runs",
+      hits: runHits.map((r) => ({
+        label: r.label,
+        sub: r.status ? `Run · ${r.status}` : "Run",
+        logo: r.symbol ? <TickerLogo symbol={r.symbol} size={18} /> : undefined,
+        select: () => navigate(`/analysis-result/${encodeURIComponent(r.id)}`),
+      })),
+    },
+  ].filter((g) => g.hits.length > 0);
+  let hitCursor = 0;
+  const hitGroups = rawGroups.map((g) => ({ ...g, hits: g.hits.map((hit) => ({ ...hit, idx: hitCursor++ })) }));
+  const flatHits = hitGroups.flatMap((g) => g.hits);
+
+  const chooseHit = (idx: number) => {
+    const hit = flatHits[idx];
+    if (!hit) return;
+    setSearchOpen(false);
+    setActiveIdx(-1);
+    setQuery("");
+    hit.select();
+  };
+
+  // Keyboard (aria-activedescendant): focus stays in the input so typing keeps
+  // filtering; arrows move the active option, Enter picks, Escape closes.
+  const onSearchKeyDown = (e: ReactKeyboardEvent) => {
+    if (e.key === "Escape") {
+      if (searchOpen) {
+        setSearchOpen(false);
+        setActiveIdx(-1);
+      }
+      return;
+    }
+    if (!searchOpen) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (flatHits.length === 0) return;
+      e.preventDefault();
+      setActiveIdx(
+        e.key === "ArrowDown"
+          ? (activeIdx + 1) % flatHits.length
+          : activeIdx <= 0
+            ? flatHits.length - 1
+            : activeIdx - 1,
+      );
+    } else if (e.key === "Enter") {
+      if (activeIdx >= 0) {
+        e.preventDefault();
+        chooseHit(activeIdx);
+      }
+    }
+  };
+
   return (
     <nav className="bg-[var(--surface-canvas)]">
       <div className="max-w-[1200px] mx-auto">
-        {/* Level 1 — mast */}
-        <div className="px-6 flex items-center justify-between pt-6 pb-2">
+        {/* Level 1 — mast (wraps: search drops to its own row below md) */}
+        <div className="px-6 flex flex-wrap items-center justify-between pt-6 pb-2">
         <div className="flex items-center gap-5">
           <Link
             to="/"
@@ -201,30 +346,28 @@ export default function NavBar() {
             <span className="hidden md:inline text-sm text-[var(--ink-tertiary)] font-light">Data sources</span>
             {/* Generous hit box (pad + negative margin keeps layout put): the fan-out moves chips
                 right, so hover must survive the chase. delay-150 on exit = grace before collapse. */}
+            {/* role=group, not list/listitem: the chips are now real controls
+                (a link when there is one, a button when there isn't), and
+                listitem role would strip that semantics. */}
             <div
               className="group flex items-center -mx-3 px-3 -my-2 py-2 pr-12 -mr-4"
-              role="list"
+              role="group"
               aria-label="Data sources"
             >
               {dataSources.map((s, i) => {
                 const st = sources[s.id];
                 const down = st?.ok === false;
                 const href = st?.href;
-                return (
-                  <a
-                    key={s.id}
-                    href={href}
-                    target={href ? "_blank" : undefined}
-                    rel={href ? "noreferrer" : undefined}
-                    role="listitem"
-                    aria-label={`${s.name} — ${st == null ? "checking" : down ? "not connected" : "connected"}`}
-                    style={{ "--i": i } as CSSProperties}
-                    className={cn(
-                      "group/src relative block h-7 w-7 shrink-0 rounded-full bg-[color-mix(in_srgb,var(--ink-primary)_12%,var(--surface-canvas))] p-[5px] shadow-[0_0_0_2px_var(--surface-canvas)] transition-transform duration-300 ease-in-out delay-150 group-hover:delay-0 will-change-transform group-hover:[transform:translateX(calc(var(--i)*12px))] after:absolute after:-inset-1.5 after:rounded-full after:content-['']",
-                      i > 0 && "-ml-2",
-                      href ? "cursor-pointer" : "cursor-default",
-                    )}
-                  >
+                const label = `${s.name} — ${st == null ? "checking" : down ? "not connected" : "connected"}`;
+                const chipCls = cn(
+                  // Global `:focus-visible` (index.css) supplies the ring —
+                  // after:-inset-2 = 44px hit box (WCAG 2.5.8 / 44px touch).
+                  "group/src relative block h-7 w-7 shrink-0 rounded-full bg-[color-mix(in_srgb,var(--ink-primary)_12%,var(--surface-canvas))] p-[5px] shadow-[0_0_0_2px_var(--surface-canvas)] transition-transform duration-300 ease-in-out delay-150 group-hover:delay-0 will-change-transform group-hover:[transform:translateX(calc(var(--i)*12px))] after:absolute after:-inset-2 after:rounded-full after:content-['']",
+                  i > 0 && "-ml-2",
+                  href ? "cursor-pointer" : "cursor-default",
+                );
+                const inner = (
+                  <>
                     <img
                       src={s.img}
                       alt=""
@@ -236,12 +379,28 @@ export default function NavBar() {
                         s.id === "tradingview" && colorMode === "dark" && "invert",
                       )}
                     />
-                    <span className="pointer-events-none invisible absolute left-1/2 top-full z-40 mt-1.5 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-[4px] border border-[var(--hairline)] bg-[var(--surface-canvas)] px-2 py-1 font-[family-name:var(--font-body)] text-xs text-[var(--ink-primary)] opacity-0 shadow-[0_8px_24px_rgba(0,0,0,0.12)] transition-all duration-150 group-hover/src:delay-300 group-hover/src:visible group-hover/src:opacity-100">
+                    {/* Reveal on hover, keyboard focus and press (touch never
+                        fires :hover on iOS, so the tap has to work too). */}
+                    <span className="pointer-events-none invisible absolute left-1/2 top-full z-40 mt-1.5 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-[4px] border border-[var(--hairline)] bg-[var(--surface-canvas)] px-2 py-1 font-[family-name:var(--font-body)] text-xs text-[var(--ink-primary)] opacity-0 shadow-[0_8px_24px_rgba(0,0,0,0.12)] transition-all duration-150 group-hover/src:delay-300 group-hover/src:visible group-hover/src:opacity-100 group-focus-within/src:visible group-focus-within/src:opacity-100 group-focus-within/src:delay-0 group-active/src:visible group-active/src:opacity-100">
                       {s.name}
                       {st?.ok === true && <Check size={12} style={{ color: "#7A9E7E" }} />}
                       {down && <TriangleAlert size={12} style={{ color: "#C49A6C" }} />}
                     </span>
+                  </>
+                );
+                const shared = {
+                  "aria-label": label,
+                  style: { "--i": i } as CSSProperties,
+                  className: chipCls,
+                };
+                return href ? (
+                  <a key={s.id} href={href} target="_blank" rel="noreferrer" {...shared}>
+                    {inner}
                   </a>
+                ) : (
+                  <button key={s.id} type="button" {...shared}>
+                    {inner}
+                  </button>
                 );
               })}
             </div>
@@ -254,58 +413,97 @@ export default function NavBar() {
           <IndexSpark name="NASDAQ 100" symbol="^NDX" />
         </div>
 
-        {/* Stock search — centered between the mast and the account controls */}
-        <div ref={searchWrapRef} className="relative hidden md:flex flex-1 items-center justify-center">
+        {/* Global search — stocks/agents/skills/runs; centered between the
+            mast and the account controls on md+, own row on phones. */}
+        <div
+          ref={searchWrapRef}
+          onKeyDown={onSearchKeyDown}
+          className="relative order-3 flex basis-full items-center justify-center pb-3 md:order-none md:basis-auto md:flex-1 md:pb-0"
+        >
           <div className="relative">
             <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--ink-tertiary)]" />
             <input
+              ref={searchInputRef}
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
                 setSearchOpen(true);
               }}
               onFocus={() => setSearchOpen(true)}
-              placeholder="Search stocks…"
-              aria-label="Search stocks"
+              placeholder="Search stocks, runs, agents…"
+              aria-label="Search stocks, agents, skills and runs"
+              role="combobox"
               aria-expanded={searchOpen}
-              aria-haspopup="listbox"
-              className="h-8 w-52 rounded-full border border-[var(--hairline)] bg-[var(--surface-recessed)] pr-3 pl-8 font-[family-name:var(--font-body)] text-sm font-normal text-[var(--ink-primary)] outline-none focus:border-[var(--ink-tertiary)]"
+              aria-controls="nav-search-listbox"
+              aria-autocomplete="list"
+              aria-activedescendant={
+                activeIdx >= 0 && searchOpen && query.trim() !== "" ? `nav-search-opt-${activeIdx}` : undefined
+              }
+              className="h-8 w-52 rounded-full border border-[var(--hairline)] bg-[var(--surface-recessed)] pr-3 pl-8 font-[family-name:var(--font-body)] text-sm font-normal text-[var(--ink-primary)] outline-none focus:border-[var(--ink-tertiary)] md:pr-12"
             />
+            {query === "" && (
+              <kbd
+                aria-hidden="true"
+                className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 rounded-[3px] border border-[var(--hairline)] px-1 py-px font-[family-name:var(--font-body)] text-[10px] font-normal text-[var(--ink-tertiary)] md:block"
+              >
+                ⌘K
+              </kbd>
+            )}
           </div>
           {searchOpen && query.trim() !== "" && (
             <div
+              id="nav-search-listbox"
               role="listbox"
-              aria-label="Stock results"
+              aria-label="Search results"
               className="listbox-panel absolute top-[calc(100%+6px)] left-1/2 -translate-x-1/2 z-50 max-h-[320px] w-[340px] overflow-y-auto rounded-[6px] border border-[var(--hairline)] bg-[var(--surface-canvas)] py-1 shadow-[0_8px_24px_rgba(0,0,0,0.12)]"
             >
               {searching && (
                 <div className="px-3 py-2.5 font-[family-name:var(--font-body)] text-xs text-[var(--ink-tertiary)]">Searching…</div>
               )}
-              {!searching && results.length === 0 && (
+              {!searching && flatHits.length === 0 && (
                 <div className="px-3 py-2.5 font-[family-name:var(--font-body)] text-xs text-[var(--ink-tertiary)]">
                   Nothing matches “{query}”.
                 </div>
               )}
               {!searching &&
-                results.map((stock) => {
-                  const sym = stock.ticker || stock.SYMBOL || "";
-                  const india = String(stock.source || "").toLowerCase() === "nse";
-                  const market = india ? "NSE" : "SEC";
-                  return (
-                    <DropdownItem
-                      key={`${market}-${sym}`}
-                      label={stock.name || stock.NAME || sym}
-                      sub={`${india ? "🇮🇳" : "🇺🇸"} ${market}:${sym}`}
-                      logo={<TickerLogo symbol={sym} size={18} />}
-                      onClick={() => pickStock(stock)}
-                    />
-                  );
-                })}
+                hitGroups.map((group) => (
+                  <div key={group.label} role="group" aria-label={group.label}>
+                    <div
+                      aria-hidden="true"
+                      className="px-3 pt-2 pb-0.5 font-[family-name:var(--font-body)] text-[10.5px] font-medium tracking-[0.08em] text-[var(--ink-tertiary)] uppercase"
+                    >
+                      {group.label}
+                    </div>
+                    {group.hits.map((hit) => (
+                      <button
+                        key={hit.idx}
+                        id={`nav-search-opt-${hit.idx}`}
+                        type="button"
+                        role="option"
+                        tabIndex={-1}
+                        aria-selected={activeIdx === hit.idx}
+                        onClick={() => chooseHit(hit.idx)}
+                        onMouseEnter={() => setActiveIdx(hit.idx)}
+                        className={`flex w-full cursor-pointer items-center gap-2 rounded-[12px] px-2.5 py-2 text-left ${
+                          activeIdx === hit.idx ? "bg-[var(--surface-recessed)]" : ""
+                        }`}
+                      >
+                        {hit.logo && <span className="inline-flex shrink-0">{hit.logo}</span>}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[13px] text-[var(--ink-primary)]">{hit.label}</span>
+                          {hit.sub && (
+                            <span className="block truncate text-[11px] text-[var(--ink-tertiary)]">{hit.sub}</span>
+                          )}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ))}
             </div>
           )}
         </div>
 
-        <div className="flex items-center gap-5">
+        <div className="order-2 flex items-center gap-5 md:order-none">
           <button
             aria-label="Toggle color mode"
             onClick={toggleColorMode}
@@ -361,14 +559,6 @@ export default function NavBar() {
             </Menu.Positioner>
           </Menu.Root>
 
-          {/* Mobile hamburger */}
-          <button
-            aria-label="Menu"
-            className="text-[var(--ink-primary)] hover:opacity-60 transition-opacity md:hidden"
-            onClick={() => setMobileOpen(!mobileOpen)}
-          >
-            {mobileOpen ? <X size={20} /> : <MenuIcon size={20} />}
-          </button>
         </div>
       </div>
 
@@ -378,24 +568,28 @@ export default function NavBar() {
       {/* Level 2 — nav links (horizontally scrollable, scrollbar hidden) */}
       <div className="overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="px-6 flex items-center gap-6 h-9 font-[family-name:var(--font-body)] font-light min-w-max">
-          <Link
+          <NavLink
             to="/"
-            className={cn(
-              "flex items-center gap-2 text-sm transition-colors cursor-pointer shrink-0",
-              location.pathname === "/"
-                ? "text-[var(--ink-primary)]"
-                : "text-[var(--ink-secondary)] hover:text-[var(--ink-primary)]",
-            )}
+            end
+            className={({ isActive }) =>
+              cn(
+                "flex items-center gap-2 text-sm transition-colors cursor-pointer shrink-0",
+                isActive
+                  ? "text-[var(--ink-primary)]"
+                  : "text-[var(--ink-secondary)] hover:text-[var(--ink-primary)]",
+              )
+            }
           >
             <span className="w-1.5 h-1.5 rounded-full bg-[#C49A6C]" />
             Home
-          </Link>
+          </NavLink>
           <div className="h-4 w-px bg-[var(--hairline)]" />
           <div className="flex items-center gap-6">
             {[
-              { to: "/my-workspace", label: "Agents & Skills", end: true, dot: "#7A8B9E" },
+              // One name per concept, used by nav, h1, tab title and footer.
+              { to: "/my-workspace", label: "Workspace", end: true, dot: "#7A8B9E" },
               { to: "/new-analysis", label: "New Run", end: false, dot: "#7A9E7E" },
-              { to: "/analysis-list", label: "Past Runs", end: false, dot: "#C49A6C" },
+              { to: "/analysis-list", label: "Runs", end: false, dot: "#C49A6C" },
             ].map((item) => (
               <NavLink
                 key={item.to}
@@ -421,25 +615,8 @@ export default function NavBar() {
       {/* Ultra thin light grey line below level 2 */}
       <div className="px-6"><div className="h-px bg-[var(--hairline)]" /></div>
 
-      {/* Mobile menu */}
-      {mobileOpen && (
-        <div className="md:hidden border-t border-[var(--ink-primary)] bg-[var(--surface-canvas)]">
-          {[
-            { to: "/my-workspace", label: "Agents & Skills" },
-            { to: "/new-analysis", label: "New Run" },
-            { to: "/analysis-list", label: "Past Runs" },
-          ].map((item) => (
-            <Link
-              key={item.to}
-              to={item.to}
-              onClick={() => setMobileOpen(false)}
-              className="block px-6 py-3 text-sm text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] border-b border-[var(--hairline)] transition-colors cursor-pointer"
-            >
-              {item.label}
-            </Link>
-          ))}
-        </div>
-      )}
+      {/* No hamburger menu: level 2 is the full nav and never hides — a
+          second copy of the same links below md was pure duplication. */}
       </div>
     </nav>
   );

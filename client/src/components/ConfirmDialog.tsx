@@ -6,6 +6,8 @@ interface ConfirmDialogProps {
     title: string;
     message: string;
     confirmLabel?: string;
+    /** Confirm is in flight — disables confirm (and blocks double-fire). */
+    busy?: boolean;
     onCancel: () => void;
     onConfirm: () => void;
 }
@@ -20,6 +22,7 @@ export default function ConfirmDialog({
     title,
     message,
     confirmLabel = "Delete",
+    busy = false,
     onCancel,
     onConfirm,
 }: ConfirmDialogProps) {
@@ -36,7 +39,13 @@ export default function ConfirmDialog({
                     <Button size="sm" variant="ghost" onClick={onCancel}>
                         Cancel
                     </Button>
-                    <Button size="sm" variant="destructive" onClick={onConfirm}>
+                    <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={busy}
+                        aria-busy={busy || undefined}
+                        onClick={() => { if (!busy) onConfirm(); }}
+                    >
                         {confirmLabel}
                     </Button>
                 </div>

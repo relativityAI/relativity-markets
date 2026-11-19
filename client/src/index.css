@@ -41,6 +41,14 @@
   /* Live/agent pulse — bright blue that holds up on both canvases */
   --signal-live: #3B82F6;
 
+  /* Text-safe twins of the signal inks: same hues, darkened to clear 4.5:1 as
+     text on the light canvas, its 14% verdict-chip tint and raised/recessed
+     surfaces (4.89–6.32:1). The bright originals above stay for lines, fills
+     and borders; html.dark lifts them for dark surfaces. */
+  --signal-positive-text: #2F6B4F;
+  --signal-caution-text: #7A5C24;
+  --signal-negative-text: #9C4444;
+
   /* File-type accents. Spreadsheet green is Excel's own, so the icon and button
      read as "this is a workbook" rather than as decoration.
      The icon chip mixes it into a fixed pale tint rather than the theme
@@ -85,6 +93,12 @@ html.dark {
   --blob-opacity: 0.22;
 
   --signal-live: #60A5FA;
+
+  /* Signal text twins, dark values — 5.21–6.48:1 on canvas/panel/raised/own
+     tint (caution already passed here, so it keeps the original). */
+  --signal-positive-text: #63A882;
+  --signal-caution-text: #B8935A;
+  --signal-negative-text: #D98080;
 }
 
 /* ── GitHub Primer accents ──────────────────────────────────────────────────
@@ -125,6 +139,194 @@ html.dark {
 }
 .gh-chip[data-tone="bad"] {
   color: var(--gh-red);
+}
+
+/* ── Element preflight ─────────────────────────────────────────────────────
+   Verbatim port of Chakra v3's styled-system/preflight.js — ChakraProvider
+   injected it at runtime and every page was authored against it (zeroed
+   margins/padding, borderless buttons, no underline on anchors). Unlayered,
+   exactly as emotion injected it, so class and component styles still win. */
+html {
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  touch-action: manipulation;
+  -moz-tab-size: 4;
+  tab-size: 4;
+  font-family: var(--global-font-body, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji");
+}
+* {
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  word-wrap: break-word;
+  -webkit-tap-highlight-color: transparent;
+}
+*,
+*::before,
+*::after,
+*::backdrop {
+  box-sizing: border-box;
+  border-width: 0;
+  border-style: solid;
+  border-color: var(--global-color-border, currentColor);
+}
+hr {
+  height: 0;
+  color: inherit;
+  border-top-width: 1px;
+}
+body {
+  min-height: 100dvh;
+  position: relative;
+}
+img {
+  border-style: none;
+}
+img,
+svg,
+video,
+canvas,
+audio,
+iframe,
+embed,
+object {
+  display: block;
+  vertical-align: middle;
+}
+iframe {
+  border: none;
+}
+img,
+video {
+  max-width: 100%;
+  height: auto;
+}
+p,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  overflow-wrap: break-word;
+}
+ol,
+ul {
+  list-style: none;
+}
+button,
+[type="button"],
+[type="reset"],
+[type="submit"] {
+  -webkit-appearance: button;
+  background-color: transparent;
+  background-image: none;
+}
+button,
+input,
+optgroup,
+select,
+textarea {
+  color: inherit;
+}
+button,
+select {
+  text-transform: none;
+}
+table {
+  text-indent: 0;
+  border-color: inherit;
+  border-collapse: collapse;
+}
+*::placeholder {
+  opacity: unset;
+  color: #9ca3af;
+  user-select: none;
+}
+textarea {
+  resize: vertical;
+}
+summary {
+  display: list-item;
+}
+small {
+  font-size: 80%;
+}
+sub,
+sup {
+  font-size: 75%;
+  line-height: 0;
+  position: relative;
+  vertical-align: baseline;
+}
+sub {
+  bottom: -0.25em;
+}
+sup {
+  top: -0.5em;
+}
+dialog {
+  padding: 0;
+}
+a {
+  color: inherit;
+  text-decoration: inherit;
+}
+abbr:where([title]) {
+  text-decoration: underline dotted;
+}
+b,
+strong {
+  font-weight: bolder;
+}
+i,
+em {
+  font-style: italic;
+}
+code,
+kbd,
+samp,
+pre {
+  font-size: 1em;
+  font-family: var(--global-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New"), monospace;
+}
+input[type="text"],
+input[type="email"],
+input[type="search"],
+input[type="password"] {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+input[type="search"] {
+  -webkit-appearance: textfield;
+  outline-offset: -2px;
+}
+::-webkit-search-decoration,
+::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+::-webkit-file-upload-button {
+  -webkit-appearance: button;
+  font: inherit;
+}
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  height: auto;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+:-moz-ui-invalid {
+  box-shadow: none;
+}
+:-moz-focusring {
+  outline: auto;
+}
+[hidden]:where(:not([hidden="until-found"])) {
+  display: none !important;
 }
 
 /* Base canvas */
@@ -168,9 +370,18 @@ body {
 }
 
 /* Mobile tap targets — below the md (768px) breakpoint only.
-   Desktop (md+) is untouched. */
+   Desktop (md+) is untouched. The old `.chakra-button` selector died with
+   Chakra; this covers the controls that actually render (buttons, inputs,
+   selects, textareas).
+   ponytail: 44px covers form controls and buttons only — nav links stay
+   text-height because the level-2 row is a fixed h-9; raise that row itself
+   if a touch pass flags it. */
 @media (max-width: 767.98px) {
-  html .chakra-button {
+  html button,
+  html [role="button"],
+  html input:not([type="checkbox"]):not([type="radio"]),
+  html select,
+  html textarea {
     min-height: 44px;
     min-width: 44px;
   }
@@ -474,6 +685,28 @@ html.dark .sectoral-title {
 /* Listbox panel rows (navbar stock search + form pickers) — the shared
    DropdownItem pins an inline background, so the hover lift needs !important
    to win. Scoped: Radix select options keep their own highlight. */
+/* compat/ui Menu panel + item — Chakra used to supply this chrome; Radix
+   renders unstyled, so without it the dropdown floats transparent. */
+.compat-menu-panel {
+  z-index: 1000;
+  min-width: 180px;
+  padding: 4px;
+  background: var(--surface-floating);
+  border: var(--hairline-w) solid var(--hairline);
+  border-radius: var(--radius-box);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  animation: compat-menu-in 120ms ease-out;
+}
+@keyframes compat-menu-in {
+  from { opacity: 0; transform: translateY(-4px); }
+}
+.compat-menu-item {
+  outline: none;
+}
+.compat-menu-item[data-highlighted] {
+  background: var(--surface-recessed);
+}
+
 .listbox-panel [role="option"]:hover {
   background-color: var(--surface-recessed) !important;
 }

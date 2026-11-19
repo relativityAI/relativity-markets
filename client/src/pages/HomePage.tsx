@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type ComponentType } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type ComponentType, type DragEvent } from "react";
 import { Link } from "react-router-dom";
 import { Clock, Play, ArrowRight, List, Plus, X, Search, Loader2, Pencil, Trash2, LayoutGrid, Table2 } from "lucide-react";
 import { AnalysisService, AgentService, API_BASE, WatchlistService, type ScheduleRow, type WatchlistRow, type WatchlistItem } from "@/db";
@@ -48,13 +48,13 @@ function flag(source?: string | null): string {
 function verdictColor(verdict?: string | null): string | undefined {
     if (!verdict) return undefined;
     const v = verdict.toLowerCase();
-    if (["outstanding", "strong", "shortlist", "buy"].includes(v)) return "var(--signal-positive)";
-    if (["fair", "watch", "hold", "underwhelming", "neutral"].includes(v)) return "var(--signal-caution)";
-    if (["subpar", "pass", "error", "sell"].includes(v)) return "var(--signal-negative)";
+    if (["outstanding", "strong", "shortlist", "buy"].includes(v)) return "var(--signal-positive-text)";
+    if (["fair", "watch", "hold", "underwhelming", "neutral"].includes(v)) return "var(--signal-caution-text)";
+    if (["subpar", "pass", "error", "sell"].includes(v)) return "var(--signal-negative-text)";
     return undefined;
 }
 
-type Spark = { pts: string; color: string; pct: number | null };
+type Spark = { pts: string; color: string; textColor: string; pct: number | null };
 
 /** One intraday sparkline fetch per symbol — shared by the card's chart and
  *  its % change so the two never drift apart (or double-fetch). */
@@ -81,7 +81,9 @@ function useSpark(symbol: string, source?: string | null): Spark | null {
                 const prev: number | null = d.previous_close ?? null;
                 const pct = prev ? ((last - prev) / prev) * 100 : null;
                 const up = prev ? last >= prev : last >= closes[0];
-                setSpark({ pts, color: up ? "#22C55E" : "#EF4444", pct });
+                // Bright hex stays on the line/fill (graphic); the 11px change
+                // text uses the text-safe twin (2.18:1 → AA in both themes).
+                setSpark({ pts, color: up ? "#22C55E" : "#EF4444", textColor: up ? "var(--signal-positive-text)" : "var(--signal-negative-text)", pct });
             })
             .catch(() => { if (alive) setSpark(null); });
         return () => { alive = false; };
@@ -113,7 +115,7 @@ function SparkSvg({ spark }: { spark: Spark }) {
 function SparkChange({ spark }: { spark: Spark }) {
     if (spark.pct == null) return null;
     return (
-        <span className="shrink-0 font-app-tabular text-[11px] font-medium" style={{ color: spark.color }}>
+        <span className="shrink-0 font-app-tabular text-[11px] font-medium" style={{ color: spark.textColor }}>
             {spark.pct > 0 ? "+" : ""}{spark.pct.toFixed(2)}%
         </span>
     );
@@ -179,7 +181,7 @@ type StockRow = { ticker?: string; SYMBOL?: string; name?: string; NAME?: string
  *  small avatar, name, colored verdict, light last-run time). Opens the
  *  symbol's latest run result in a new tab. A grid cell, so it is always the
  *  same width as the add-stock tile next to it. */
-const WATCH_CARD = "glass-hover";
+const WATCH_CARD = "glass-hover h-full";
 
 /** The watchlist before SQLite kept only symbols under this localStorage key. */
 const LEGACY_WATCH_KEY = "relativity.watchlist";
@@ -413,6 +415,31 @@ function WatchlistSection({ runs }: { runs: any[] }) {
         }
     };
 
+    // Drag to reorder — native HTML5 DnD, no dependency. cardsFor() is
+    // items.map(), so the render index IS the items index in both views.
+    const dragFrom = useRef<number | null>(null);
+    const dropAt = (to: number) => {
+        const from = dragFrom.current;
+        dragFrom.current = null;
+        if (from === null || from === to || !active) return;
+        const items = [...active.items];
+        const [moved] = items.splice(from, 1);
+        items.splice(to, 0, moved);
+        void saveItems(items);
+    };
+    const dragProps = (i: number) => ({
+        draggable: true,
+        onDragStart: (e: DragEvent<HTMLElement>) => {
+            dragFrom.current = i;
+            e.dataTransfer.effectAllowed = "move";
+        },
+        onDragOver: (e: DragEvent<HTMLElement>) => {
+            if (dragFrom.current !== null) e.preventDefault();
+        },
+        onDrop: (e: DragEvent<HTMLElement>) => { e.preventDefault(); dropAt(i); },
+        onDragEnd: () => { dragFrom.current = null; },
+    });
+
     const addStock = (stock: StockRow) => {
         const symbol = stock.ticker || stock.SYMBOL || "";
         if (!symbol || !active) return;
@@ -526,10 +553,31 @@ function WatchlistSection({ runs }: { runs: any[] }) {
                     ) : (
                         <>
                             {/* Thin scrollbar appears only once the tabs overflow. */}
-                            <div role="tablist" aria-label="Watchlists" className="flex min-w-0 items-center gap-1 overflow-x-auto pb-1 [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[var(--hairline)]">
+                            <div
+                                role="tablist"
+                                aria-label="Watchlists"
+                                onKeyDown={(e) => {
+                                    // Roving tabindex: arrows move focus and the
+                                    // selection follows (WAI-ARIA tabs pattern).
+                                    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && e.key !== "Home" && e.key !== "End") return;
+                                    if (lists.length === 0) return;
+                                    e.preventDefault();
+                                    const cur = Math.max(0, lists.findIndex((l) => l.id === active?.id));
+                                    const next =
+                                        e.key === "Home" ? 0
+                                        : e.key === "End" ? lists.length - 1
+                                        : e.key === "ArrowRight" ? (cur + 1) % lists.length
+                                        : (cur - 1 + lists.length) % lists.length;
+                                    e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus();
+                                    setActiveId(lists[next].id);
+                                    setAdding(false);
+                                }}
+                                className="flex min-w-0 items-center gap-1 overflow-x-auto pb-1 [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[var(--hairline)]"
+                            >
                                 {lists.map((l) => (
                                     <button
                                         key={l.id} type="button" role="tab" aria-selected={active?.id === l.id}
+                                        tabIndex={active ? (active.id === l.id ? 0 : -1) : 0}
                                         onClick={() => { setActiveId(l.id); setAdding(false); }}
                                         className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[6px] px-3 py-2 text-[13px] font-normal transition-colors ${active?.id === l.id ? "bg-[var(--surface-recessed)] text-[var(--ink-primary)]" : "text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)]"}`}
                                     >
@@ -615,7 +663,7 @@ function WatchlistSection({ runs }: { runs: any[] }) {
             </div>
 
             {loadError && !loading && (
-                <p role="alert" className="mt-2 font-app-body text-[13px] text-[var(--signal-negative)]">
+                <p role="alert" className="mt-2 font-app-body text-[13px] text-[var(--signal-negative-text)]">
                     Couldn't load your watchlists. Refresh to retry.
                 </p>
             )}
@@ -625,11 +673,13 @@ function WatchlistSection({ runs }: { runs: any[] }) {
                 // exactly one card wide, full rows reach both edges, and the
                 // add tile can never become a 4th column — 3 max, at any width.
                 <div className="mt-3 grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3">
-                    {cardsFor(active).map((card) => (
-                        <RunCard
-                            key={`${card.symbol}-${card.source || ""}`} run={card}
-                            onRemove={() => void saveItems(active.items.filter((i) => i.symbol !== card.symbol))}
-                        />
+                    {cardsFor(active).map((card, i) => (
+                        <div key={`${card.symbol}-${card.source || ""}`} {...dragProps(i)} className="h-full cursor-grab active:cursor-grabbing">
+                            <RunCard
+                                run={card}
+                                onRemove={() => void saveItems(active.items.filter((it) => it.symbol !== card.symbol))}
+                            />
+                        </div>
                     ))}
                     {addStockBox}
                 </div>
@@ -653,8 +703,8 @@ function WatchlistSection({ runs }: { runs: any[] }) {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {tableRows.map((row) => (
-                                        <tr key={`${row.symbol}-${row.source || ""}`} className="border-b border-[var(--hairline)] transition-colors hover:bg-[var(--surface-recessed)]">
+                                    {tableRows.map((row, i) => (
+                                        <tr key={`${row.symbol}-${row.source || ""}`} {...dragProps(i)} className="border-b border-[var(--hairline)] transition-colors hover:bg-[var(--surface-recessed)]">
                                             <th scope="row" className="px-2.5 py-2 align-middle">
                                                 <div className="flex items-center gap-2">
                                                     <Link
@@ -782,17 +832,11 @@ export default function HomePage() {
                     left, watchlist (min two cards wide) on the right. Below lg
                     they stack in reading order, text first. */}
                 <div className="flex flex-wrap items-start gap-x-10 gap-y-10 pt-7">
-                    {/* Right column — watchlist, always room for two cards. */}
-                    <div className="order-2 w-full min-w-0 flex-1 lg:min-w-[464px]">
-                        {/* Watchlist — named lists with pill-tab switching */}
-                        <WatchlistSection runs={runs} />
-                    </div>
-
                     {/* ponytail: fixed left rail — 360px leaves the watchlist
                         600px+ from 1024 up; 440px from 1280. */}
                     <div className="order-1 flex w-full flex-col gap-12 pb-12 lg:w-[360px] lg:shrink-0 xl:w-[440px]">
                         <div>
-                            <h1 ref={titleRef} className="w-fit max-w-full font-[family-name:var(--font-display)] text-[clamp(1.5rem,3vw,2rem)] leading-none font-light tracking-[-0.02em] text-[var(--ink-primary)]">
+                            <h1 ref={titleRef} className="w-fit max-w-full font-[family-name:var(--font-display)] text-[clamp(1.5rem,3vw,2rem)] leading-none font-normal tracking-[-0.02em] text-[var(--ink-primary)]">
                                 Agents watch the market, you watch the agents.
                             </h1>
                             <p style={{ maxWidth: titleWidth }} className="mt-3 text-sm font-[family-name:var(--font-body)] font-[200] text-[var(--ink-secondary)] leading-relaxed">
@@ -946,30 +990,36 @@ export default function HomePage() {
                         )}
                     </HomeSection>
                     </div>
+
+                    {/* Right column — watchlist, always room for two cards. */}
+                    <div className="order-2 w-full min-w-0 flex-1 lg:min-w-[464px]">
+                        {/* Watchlist — named lists with pill-tab switching */}
+                        <WatchlistSection runs={runs} />
+                    </div>
                 </div>
 
                 {/* Footer */}
                 <footer className="py-8 border-t border-[var(--hairline)]">
                     <div className="grid grid-cols-3 gap-6 text-sm">
                         <div>
-                            <h4 className="text-xs uppercase tracking-[0.08em] text-[var(--ink-tertiary)] mb-3">Product</h4>
+                            <h3 className="text-xs uppercase tracking-[0.08em] text-[var(--ink-tertiary)] mb-3">Product</h3>
                             <div className="space-y-2 text-[var(--ink-secondary)]">
-                                <Link to="/new-analysis" className="block hover:text-[var(--ink-primary)]">New Analysis</Link>
+                                <Link to="/new-analysis" className="block hover:text-[var(--ink-primary)]">New Run</Link>
                                 <Link to="/analysis-list" className="block hover:text-[var(--ink-primary)]">Runs</Link>
                                 <Link to="/agents" className="block hover:text-[var(--ink-primary)]">Agents</Link>
                             </div>
                         </div>
                         <div>
-                            <h4 className="text-xs uppercase tracking-[0.08em] text-[var(--ink-tertiary)] mb-3">Company</h4>
+                            <h3 className="text-xs uppercase tracking-[0.08em] text-[var(--ink-tertiary)] mb-3">Company</h3>
                             <div className="space-y-2 text-[var(--ink-secondary)]">
                                 <Link to="/privacy" className="block hover:text-[var(--ink-primary)]">Privacy</Link>
                                 <Link to="/terms" className="block hover:text-[var(--ink-primary)]">Terms</Link>
                             </div>
                         </div>
                         <div>
-                            <h4 className="text-xs uppercase tracking-[0.08em] text-[var(--ink-tertiary)] mb-3">Resources</h4>
+                            <h3 className="text-xs uppercase tracking-[0.08em] text-[var(--ink-tertiary)] mb-3">Resources</h3>
                             <div className="space-y-2 text-[var(--ink-secondary)]">
-                                <Link to="/analysis-list" className="block hover:text-[var(--ink-primary)]">My Workspace</Link>
+                                <Link to="/my-workspace" className="block hover:text-[var(--ink-primary)]">Workspace</Link>
                                 <Link to="/settings" className="block hover:text-[var(--ink-primary)]">Settings</Link>
                             </div>
                         </div>

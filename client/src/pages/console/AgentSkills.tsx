@@ -25,8 +25,9 @@ import { cn } from "@/lib/utils";
 type Mode = "inspect" | "create" | "download";
 
 /** One bordered, rounded list panel — default skills, my skills. */
-/** Sections sit straight on the canvas — no box, no border, no fill. */
-const SECTION_BOX = "";
+/** Thin hairline box with medium (12px) corners — the Default skills section
+ *  only; My skills sits straight on the canvas. */
+const SECTION_BOX = "rounded-xl border-[0.5px] border-[color:var(--hairline)] p-5";
 
 /** Fixed height: filtering never grows or shrinks the section. */
 /** Mobile: hug the listed rows, capped. Laptop (md+): the original fixed
@@ -45,7 +46,7 @@ function matches(s: SkillSummary, q: string): boolean {
         || (s.tags || []).some((t) => t.toLowerCase().includes(q));
 }
 
-export default function AgentSkills() {
+export default function AgentSkills({ heading: Heading = "h1" }: { heading?: "h1" | "h2" }) {
     const [searchParams, setSearchParams] = useSearchParams();
     const { library, loading, error: libraryError, setLibrary } = useSkillLibrary();
     const [selected, setSelected] = useState<SkillSummary | null>(null);
@@ -55,7 +56,7 @@ export default function AgentSkills() {
 
     const requestedSkill = searchParams.get("skill");
 
-    // Deep link: /my-workspace/skills?skill=<id> (used by the agent settings page).
+    // Deep link: /my-workspace?skill=<id> (navbar search + agent settings page).
     // The sidebar link clears the param — that must close the open skill too,
     // otherwise clicking "Agent Skills" while a skill is open goes nowhere.
     useEffect(() => {
@@ -187,7 +188,8 @@ export default function AgentSkills() {
                     </div>
                 </section>
 
-                <section className={SECTION_BOX}>
+                {/* My skills sits straight on the canvas — no box */}
+                <section>
                     <div className="flex flex-wrap items-center gap-3">
                         <div className="min-w-0">
                             <h2 className="font-app-body text-[20px] leading-none font-light tracking-tight text-console-ink">
@@ -217,9 +219,9 @@ export default function AgentSkills() {
     return (
         <div className="w-full py-8">
             <div className="flex flex-wrap items-center gap-3">
-                <h1 className="font-app-body shrink-0 text-[30px] leading-none font-light tracking-tight text-console-ink">
+                <Heading className="font-app-body shrink-0 text-[30px] leading-none font-light tracking-tight text-console-ink">
                     Skills
-                </h1>
+                </Heading>
                 {mode === "inspect" && (
                     <div className="ml-auto flex shrink-0 items-center gap-2">
                         <Button

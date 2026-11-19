@@ -17,9 +17,6 @@ export default function Footer() {
             <Link to="/privacy" className="text-sm text-[var(--ink-secondary)] hover:text-[var(--ink-primary)]">
               Privacy
             </Link>
-            <Link to="/privacy" className="text-sm text-[var(--ink-secondary)] hover:text-[var(--ink-primary)]">
-              Support
-            </Link>
           </nav>
           <p className="text-xs text-[var(--ink-tertiary)] mt-3">
             &copy; {new Date().getFullYear()} Relativity

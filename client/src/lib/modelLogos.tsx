@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { Box, Text } from "@chakra-ui/react";
+import { Box, Text } from "@/compat/ui";
 import { TbBrandOpenai } from "react-icons/tb";
 import {
     SiAnthropic,
@@ -18,6 +18,7 @@ import mistralAiLogo from "@/assets/llm_mistral-ai.svg";
 import qwenLogo from "@/assets/llm_qwen.svg";
 import zAiLogo from "@/assets/llm_z-ai.svg";
 import cerebrasLogo from "@/assets/llm_cerebras.svg";
+import opencodeLogo from "@/assets/llm_opencode.png";
 import tavilyLogo from "@/assets/tavily-color.svg";
 
 /**
@@ -67,6 +68,9 @@ const PROVIDERS: Record<string, ProviderVisual> = {
     cerebras: { label: "Cerebras", image: cerebrasLogo, invert: true },
     // Data-source provider (web search), shown on the Settings key cards.
     tavily: { label: "Tavily", image: tavilyLogo },
+    // OpenCode Go gateway — Settings key card (bare "opencode" id; the
+    // opencode/deepseek-* model ids above keep their DeepSeek mark).
+    opencode: { label: "OpenCode", image: opencodeLogo, invert: true },
 };
 
 const FALLBACK_LABELS: Record<string, string> = {

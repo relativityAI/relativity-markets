@@ -1,5 +1,5 @@
 import { useMemo, type CSSProperties } from "react";
-import { Box } from "@chakra-ui/react";
+import { Box } from "@/compat/ui";
 import { useColorModeValue } from "@/components/ui/color-mode";
 import {
     agentAvatarSvg,

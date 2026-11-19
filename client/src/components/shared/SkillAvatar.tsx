@@ -1,5 +1,5 @@
 import { useMemo, type CSSProperties } from "react";
-import { Box } from "@chakra-ui/react";
+import { Box } from "@/compat/ui";
 import { skillSeed, skillAvatarSvg, type SkillSeedLike } from "@/lib/skillIdentity";
 import { avatarDelay } from "@/lib/agentIdentity";
 

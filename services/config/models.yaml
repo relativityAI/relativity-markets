@@ -179,3 +179,9 @@ models:
     provider: anthropic
     name: "Claude Haiku 5.5 (fast)"
     priority: 38
+
+  # ── OpenCode Go — key from Settings (opencode.ai/auth → Console → API keys) ──
+  - id: "opencode/deepseek-v4.1-flash"
+    provider: opencode
+    name: "DeepSeek V4.1 Flash (OpenCode)"
+    priority: 39
