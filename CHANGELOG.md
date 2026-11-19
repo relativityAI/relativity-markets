@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.10.0...relativity-markets-v0.11.0) (2026-11-19)
+
+
+### Features
+
+* replace scheduled runs with an alert system ([#193](https://github.com/relativityAI/relativity-markets/issues/193)) ([767b0f1](https://github.com/relativityAI/relativity-markets/commit/767b0f19093e0089b5c62275c36fcb534f1343ed))
+
 ## [0.10.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.9.0...relativity-markets-v0.10.0) (2026-11-19)
 
 
