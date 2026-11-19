@@ -13,9 +13,16 @@ import * as RMenu from "@radix-ui/react-dropdown-menu";
 import * as RPopover from "@radix-ui/react-popover";
 import * as RSlider from "@radix-ui/react-slider";
 import * as RSwitch from "@radix-ui/react-switch";
+import * as RSlot from "@radix-ui/react-slot";
 import { createPortal } from "react-dom";
+import { pseudoProps } from "./primitives";
 
-type AnyProps = Record<string, any>;
+/* onValueChange is declared so inline callbacks get a contextual signature;
+ * the loose index signature keeps Chakra's grab-bag call sites compiling. */
+type AnyProps = Record<string, any> & {
+    onValueChange?: (details: any) => void;
+    onClick?: (event: any) => void;
+};
 
 /* ── Button ─────────────────────────────────────────────────────────────── */
 
@@ -56,8 +63,9 @@ function btnStyles(variant: Variant = "subtle", colorPalette?: string, disabled?
 export const Button = function Button(props: AnyProps) {
     const {
         variant, colorPalette, size = "md", loading, disabled,
-        asChild, as, color, bg, ...rest
+        asChild, as, color, bg, ...raw
     } = props;
+    const rest = pseudoProps(raw);
     const pad = size === "xs" ? { padding: "4px 8px", fontSize: "11px" }
         : size === "sm" ? { padding: "6px 12px", fontSize: "12.5px" }
         : size === "lg" ? { padding: "10px 20px", fontSize: "15px" }
@@ -79,6 +87,10 @@ export const Button = function Button(props: AnyProps) {
         ...(rest.style || {}),
     };
     const Comp: any = as || "button";
+    // asChild: merge button styles onto the single child (Chakra's Slot semantics).
+    if (asChild) {
+        return <RSlot.Root style={style} {...rest}>{props.children}</RSlot.Root>;
+    }
     return (
         <Comp
             type={Comp === "button" && !("type" in rest) ? "button" : (rest as any).type}
@@ -93,7 +105,8 @@ export const Button = function Button(props: AnyProps) {
 };
 
 export const IconButton = function IconButton(props: AnyProps) {
-    const { variant, colorPalette, size = "md", "aria-label": ariaLabel, ...rest } = props;
+    const { variant, colorPalette, size = "md", "aria-label": ariaLabel, ...raw } = props;
+    const rest = pseudoProps(raw);
     const box = size === "xs" ? 24 : size === "sm" ? 28 : size === "lg" ? 40 : 32;
     return (
         <button
@@ -114,7 +127,8 @@ export const IconButton = function IconButton(props: AnyProps) {
 /* ── Inputs ─────────────────────────────────────────────────────────────── */
 
 export const Input = function Input(props: AnyProps) {
-    const { size = "md", color, bg, ...rest } = props;
+    const { size = "md", color, bg, ...raw } = props;
+    const rest = pseudoProps(raw);
     return (
         <input
             {...rest}
@@ -135,7 +149,7 @@ export const Input = function Input(props: AnyProps) {
 };
 
 export const Textarea = function Textarea(props: AnyProps) {
-    const { ...rest } = props;
+    const rest = pseudoProps(props);
     return (
         <textarea
             {...rest}
@@ -235,7 +249,7 @@ const SwitchRoot = function SwitchRoot(props: AnyProps) {
 SwitchRoot.Control = function SwitchControl(props: AnyProps) { return <span {...props} />; };
 SwitchRoot.Thumb = function SwitchThumb(props: AnyProps) { return <span {...props} />; };
 SwitchRoot.HiddenInput = function SwitchHidden() { return null; };
-export const Switch = SwitchRoot;
+export const Switch: typeof SwitchRoot & Record<string, any> = SwitchRoot;
 Switch.Root = SwitchRoot;
 
 /* ── Checkbox ───────────────────────────────────────────────────────────── */
@@ -305,7 +319,7 @@ SliderRoot.Range = function SliderRange(props: AnyProps) { return <div {...props
 SliderRoot.Thumb = function SliderThumb(props: AnyProps) { return <div {...props} />; };
 SliderRoot.ValueText = function SliderValueText(props: AnyProps) { return <span {...props} />; };
 SliderRoot.HiddenInput = function SliderHidden() { return null; };
-export const Slider = SliderRoot;
+export const Slider: typeof SliderRoot & Record<string, any> = SliderRoot;
 Slider.Root = SliderRoot;
 
 /* ── Radio ──────────────────────────────────────────────────────────────── */
@@ -349,21 +363,26 @@ const TableRoot = function TableRoot(props: AnyProps) {
     );
 };
 TableRoot.Header = function TableHeader(props: AnyProps) { return <thead {...props} />; };
-TableRoot.Body = function TableBody(props: AnyProps) { return <tbody {...props} />; };
+TableRoot.Body = function TableBody(props: AnyProps) {
+    const { as: Comp = "tbody", ...rest } = pseudoProps(props) as AnyProps;
+    return <Comp {...rest} />;
+};
 TableRoot.Footer = function TableFooter(props: AnyProps) { return <tfoot {...props} />; };
 TableRoot.Row = function TableRow(props: AnyProps) {
-    return <tr {...props} style={{ borderBottom: "var(--hairline-w) solid var(--hairline)", ...(props.style || {}) }} />;
+    const { as: Comp = "tr", ...rest } = pseudoProps(props) as AnyProps;
+    return <Comp {...rest} style={{ borderBottom: "var(--hairline-w) solid var(--hairline)", ...(props.style || {}) }} />;
 };
 TableRoot.ColumnHeader = function TableColHeader(props: AnyProps) {
     return <th {...props} style={{ textAlign: "left", padding: "8px 12px", fontWeight: 600, color: "var(--ink-secondary)", borderBottom: "var(--hairline-w) solid var(--grid-line)", whiteSpace: "nowrap", ...(props.style || {}) }} />;
 };
 TableRoot.Cell = function TableCell(props: AnyProps) {
-    return <td {...props} style={{ padding: "8px 12px", verticalAlign: "top", ...(props.style || {}) }} />;
+    const rest = pseudoProps(props);
+    return <td {...rest} style={{ padding: "8px 12px", verticalAlign: "top", ...(rest.style || {}) }} />;
 };
 TableRoot.Column = function TableColumn(props: AnyProps) { return <col {...props} />; };
 TableRoot.ColumnGroup = function TableColumnGroup(props: AnyProps) { return <colgroup {...props} />; };
 TableRoot.Caption = function TableCaption(props: AnyProps) { return <caption {...props} />; };
-export const Table = TableRoot;
+export const Table: typeof TableRoot & Record<string, any> = TableRoot;
 Table.Root = TableRoot;
 
 /* ── Dialog (compound over Radix) ───────────────────────────────────────── */
@@ -459,7 +478,7 @@ DrawerRoot.Content = function DrawerContent(props: AnyProps) {
 DrawerRoot.Header = function DrawerHeader(props: AnyProps) { return <div {...props} />; };
 DrawerRoot.Body = function DrawerBody(props: AnyProps) { return <div {...props} style={{ flex: 1, overflowY: "auto", ...(props.style || {}) }} />; };
 DrawerRoot.Footer = function DrawerFooter(props: AnyProps) { return <div {...props} />; };
-export const Drawer = DrawerRoot;
+export const Drawer: typeof DrawerRoot & Record<string, any> = DrawerRoot;
 Drawer.Root = DrawerRoot;
 
 /* ── Combobox — minimal shim: renders its Input; list handled by call sites
@@ -490,16 +509,32 @@ export function createListCollection<T extends { items?: unknown[] }>(opts: T): 
 
 /* ── Menu (compound over Radix dropdown-menu) ───────────────────────────── */
 
+/** Chakra put `positioning={{ placement }}` on the root; Radix wants
+ *  side/align on the content — carry the placement through context. */
+const MenuPlacementCtx = createContext<string>("bottom-start");
+
 const MenuRoot = function MenuRoot(props: AnyProps) {
-    const { children, ...rest } = props;
-    return <RMenu.Root {...rest}>{children}</RMenu.Root>;
+    const { children, positioning, ...rest } = props;
+    const placement = positioning?.placement ?? "bottom-start";
+    return (
+        <MenuPlacementCtx.Provider value={placement}>
+            <RMenu.Root {...rest}>{children}</RMenu.Root>
+        </MenuPlacementCtx.Provider>
+    );
 };
 MenuRoot.Trigger = function MenuTrigger(props: AnyProps) {
     return <RMenu.Trigger asChild {...props} />;
 };
 MenuRoot.Positioner = function MenuPositioner(props: AnyProps) {
     const { children, ...rest } = props;
-    return <RMenu.Portal><RMenu.Content sideOffset={6} {...rest}>{children}</RMenu.Content></RMenu.Portal>;
+    const placement = useContext(MenuPlacementCtx);
+    const [side = "bottom", alignRaw = "start"] = String(placement).split("-");
+    const align = alignRaw === "end" ? "end" : alignRaw === "start" ? "start" : "center";
+    return (
+        <RMenu.Portal>
+            <RMenu.Content className="compat-menu-panel" side={side as "bottom"} align={align} sideOffset={6} {...rest}>{children}</RMenu.Content>
+        </RMenu.Portal>
+    );
 };
 MenuRoot.Content = function MenuContent(props: AnyProps) { return <div {...props} />; };
 MenuRoot.Item = function MenuItem(props: AnyProps) {
@@ -507,6 +542,7 @@ MenuRoot.Item = function MenuItem(props: AnyProps) {
     return (
         <RMenu.Item
             {...rest}
+            className="compat-menu-item"
             style={{
                 display: "flex", alignItems: "center", gap: 8,
                 padding: "6px 10px", fontSize: "12.5px", borderRadius: 4,
@@ -524,7 +560,7 @@ MenuRoot.ItemGroupLabel = function MenuItemGroupLabel(props: AnyProps) {
 MenuRoot.Separator = function MenuSeparator() {
     return <RMenu.Separator style={{ height: "var(--hairline-w)", background: "var(--hairline)", margin: "4px 0" }} />;
 };
-export const Menu = MenuRoot;
+export const Menu: typeof MenuRoot & Record<string, any> = MenuRoot;
 Menu.Root = MenuRoot;
 
 /* ── Popover (compound over Radix) ──────────────────────────────────────── */
@@ -545,7 +581,7 @@ PopoverRoot.CloseTrigger = function PopoverCloseTrigger(props: AnyProps) { retur
 PopoverRoot.Arrow = function PopoverArrow(props: AnyProps) { return <RPopover.Arrow {...props} />; };
 PopoverRoot.ArrowTip = function PopoverArrowTip(props: AnyProps) { return <RPopover.ArrowTip {...props} />; };
 PopoverRoot.Anchor = function PopoverAnchor(props: AnyProps) { return <RPopover.Anchor asChild {...props} />; };
-export const Popover = PopoverRoot;
+export const Popover: typeof PopoverRoot & Record<string, any> = PopoverRoot;
 Popover.Root = PopoverRoot;
 
 /* ── Accordion (compound, self-contained) ───────────────────────────────── */
@@ -600,7 +636,7 @@ AccordionRoot.ItemIndicator = function AccordionItemIndicator(props: AnyProps) {
     const acc = useContext(AccordionCtx);
     return <span {...props} style={{ display: "inline-block", transition: "transform 150ms", transform: acc?.openSet.has(v) ? "rotate(180deg)" : "none", ...(props.style || {}) }} />;
 };
-export const Accordion = AccordionRoot;
+export const Accordion: typeof AccordionRoot & Record<string, any> = AccordionRoot;
 Accordion.Root = AccordionRoot;
 
 /* ── Tabs (compound, self-contained) ────────────────────────────────────── */
@@ -611,7 +647,8 @@ const TabsRoot = function TabsRoot(props: AnyProps) {
     const { defaultValue, value, onValueChange, children, ...rest } = props;
     const [inner, setInner] = useState(defaultValue ?? "");
     const current = value ?? inner;
-    const setValue = (v: string) => { setInner(v); onValueChange?.(v); };
+    // Chakra's contract: onValueChange receives { value } — call sites read details.value.
+    const setValue = (v: string) => { setInner(v); onValueChange?.({ value: v }); };
     return (
         <TabsCtx.Provider value={{ value: current, setValue }}>
             <div {...rest}>{children}</div>
@@ -620,7 +657,8 @@ const TabsRoot = function TabsRoot(props: AnyProps) {
 };
 TabsRoot.List = function TabsList(props: AnyProps) { return <div role="tablist" {...props} />; };
 TabsRoot.Trigger = function TabsTrigger(props: AnyProps) {
-    const { value, ...rest } = props;
+    const { value, ...restProp } = props;
+    const rest = pseudoProps(restProp);
     const ctx = useContext(TabsCtx);
     return (
         <button
@@ -646,8 +684,9 @@ TabsRoot.Content = function TabsContent(props: AnyProps) {
     return <div role="tabpanel" {...rest} />;
 };
 TabsRoot.Indicator = function TabsIndicator() { return null; };
-export const Tabs = TabsRoot;
-Tabs.Root = TabsRoot;
+// `Root` is part of the value (Object.assign), so call sites get real
+// contextual types instead of the `any` index signature.
+export const Tabs = Object.assign(TabsRoot, { Root: TabsRoot });
 
 /* ── Select (Chakra v3 compound; native select under the hood) ──────────── */
 
@@ -766,7 +805,7 @@ const AvatarRoot = function AvatarRoot(props: AnyProps) {
 };
 AvatarRoot.Image = function AvatarImage(props: AnyProps) { return <img {...props} style={{ width: "100%", height: "100%", objectFit: "cover", ...(props.style || {}) }} />; };
 AvatarRoot.Fallback = function AvatarFallback(props: AnyProps) { return <span {...props} style={{ fontSize: "12px", fontWeight: 600, color: "var(--ink-secondary)", ...(props.style || {}) }} />; };
-export const Avatar = AvatarRoot;
+export const Avatar: typeof AvatarRoot & Record<string, any> = AvatarRoot;
 Avatar.Root = AvatarRoot;
 
 /* ── Alert (compound) ───────────────────────────────────────────────────── */

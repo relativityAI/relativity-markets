@@ -1,4 +1,4 @@
-import { Box, Flex, Text, Spinner, HStack, VStack } from "@chakra-ui/react";
+import { Box, Flex, Text, Spinner, HStack, VStack } from "@/compat/ui";
 import { MdCheck, MdClose } from "react-icons/md";
 import { formatSeconds } from "@/utils";
 import { motion, AnimatePresence } from "motion/react";

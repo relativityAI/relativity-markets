@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { Center, Spinner } from "@chakra-ui/react";
+import { Center, Spinner } from "@/compat/ui";
 import { useColorMode } from "@/components/ui/color-mode";
 import { API_BASE, AnalysisService } from "@/db";
 import { TickerLogo } from "@/lib/sourceLogos";

@@ -6,9 +6,9 @@ import {
     Box,
     HStack,
     Spinner,
-} from "@chakra-ui/react"
+} from "@/compat/ui"
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { AgentService } from "@/db";
 import PageHero from "@/components/PageHero";
 import AgentAvatar from "@/components/shared/AgentAvatar";
@@ -84,9 +84,30 @@ export default function AgentsList() {
                 {/* Page header */}
                 <PageHero>
                     <Flex justify="space-between" align="center">
-                        <Text fontSize="22px" fontWeight={600} color="var(--ink-primary)">
-                            Agents
-                        </Text>
+                        <Flex align="center" gap={2.5} minW={0}>
+                            <Text as="h1" fontSize="22px" fontWeight={600} color="var(--ink-primary)">
+                                Agents
+                            </Text>
+                            {/* Decision for this route: kept as a legacy table
+                                rather than redirected — the workspace has the
+                                same agents with editing, skills and schedules. */}
+                            <Text
+                                as="span"
+                                fontSize="10.5px"
+                                fontWeight={500}
+                                letterSpacing="0.06em"
+                                textTransform="uppercase"
+                                color="var(--ink-tertiary)"
+                                border="1px solid var(--hairline)"
+                                borderRadius="2px"
+                                px={1.5}
+                                py={0.5}
+                                whiteSpace="nowrap"
+                                title="Older table view — the Workspace has the same agents plus editing, skills and schedules."
+                            >
+                                Legacy table
+                            </Text>
+                        </Flex>
                         <Button
                             size="sm"
                             onClick={handleCreate}
@@ -193,6 +214,7 @@ export default function AgentsList() {
                                             item.asset_evaluation?.qualitative?.length || 0;
                                         const quantCount =
                                             item.asset_evaluation?.quantitative?.length || 0;
+                                        const agentId = item._id || item.id || "";
                                         return (
                                             <Table.Row
                                                 as={motion.tr}
@@ -201,15 +223,19 @@ export default function AgentsList() {
                                                 layout={false}
                                                 key={item._id || item.id}
                                                 cursor="pointer"
-                                                onClick={() =>
-                                                    onRowClick(item._id || (item.id as string))
-                                                }
+                                                onClick={() => onRowClick(agentId)}
                                                 _hover={{ bg: "var(--surface-recessed)" }}
                                                 transition="background 160ms"
                                             >
-                                                {/* Name + ID sub-line */}
+                                                {/* Name + ID sub-line — the link is the
+                                                    keyboard path into the row; the row
+                                                    onClick keeps the mouse path. */}
                                                 <Table.Cell px={4} py={3}>
-                                                    <Flex align="center" gap={2.5}>
+                                                    <Link
+                                                        to={`/agent/${agentId}`}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        className="flex items-center gap-2.5 rounded-[4px] focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
+                                                    >
                                                         <AgentAvatar agent={item} size={38} />
                                                         <Flex direction="column" minW={0}>
                                                         <Text
@@ -231,7 +257,7 @@ export default function AgentsList() {
                                                             )}
                                                         </Text>
                                                         </Flex>
-                                                    </Flex>
+                                                    </Link>
                                                 </Table.Cell>
 
                                                 {/* Criteria — merged qual + quant */}

@@ -58,7 +58,8 @@
   --color-console-ink: var(--foreground);
   --color-console-ink-2: var(--muted-foreground);
   --color-console-ink-3: var(--muted-foreground);
-  --color-console-ink-4: color-mix(in srgb, var(--muted-foreground) 65%, transparent);
+  /* Was 65% alpha = 2.46:1 on the light canvas; solid muted-foreground targets AA on the console canvas in both themes: 4.62:1 light / 6.69:1 dark. */
+  --color-console-ink-4: var(--muted-foreground);
   --color-console-accent: var(--primary);
   --color-console-accent-strong: var(--accent-foreground);
   --color-console-accent-soft: var(--accent);

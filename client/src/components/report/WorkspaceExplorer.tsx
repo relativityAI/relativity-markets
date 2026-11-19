@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Box, Flex, Text } from "@chakra-ui/react";
+import { Box, Flex, Text } from "@/compat/ui";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { DownloadIcon } from "lucide-react";

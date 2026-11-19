@@ -15,7 +15,6 @@ beforeAll(() => {
 });
 
 import { render, screen } from "@testing-library/react";
-import { ChakraProvider, createSystem, defaultConfig } from "@chakra-ui/react";
 import { ThemeProvider } from "next-themes";
 import { ReportDocumentRenderer } from "../components/report/ReportDocumentRenderer";
 import { REPORT_SCHEMA, REPORT_SCHEMA_V1, type ReportDocument } from "../lib/reportContract";
@@ -73,9 +72,9 @@ const doc: ReportDocument = {
 };
 
 const wrap = (n: React.ReactNode) => (
-  <ChakraProvider value={createSystem(defaultConfig)}>
+  <>
     <ThemeProvider attribute="class" defaultTheme="dark">{n}</ThemeProvider>
-  </ChakraProvider>
+  </>
 );
 
 describe("ReportDocumentRenderer (golden)", () => {

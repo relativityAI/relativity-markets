@@ -1,6 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Box, Text } from "@chakra-ui/react";
+import { Box, Text } from "@/compat/ui";
 import { ArrowLeft } from "lucide-react";
 import { Helmet } from "react-helmet-async";
 import { supabase } from "@/lib/supabase";
@@ -24,6 +24,7 @@ export default function Login() {
   const navigate = useNavigate();
   const gsiRef = useRef<HTMLDivElement>(null);
   const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
+  const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -36,8 +37,17 @@ export default function Login() {
     gsi.initialize({
       client_id: clientId,
       callback: async (res) => {
-        if (!res.credential) return;
-        await supabase.auth.signInWithIdToken({ provider: "google", token: res.credential });
+        // Both failures used to vanish: no credential = a click that did
+        // nothing, a rejected sign-in = an unhandled rejection.
+        if (!res.credential) {
+          setAuthError("Google didn't return a sign-in credential. Try again.");
+          return;
+        }
+        try {
+          await supabase.auth.signInWithIdToken({ provider: "google", token: res.credential });
+        } catch (error) {
+          setAuthError(`Sign-in failed — ${(error as Error)?.message || "unexpected error"}. Try again.`);
+        }
       },
     });
     gsiRef.current.innerHTML = "";
@@ -73,12 +83,17 @@ export default function Login() {
           Agents watch the market, you watch the agents.
         </h1>
 
-        <div className="mt-4 flex justify-center">
+        <div className="mt-4 flex flex-col items-center gap-3">
           {clientId ? (
             <Box ref={gsiRef} />
           ) : (
-            <Text fontSize="sm" color="var(--signal-negative)">
-              Missing VITE_GOOGLE_CLIENT_ID.
+            <Text fontSize="sm" color="var(--signal-negative)" role="alert">
+              Google sign-in isn&apos;t configured on this deployment.
+            </Text>
+          )}
+          {authError && (
+            <Text fontSize="sm" color="var(--signal-negative)" role="alert">
+              {authError}
             </Text>
           )}
         </div>

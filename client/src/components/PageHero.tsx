@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Box } from "@chakra-ui/react";
+import { Box } from "@/compat/ui";
 
 export default function PageHero({ children }: { children: ReactNode }) {
     return (

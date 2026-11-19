@@ -37,7 +37,6 @@ beforeAll(() => {
 });
 
 import { render, screen } from "@testing-library/react";
-import { ChakraProvider, createSystem, defaultConfig } from "@chakra-ui/react";
 import { ThemeProvider } from "next-themes";
 import AgentActivity from "../components/shared/AgentActivity";
 import { RunMetadata } from "../pages/AnalysisResult";
@@ -47,9 +46,9 @@ import fixture from "./fixtures/harness-trace.json";
 
 function wrap(ui: ReactElement) {
   return (
-    <ChakraProvider value={createSystem(defaultConfig)}>
+    <>
       <ThemeProvider attribute="class" defaultTheme="dark">{ui}</ThemeProvider>
-    </ChakraProvider>
+    </>
   );
 }
 

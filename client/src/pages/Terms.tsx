@@ -1,15 +1,15 @@
-import { Box, Text, Heading } from "@chakra-ui/react";
+import { Box, Text, Heading } from "@/compat/ui";
 import { Helmet } from "react-helmet-async";
 
 export default function Terms() {
   return (
     <>
       <Helmet>
-        <title>Terms of Service | Relativity AI</title>
+        <title>Terms of Service | Relativity</title>
         <meta name="description" content="Relativity AI terms of service." />
       </Helmet>
       <Box maxW="720px" mx="auto" py={10}>
-        <Heading size="xl" mb={2}>Terms of Service</Heading>
+        <Heading as="h1" size="xl" mb={2}>Terms of Service</Heading>
         <Text fontSize="sm" color="fg.muted" mb={8}>Last updated: {new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</Text>
 
         <Heading size="md" mb={3}>1. Acceptance of Terms</Heading>

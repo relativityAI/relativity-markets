@@ -265,8 +265,10 @@ export function DropdownItem({ label, sub, tag, selected, logo, onClick }: {
                 borderRadius: "12px",
                 background: "transparent",
                 cursor: "pointer",
-                outline: "none",
             }}
+            /* No outline: "none" — the global :focus-visible ring shows; inset
+               offset so the ring isn't clipped by the panel's scroll box. */
+            className="focus-visible:[outline-offset:-2px]"
         >
             {logo && <span style={{ display: "inline-flex", flexShrink: 0 }}>{logo}</span>}
             <span style={{ flex: 1, minWidth: 0 }}>
@@ -363,7 +365,6 @@ export function PrimaryButton({ children, onClick, disabled, flex, style }: Pres
                 fontWeight: 500,
                 fontSize: "14px",
                 cursor: disabled ? "default" : "pointer",
-                outline: "none",
                 boxShadow: disabled
                     ? "none"
                     : `inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 1px 2px color-mix(in srgb, ${ink1} 14%, transparent)`,
@@ -400,7 +401,6 @@ export function SecondaryButton({ children, onClick, disabled, flex, style }: Pr
                 fontWeight: 500,
                 fontSize: "13px",
                 cursor: disabled ? "default" : "pointer",
-                outline: "none",
                 ...style,
             }}
         >

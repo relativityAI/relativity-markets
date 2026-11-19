@@ -1,15 +1,14 @@
 import { useState, useEffect } from "react";
 import {
     Flex, Text, Box, VStack
-} from "@chakra-ui/react";
-import { Check, Eye, EyeOff, X, Trash2, Plus, Pencil, ExternalLink, Lock, Sun, Moon } from "lucide-react";
+} from "@/compat/ui";
+import { Check, Eye, EyeOff, X, Trash2, Plus, Pencil, ExternalLink, Lock } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button as UIButton } from "@/components/ui/button";
 import { Input as UIInput } from "@/components/ui/input";
 import { toaster } from "@/components/ui/toaster";
 import { SettingsService } from "@/db";
 import { useAuth } from "@/auth/useAuth";
-import { useColorMode } from "@/components/ui/color-mode";
 import UserAvatar from "@/components/shared/UserAvatar";
 import { ModelLogo } from "@/lib/modelLogos";
 import { motion } from "motion/react";
@@ -29,6 +28,7 @@ const MODEL_PROVIDERS = [
     { value: "nvidia", label: "NVIDIA", url: "https://build.nvidia.com/settings/api-keys" },
     { value: "cohere", label: "Cohere", url: "https://dashboard.cohere.com/api-keys" },
     { value: "zai", label: "Z.ai", url: "https://z.ai/manage-apikey/apikey-list" },
+    { value: "opencode", label: "OpenCode", url: "https://opencode.ai/auth" },
 ];
 
 const providerLabel = (value: string) =>
@@ -196,7 +196,7 @@ function ProviderCard({ value, label, url, savedKey, onSave, onRemove }: Provide
                     {confirmRemove ? (
                         <div className="flex flex-col gap-2 rounded-[6px] border-[0.5px] border-[color:color-mix(in_srgb,var(--signal-negative)_35%,transparent)] bg-[color-mix(in_srgb,var(--signal-negative)_6%,transparent)] p-3">
                             <p className="text-[12.5px] text-console-ink">
-                                Remove the {label} key? Analyses will stop using it immediately.
+                                Remove the {label} key? Runs will stop using it immediately.
                             </p>
                             <div className="flex gap-2">
                                 <UIButton size="sm" variant="destructive" onClick={handleRemove} disabled={busy}>
@@ -314,19 +314,27 @@ function GroupHeader({ title, purpose }: { title: string; purpose: string }) {
 
 export default function Settings() {
     const { user } = useAuth();
-    const { colorMode, setColorMode } = useColorMode();
     const [savedKeys, setSavedKeys] = useState<Record<string, string>>({});
     const [webProvider, setWebProvider] = useState<"searxng" | "tavily">("searxng");
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState(false);
 
-    useEffect(() => {
+    const loadSettings = () => {
+        setLoading(true);
+        setLoadError(false);
         SettingsService.getSettings()
             .then((data) => {
                 setSavedKeys({ ...(data.llm_keys || {}) });
                 setWebProvider(data.prefs?.web_search_provider === "tavily" ? "tavily" : "searxng");
             })
-            .catch(() => {})
+            // Fail loudly: a silent catch here painted every provider
+            // "Not connected" with no hint that the fetch never landed.
+            .catch(() => setLoadError(true))
             .finally(() => setLoading(false));
+    };
+
+    useEffect(() => {
+        loadSettings();
     }, []);
 
     const handleSaveKey = async (provider: string, key: string) => {
@@ -376,7 +384,6 @@ export default function Settings() {
         "User";
 
     const connectedCount = Object.keys(savedKeys).length;
-    const isDark = colorMode === "dark";
 
     return (
         <Box bg="var(--surface-canvas)" minH="100%">
@@ -411,40 +418,6 @@ export default function Settings() {
                                 Local-first: all your data lives on this machine.
                             </Text>
                         </SectionCard>
-
-                        <SectionCard title="Appearance" subtitle="Choose how Relativity looks on this device.">
-                            <Flex gap={1} p={1} bg="var(--surface-recessed)" borderRadius="2px">
-                                {[
-                                    { v: "light" as const, icon: Sun, label: "Light" },
-                                    { v: "dark" as const, icon: Moon, label: "Dark" },
-                                ].map((opt) => {
-                                    const active = (opt.v === "dark") === isDark;
-                                    return (
-                                        <Flex
-                                            key={opt.v}
-                                            as="button"
-                                            type="button"
-                                            onClick={() => setColorMode(opt.v)}
-                                            align="center"
-                                            justify="center"
-                                            gap={2}
-                                            flex={1}
-                                            py={2}
-                                            borderRadius="2px"
-                                            cursor="pointer"
-                                            aria-pressed={active}
-                                            bg={active ? "var(--surface-panel)" : "transparent"}
-                                            boxShadow={active ? "0 1px 2px rgba(0,0,0,0.08)" : "none"}
-                                        >
-                                            <opt.icon size={14} color={active ? "var(--accent-primary)" : "var(--ink-tertiary)"} />
-                                            <Text fontSize="12.5px" color={active ? "var(--ink-primary)" : "var(--ink-tertiary)"}>
-                                                {opt.label}
-                                            </Text>
-                                        </Flex>
-                                    );
-                                })}
-                            </Flex>
-                        </SectionCard>
                     </VStack>
 
                     {/* RIGHT MAIN — API keys */}
@@ -466,6 +439,20 @@ export default function Settings() {
                             <GridSkeleton />
                         ) : (
                             <>
+                                {loadError && (
+                                    <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 bg-[var(--surface-recessed)] px-3 py-2.5">
+                                        <span className="font-app-body text-[13px] text-[var(--signal-negative)]">
+                                            Couldn't load your settings — the statuses below may be out of date.
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={loadSettings}
+                                            className="font-app-body ml-auto cursor-pointer text-[13px] font-medium text-[var(--ink-primary)] underline underline-offset-2 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--ink-primary)]"
+                                        >
+                                            Retry
+                                        </button>
+                                    </div>
+                                )}
                                 <div className="mb-4">
                                     <h2 className="font-app-body text-[20px] leading-none font-light tracking-tight text-console-ink">
                                         Model Providers

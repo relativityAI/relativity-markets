@@ -1,15 +1,15 @@
-import { Box, Text, Heading } from "@chakra-ui/react";
+import { Box, Text, Heading } from "@/compat/ui";
 import { Helmet } from "react-helmet-async";
 
 export default function Privacy() {
   return (
     <>
       <Helmet>
-        <title>Privacy Policy | Relativity AI</title>
+        <title>Privacy Policy | Relativity</title>
         <meta name="description" content="Relativity AI privacy policy. Learn how we handle your data." />
       </Helmet>
       <Box maxW="720px" mx="auto" py={10}>
-        <Heading size="xl" mb={2}>Privacy Policy</Heading>
+        <Heading as="h1" size="xl" mb={2}>Privacy Policy</Heading>
         <Text fontSize="sm" color="fg.muted" mb={8}>Last updated: {new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</Text>
 
         <Heading size="md" mb={3}>1. Information We Collect</Heading>

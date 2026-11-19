@@ -7,7 +7,7 @@
  */
 
 import React, { useEffect, useState } from "react";
-import { Box, Flex, Text } from "@chakra-ui/react";
+import { Box, Flex, Text } from "@/compat/ui";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -28,12 +28,15 @@ import { downloadSvg, downloadCsv, downloadPng } from "@/lib/figureExport";
 import { isV2, type ChartSpec, type DiagramSpec, type Highlight, type ReportDocument, type ReportSection, type Section, type Source } from "@/lib/reportContract";
 import "@/styles/almanac-report.css";
 
+// Chakra's `--chakra-colors-*-fg` vars died with the runtime — map to the
+// app's own semantic tokens (they adapt in dark mode) and keep the old hexes
+// for the two shades the theme has no token for.
 const HIGHLIGHT_COLOR: Record<Highlight["kind"], string> = {
-  neutral: "var(--chakra-colors-gray-fg, #4a5568)",
-  number: "var(--chakra-colors-blue-fg, #2b6cb0)",
-  positive: "var(--chakra-colors-green-fg, #2f855a)",
-  negative: "var(--chakra-colors-red-fg, #c53030)",
-  citation: "var(--chakra-colors-purple-fg, #6b46c1)",
+  neutral: "var(--ink-secondary, #4a5568)",
+  number: "#2b6cb0",
+  positive: "var(--signal-positive, #2f855a)",
+  negative: "var(--signal-negative, #c53030)",
+  citation: "#6b46c1",
 };
 
 export interface HighlightPart {

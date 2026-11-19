@@ -10,8 +10,9 @@ import {
     HStack,
     VStack,
     Tabs,
-} from "@chakra-ui/react";
+} from "@/compat/ui";
 import { AnalysisService, API_BASE } from "@/db";
+import { toaster } from "@/components/ui/toaster";
 import axios from "axios";
 import { formatSeconds } from "@/utils";
 import SkillAvatar from "@/components/shared/SkillAvatar";
@@ -87,7 +88,12 @@ function DownloadButton({ runId, name }: { runId?: string; name?: string }) {
             setState("idle");
         } catch (e) {
             setState("error");
-            console.error("PDF export failed:", e);
+            // The aria-label flip alone is invisible to sighted users.
+            toaster.create({
+                title: "Couldn't export the PDF",
+                description: (e as Error)?.message || "The download didn't come through. Try again.",
+                type: "error",
+            });
         }
     };
     return (
@@ -372,6 +378,26 @@ export default function AnalysisResult() {
         };
     }, [id]);
 
+    /** Re-read the run — the Retry affordance shared by the load-error state
+     *  and the failed-run banner below. */
+    const reload = () => {
+        setError(null);
+        setLoading(true);
+        fetchTimer.current != null && window.clearTimeout(fetchTimer.current);
+        fetchCancelled.current = false;
+        (async () => {
+            try {
+                const data = await AnalysisService.readAnalysis(id!);
+                if (data) setAnalysis(data);
+                else setError("Run not found");
+            } catch {
+                setError("Failed to load run result");
+            } finally {
+                setLoading(false);
+            }
+        })();
+    };
+
     // U4: the Report tab is not populated while a run is in progress.
     const reportAvailable = isComplete;
 
@@ -484,29 +510,13 @@ export default function AnalysisResult() {
                     <HStack gap={3}>
                         <Link to="/analysis-list" style={{ textDecoration: "none" }}>
                             <Button variant="subtle" size="sm" color="var(--ink-secondary)">
-                                <MdArrowBack style={{ marginRight: 6 }} /> Back to List
+                                <MdArrowBack style={{ marginRight: 6 }} /> Back to Runs
                             </Button>
                         </Link>
                         <Button
                             variant="solid"
                             size="sm"
-                            onClick={() => {
-                                setError(null);
-                                setLoading(true);
-                                fetchTimer.current != null && window.clearTimeout(fetchTimer.current);
-                                fetchCancelled.current = false;
-                                (async () => {
-                                    try {
-                                        const data = await AnalysisService.readAnalysis(id!);
-                                        if (data) setAnalysis(data);
-                                        else setError("Run not found");
-                                    } catch {
-                                        setError("Failed to load run result");
-                                    } finally {
-                                        setLoading(false);
-                                    }
-                                })();
-                            }}
+                            onClick={reload}
                         >
                             Retry
                         </Button>
@@ -523,7 +533,7 @@ export default function AnalysisResult() {
     // report only once the run is terminal. The legacy layout below is for
     // completed skill-era rows.
     if (isRunning || analysis.report_document) {
-        return <HarnessRunView run={analysis} tags={runSkillTags} />;
+        return <HarnessRunView run={analysis} tags={runSkillTags} onRetry={reload} />;
     }
 
     const s = (analysis.status || "").toLowerCase();
@@ -586,7 +596,7 @@ export default function AnalysisResult() {
                             className="inline-flex shrink-0 items-center gap-1 rounded-[4px] px-1.5 py-1 text-[13px] text-[var(--ink-secondary)] transition-colors hover:text-[var(--ink-primary)] focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
                         >
                             <MdArrowBack aria-hidden="true" />
-                            <span className="hidden sm:inline">Analyses</span>
+                            <span className="hidden sm:inline">Runs</span>
                         </Link>
                         {/* One mini navbar: tabs inline, no rule under them —
                             the selected tab is a tinted rounded pill. The strip
@@ -637,6 +647,7 @@ export default function AnalysisResult() {
                     <Flex align="center" gap={2.5} minW={0}>
                         <TickerLogo symbol={analysis.symbol} size={22} />
                         <Text
+                            as="h1"
                             fontSize="16px"
                             fontWeight={600}
                             color="var(--ink-primary)"
@@ -754,7 +765,7 @@ export default function AnalysisResult() {
                             <span>
                                 The verdict is not investment advice — it depends on the quality of the{" "}
                                 <Link
-                                    to="/my-workspace/skills"
+                                    to="/my-workspace"
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="text-[var(--ink-tertiary)] underline decoration-[var(--hairline)] underline-offset-2 transition-colors hover:text-[var(--ink-secondary)] focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
@@ -1032,7 +1043,7 @@ const VERDICT_BAND_EXAMPLE: Record<string, number> = {
 };
 
 /** Harness run result: the typed ReportDocument + the Agent Workspace (reasoning + knowledge base). */
-function HarnessRunView({ run }: { run: any; tags?: string[] }) {
+function HarnessRunView({ run, onRetry }: { run: any; tags?: string[]; onRetry?: () => void }) {
     const doc = run.report_document as ReportDocument;
     const status = String(run.status || "").toLowerCase();
     const failed = status === "failed" || status === "budget_exhausted" || status === "error";
@@ -1076,7 +1087,7 @@ function HarnessRunView({ run }: { run: any; tags?: string[] }) {
                         className="inline-flex shrink-0 items-center gap-1 rounded-[4px] px-1.5 py-1 text-[13px] text-[var(--ink-secondary)] transition-colors hover:text-[var(--ink-primary)] focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
                     >
                         <MdArrowBack aria-hidden="true" />
-                        <span className="hidden sm:inline">Analyses</span>
+                        <span className="hidden sm:inline">Runs</span>
                     </Link>
                     <Tabs.List
                         flex={1}
@@ -1116,6 +1127,40 @@ function HarnessRunView({ run }: { run: any; tags?: string[] }) {
                     </Box>
                 </Flex>
 
+                {/* Failed runs must say why — cause, the fix, and a retry —
+                    on every tab, not just the partial report. */}
+                {!drafting && (failed || run.error) && (
+                    <Box mt={4} mb={2}>
+                        <Callout tone="negative" title="Run Error">
+                            {run.error ? (
+                                <Text
+                                    as="span"
+                                    fontFamily="var(--font-mono)"
+                                    whiteSpace="pre-wrap"
+                                    wordBreak="break-word"
+                                    fontSize="12.5px"
+                                >
+                                    {run.error}
+                                </Text>
+                            ) : (
+                                <Text as="span">
+                                    The run stopped before it could finish — no cause was recorded.
+                                </Text>
+                            )}
+                        </Callout>
+                        <Flex align="center" gap={3} mt={2}>
+                            <Text fontSize="12.5px" color="var(--ink-secondary)">
+                                Check Settings → API keys, then retry.
+                            </Text>
+                            {onRetry && (
+                                <Button variant="solid" size="sm" onClick={onRetry}>
+                                    Retry
+                                </Button>
+                            )}
+                        </Flex>
+                    </Box>
+                )}
+
                     {/* ── Report ── */}
                     <Tabs.Content value="report">
                         {drafting && (
@@ -1139,6 +1184,7 @@ function HarnessRunView({ run }: { run: any; tags?: string[] }) {
                                 <Box minW={0}>
                                     <Flex align="baseline" gap={3} flexWrap="wrap">
                                         <Text
+                                            as="h1"
                                             fontSize={{ base: "18px", md: "20px" }}
                                             fontWeight={500}
                                             lineHeight="shorter"

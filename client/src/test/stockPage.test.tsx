@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
-import { ChakraProvider, createSystem, defaultConfig } from "@chakra-ui/react";
 
 beforeAll(() => {
   if (!window.matchMedia) {
@@ -44,11 +43,11 @@ const overview = {
 };
 
 const renderStock = () => render(
-  <ChakraProvider value={createSystem(defaultConfig)}>
+  <>
     <MemoryRouter initialEntries={["/stock/EXIDEIND?source=NSE"]}>
       <Routes><Route path="/stock/:symbol" element={<Stock />} /></Routes>
     </MemoryRouter>
-  </ChakraProvider>
+  </>
 );
 
 describe("stock page", () => {

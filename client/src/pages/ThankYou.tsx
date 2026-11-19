@@ -1,4 +1,4 @@
-import { Flex, Text, Button } from "@chakra-ui/react";
+import { Flex, Text, Button } from "@/compat/ui";
 import { Link } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
 import { MdCheckCircleOutline } from "react-icons/md";
@@ -7,12 +7,12 @@ export default function ThankYou() {
   return (
     <>
       <Helmet>
-        <title>Thank You | Relativity AI</title>
+        <title>Thank You | Relativity</title>
         <meta name="description" content="Your submission has been received." />
       </Helmet>
       <Flex direction="column" align="center" justify="center" minH="60vh" gap={4}>
         <MdCheckCircleOutline size={56} color="var(--signal-positive)" />
-        <Text fontSize="2xl" fontWeight="bold">
+        <Text as="h1" fontSize="2xl" fontWeight="bold">
           Thank you
         </Text>
         <Text color="fg.muted" textAlign="center" maxW="400px">

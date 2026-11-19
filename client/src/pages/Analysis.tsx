@@ -1,4 +1,4 @@
-import { Flex, Text, Spinner, Box } from "@chakra-ui/react";
+import { Flex, Text, Spinner, Box } from "@/compat/ui";
 import { useEffect, useState, useCallback, useRef, type ReactNode, type CSSProperties } from "react";
 import { MdCheck, MdClose } from "react-icons/md";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -25,6 +25,7 @@ import {
 } from "./shared/AnalysisControls";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import { DateTimePicker, type DateTimeValue, toDateKey } from "./shared/DateTimePicker";
 
 const MAX_POLL_RETRIES = 600;
@@ -107,6 +108,7 @@ function RunFooter({
     resuming,
     statusLine,
     canRun,
+    hint,
     scheduled,
     onRun,
     onReset,
@@ -118,6 +120,7 @@ function RunFooter({
     resuming: boolean;
     statusLine: string;
     canRun: boolean;
+    hint: string;
     scheduled: boolean;
     onRun: () => void;
     onReset: () => void;
@@ -187,6 +190,11 @@ function RunFooter({
                 )}
             </Flex>
             <Flex align="center" gap={2} flexShrink={0}>
+                {status === "EMPTY" && !resuming && !canRun && hint && (
+                    <Text fontSize="11px" fontWeight={300} color="var(--ink-tertiary)" whiteSpace="nowrap">
+                        {hint}
+                    </Text>
+                )}
                 {status === "EMPTY" &&
                     (resuming ? (
                         <ResumingButton style={action}>
@@ -265,6 +273,10 @@ export default function Analysis() {
     const [stockQuery, setStockQuery] = useState("");
     const [stockItems, setStockItems] = useState<any[]>([]);
     const [stockLoading, setStockLoading] = useState(false);
+    // A failed search must not read as a genuinely empty result.
+    const [stockError, setStockError] = useState(false);
+    // Bumped by the Retry link to re-run the current query.
+    const [stockRetry, setStockRetry] = useState(0);
     // The picked search row — carries the metadata the card shows (exchange…).
     const [pickedStock, setPickedStock] = useState<any>(null);
     const stockAbortRef = useRef<AbortController | null>(null);
@@ -276,6 +288,7 @@ export default function Analysis() {
         stockDebounceRef.current = setTimeout(async () => {
             if (!query) {
                 setStockItems([]);
+                setStockError(false);
                 setStockLoading(false);
                 return;
             }
@@ -288,10 +301,17 @@ export default function Analysis() {
                 const response = await fetch(`${API_BASE}/stocks/search?${params}`, {
                     signal: controller.signal,
                 });
+                if (!response.ok) throw new Error(`search failed (${response.status})`);
                 const data = await response.json();
-                if (!controller.signal.aborted) setStockItems(Array.isArray(data) ? data : []);
+                if (!controller.signal.aborted) {
+                    setStockItems(Array.isArray(data) ? data : []);
+                    setStockError(false);
+                }
             } catch (err: any) {
-                if (err?.name !== "AbortError") setStockItems([]);
+                if (err?.name !== "AbortError") {
+                    setStockItems([]);
+                    setStockError(true);
+                }
             } finally {
                 if (!controller.signal.aborted) setStockLoading(false);
             }
@@ -299,7 +319,7 @@ export default function Analysis() {
         return () => {
             if (stockDebounceRef.current) clearTimeout(stockDebounceRef.current);
         };
-    }, [stockQuery]);
+    }, [stockQuery, stockRetry]);
 
     const [model, setModel] = useState("");
     const [availableModels, setAvailableModels] = useState<string[]>([]);
@@ -310,18 +330,32 @@ export default function Analysis() {
     // blocked until an agent is explicitly picked.
     const [agents, setAgents] = useState<HarnessAgent[]>([]);
     const [agentId, setAgentId] = useState("");
+    // A failed fetch must not look like "no agents yet".
+    const [agentsError, setAgentsError] = useState(false);
+    // …and neither must the empty state, before the first fetch lands.
+    const [agentsLoading, setAgentsLoading] = useState(true);
     // Category narrows the agent list; empty = all agents.
     const [categories, setCategories] = useState<string[]>([]);
     const [category, setCategory] = useState("");
 
-    useEffect(() => {
+    const loadAgents = useCallback(() => {
+        setAgentsError(false);
+        setAgentsLoading(true);
         HarnessAgentService.list()
             .then((list) => setAgents(list))
-            .catch(() => setAgents([]));
+            .catch(() => {
+                setAgents([]);
+                setAgentsError(true);
+            })
+            .finally(() => setAgentsLoading(false));
+    }, []);
+
+    useEffect(() => {
+        loadAgents();
         AgentService.listCategories()
             .then((data) => { if (Array.isArray(data)) setCategories(data); })
             .catch(() => {});
-    }, []);
+    }, [loadAgents]);
 
     const handleCategoryChange = (next: string) => {
         setCategory(next);
@@ -383,11 +417,18 @@ export default function Analysis() {
 
     const [starting, setStarting] = useState(false);
     const [runError, setRunError] = useState<string | null>(null);
+    // The single failure path: message AND status together, so the alert
+    // (gated on both) always renders for every failed run.
+    const failRun = useCallback((message: string) => {
+        setRunError(message);
+        setStatus("ERROR");
+    }, []);
     // "Schedule another" on the workspace opens ?mode=schedule — scheduled preselected.
     const [runMode, setRunMode] = useState<RunMode>(() => (searchParams.get("mode") === "schedule" ? "scheduled" : "once"));
     const [frequency, setFrequency] = useState<Frequency>("daily");
     const [scheduleAt, setScheduleAt] = useState<DateTimeValue>(() => ({ date: toDateKey(new Date()), time: "09:00" }));
     const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
+    const [scheduleToDelete, setScheduleToDelete] = useState<ScheduleRow | null>(null);
 
     const loadSchedules = useCallback(() => {
         AnalysisService.listSchedules().then(setSchedules).catch(() => {});
@@ -420,16 +461,15 @@ export default function Analysis() {
             if (result?.id) {
                 navigate(`/analysis-result/${result.id}`);
             } else {
-                setRunError(result?.errors?.join("; ") || "Run failed");
+                failRun(result?.errors?.join("; ") || "The run could not be started — no run id was returned.");
             }
         } catch (error: any) {
             console.error("Run analysis error:", error);
-            setRunError(
+            failRun(
                 error?.response?.data?.error ||
                 error?.message ||
                 "The run could not be started. Check your selection and try again."
             );
-            setStatus("ERROR");
         } finally {
             setStarting(false);
         }
@@ -499,7 +539,8 @@ export default function Analysis() {
                 const s = (data.status || "").toLowerCase();
                 if (s === "complete" || s === "completed" || s === "error" || s === "failed" || s === "success" || s === "budget_exhausted") {
                     const isComplete = s === "complete" || s === "completed" || s === "success";
-                    setStatus(isComplete ? "COMPLETED" : "ERROR");
+                    if (isComplete) setStatus("COMPLETED");
+                    else failRun(data.error || `The run ended with status “${data.status}”.`);
                     if (data.duration != null) {
                         const d = data.duration;
                         setAnalysisDuration(d >= 60 ? `${Math.floor(d / 60)}m ${Math.floor(d % 60)}s` : `${d.toFixed(1)}s`);
@@ -510,8 +551,11 @@ export default function Analysis() {
 
                 if (data.model) setModel(data.model);
             }
-        } catch {
-            setStatus("ERROR");
+        } catch (error: any) {
+            const code = error?.response?.status;
+            failRun(code
+                ? `Couldn't load the run — the server responded ${code}.`
+                : "Couldn't load the run — the server could not be reached.");
         } finally {
             setLoading(false);
         }
@@ -529,7 +573,8 @@ export default function Analysis() {
                         const s = (data.status || "").toLowerCase();
                         if (s === "complete" || s === "completed" || s === "error" || s === "failed" || s === "success" || s === "budget_exhausted") {
                             const isComplete = s === "complete" || s === "completed" || s === "success";
-                            setStatus(isComplete ? "COMPLETED" : "ERROR");
+                            if (isComplete) setStatus("COMPLETED");
+                            else failRun(data.error || `The run ended with status “${data.status}”.`);
                             if (data.duration != null) {
                                 const d = data.duration;
                                 setAnalysisDuration(d >= 60 ? `${Math.floor(d / 60)}m ${Math.floor(d % 60)}s` : `${d.toFixed(1)}s`);
@@ -540,11 +585,13 @@ export default function Analysis() {
                         }
                     }
                 } catch {
+                    // One failed status poll just retries in 2s; the 20-minute
+                    // ceiling below is the path that reports failure loudly.
                 }
                 pollRetriesRef.current += 1;
                 if (pollRetriesRef.current >= MAX_POLL_RETRIES) {
                     clearInterval(interval);
-                    setStatus("ERROR");
+                    failRun("Status checks timed out after 20 minutes — the run may still be going. Reload the page to check on it.");
                 }
             }, 2000);
             return () => {
@@ -559,6 +606,18 @@ export default function Analysis() {
     const visibleAgents = category ? agents.filter((a) => (a.category ?? "") === category) : agents;
     const selectedAgent = agents.find((a) => a.id === agentId) ?? null;
     const canRunAnalysis = category === "equity" && isConfigComplete && !!selectedAgent && (runMode === "once" || (!!scheduleAt.date && !!scheduleAt.time));
+    // One line naming what's still missing while the run button is disabled.
+    const runHint = canRunAnalysis
+        ? ""
+        : !category
+            ? "Pick a category first"
+            : category !== "equity"
+                ? "Only equity runs are available"
+                : !config.share
+                    ? "Pick a company first"
+                    : !model.trim()
+                        ? "Choose a model"
+                        : "Choose an agent";
     const statusLine = config.share
         ? `${config.share} · ${config.source} · ${runMode === "scheduled" ? `${FREQ_LABEL[frequency]} from ${scheduleAt.date} at ${scheduleAt.time}` : "Single run"}`
         : "";
@@ -601,7 +660,7 @@ export default function Analysis() {
                             mb={4}
                         >
                             <Alert variant="destructive">
-                                <AlertTitle>Analysis did not start</AlertTitle>
+                                <AlertTitle>Run error</AlertTitle>
                                 <AlertDescription>{runError}</AlertDescription>
                             </Alert>
                         </Box>
@@ -612,7 +671,7 @@ export default function Analysis() {
                 <Box>
                     <div className="px-4 pt-2 pb-1">
                         <h1 className="font-app-body text-[30px] leading-none font-light tracking-tight text-console-ink">
-                            New analysis run
+                            New Run
                         </h1>
                         <p className="mt-1.5 font-app-body text-[12px] font-normal text-console-ink-3">
                             Launch a single analysis now, or schedule it to run every day.
@@ -690,7 +749,18 @@ export default function Analysis() {
                                             )}
                                             {!stockLoading && stockItems.length === 0 && (
                                                 <Text px={3} py={2.5} fontSize="12px" fontFamily="var(--font-body)" color="var(--ink-tertiary)">
-                                                    {stockQuery ? `Nothing matches “${stockQuery}”.` : "Start typing to search."}
+                                                    {stockError ? (
+                                                        <>
+                                                            Couldn&apos;t search — the lookup failed.{" "}
+                                                            <button
+                                                                type="button"
+                                                                className="font-inherit text-[var(--accent-primary)] underline underline-offset-2"
+                                                                onClick={() => setStockRetry((n) => n + 1)}
+                                                            >
+                                                                Retry
+                                                            </button>
+                                                        </>
+                                                    ) : stockQuery ? `Nothing matches “${stockQuery}”.` : "Start typing to search."}
                                                 </Text>
                                             )}
                                             {stockItems.map((stock: any) => {
@@ -751,7 +821,36 @@ export default function Analysis() {
 
                     <FormSection title="Agent settings">
                         {/* Agent — the configured harness agents (Agents page) */}
-                        {agents.length > 0 && (
+                        {agentsLoading ? (
+                            <FormRow label="Agent">
+                                <Text fontSize="12px" fontWeight={400} fontFamily="var(--font-body)" color="var(--ink-tertiary)">
+                                    Loading agents…
+                                </Text>
+                            </FormRow>
+                        ) : agentsError ? (
+                            <FormRow label="Agent">
+                                <div className="flex flex-col items-start gap-2">
+                                    <Text fontSize="12px" fontWeight={400} fontFamily="var(--font-body)" color="var(--signal-negative)">
+                                        Couldn&apos;t load agents.
+                                    </Text>
+                                    <Button size="sm" variant="outline" className="px-4" onClick={loadAgents}>
+                                        Retry
+                                    </Button>
+                                </div>
+                            </FormRow>
+                        ) : agents.length === 0 ? (
+                            <FormRow label="Agent">
+                                <div className="flex flex-col items-center py-6 text-center">
+                                    <p className="font-app-body text-lg font-light text-console-ink">No agents yet.</p>
+                                    <p className="mx-auto mt-1.5 max-w-[46ch] font-app-body text-sm text-console-ink-2">
+                                        An agent is a name, a category and a skill. Create one to start.
+                                    </p>
+                                    <Button asChild className="mt-4" data-testid="create-agent-empty">
+                                        <Link to="/my-workspace?new=1">Create an agent</Link>
+                                    </Button>
+                                </div>
+                            </FormRow>
+                        ) : (
                             <FormRow label="Agent">
                                 <div className="flex flex-col gap-2.5">
                                     <MenuDropdown
@@ -875,6 +974,7 @@ export default function Analysis() {
                         resuming={!!id && status === "EMPTY"}
                         statusLine={statusLine}
                         canRun={canRunAnalysis && !starting}
+                        hint={runHint}
                         scheduled={runMode === "scheduled"}
                         onRun={runMode === "scheduled" ? startScheduled : runAnalysis}
                         onReset={() => {
@@ -913,14 +1013,7 @@ export default function Analysis() {
                                 <Box
                                     as="button"
                                     aria-label={`Delete schedule for ${s.share_name || s.symbol}`}
-                                    onClick={async () => {
-                                        try {
-                                            await AnalysisService.deleteSchedule(s.id);
-                                            loadSchedules();
-                                        } catch {
-                                            // best-effort delete; the list refetches next time
-                                        }
-                                    }}
+                                    onClick={() => setScheduleToDelete(s)}
                                     display="flex"
                                     flexShrink={0}
                                     border="none"
@@ -935,6 +1028,32 @@ export default function Analysis() {
                         ))}
                     </Box>
                 )}
+
+                <ConfirmDialog
+                    open={!!scheduleToDelete}
+                    title="Delete schedule?"
+                    message={`The ${FREQ_LABEL[scheduleToDelete?.frequency ?? "daily"]} run for ${scheduleToDelete?.share_name || scheduleToDelete?.symbol || ""} will stop. This can't be undone.`}
+                    confirmLabel="Delete"
+                    onCancel={() => setScheduleToDelete(null)}
+                    onConfirm={async () => {
+                        const target = scheduleToDelete;
+                        setScheduleToDelete(null);
+                        if (!target) return;
+                        try {
+                            await AnalysisService.deleteSchedule(target.id);
+                            loadSchedules();
+                        } catch (error) {
+                            toaster.create({
+                                title: "Couldn't delete the schedule",
+                                description:
+                                    (error as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+                                    (error as Error)?.message ||
+                                    "The schedule could not be deleted.",
+                                type: "error",
+                            });
+                        }
+                    }}
+                />
 
                 <AnimatePresence mode="wait" initial={false}>
                     {status === "PENDING" && correlationId && (

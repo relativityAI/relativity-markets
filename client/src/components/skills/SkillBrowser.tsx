@@ -6,6 +6,7 @@ import { MdSearch, MdEdit } from "react-icons/md";
 import { Save, X } from "lucide-react";
 import { SiAgentskills } from "react-icons/si";
 import { SkillService, type SkillSummary } from "@/db";
+import { toaster } from "@/components/ui/toaster";
 import SkillDraftPane from "@/components/skills/SkillDraftPane";
 import SkillWorkspace from "@/components/skills/SkillWorkspace";
 import SkillAvatar from "@/components/shared/SkillAvatar";
@@ -115,10 +116,16 @@ export function SkillEditor({ skill, onSaved, onCancel }: {
                 // ok, not just the absence of error lines.
                 setValidated(!res.issues?.some((i) => i.severity === "error") && !!text.trim());
             }
-        } catch {
+        } catch (error) {
             setIssues([]);
             setFixNotice(null);
             setValidated(false);
+            // The click must answer even when the validator never responds.
+            toaster.create({
+                title: "Couldn't check the document",
+                description: (error as Error)?.message || "The validator didn't respond. Try again.",
+                type: "error",
+            });
         } finally {
             setValidating(false);
         }

@@ -14,9 +14,8 @@ beforeAll(() => {
   }
 });
 
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { ChakraProvider, createSystem, defaultConfig } from "@chakra-ui/react";
 import { ThemeProvider } from "next-themes";
 
 vi.mock("@/db", () => ({
@@ -42,15 +41,15 @@ vi.mock("@/db", () => ({
 vi.mock("../pages/console/AgentSkills", () => ({ default: () => null }));
 
 import AgentLibrary from "../pages/console/AgentLibrary";
-import { AgentService } from "@/db";
+import { AgentService, AnalysisService, type ScheduleRow } from "@/db";
 
 const create = vi.mocked(AgentService.createAgent);
 const wrap = (n: React.ReactNode) => (
-  <ChakraProvider value={createSystem(defaultConfig)}>
+  <>
     <ThemeProvider attribute="class" defaultTheme="dark">
       <MemoryRouter>{n}</MemoryRouter>
     </ThemeProvider>
-  </ChakraProvider>
+  </>
 );
 const openPopup = async () => {
   render(wrap(<AgentLibrary />));
@@ -77,5 +76,20 @@ describe("agent create popup validation", () => {
 
     fireEvent.change(screen.getByLabelText("Agent category"), { target: { value: "Research" } });
     expect(screen.queryByText("Pick a category before creating.")).not.toBeInTheDocument();
+  });
+
+  it("stops a scheduled run only after it is confirmed", async () => {
+    vi.mocked(AnalysisService.listSchedules).mockResolvedValueOnce([
+      { id: "sc1", agent_id: "a9", frequency: "daily", time: "09:00", timezone: "UTC", symbol: "ACME", share_name: "Acme" } as ScheduleRow,
+    ]);
+    render(wrap(<AgentLibrary />));
+
+    fireEvent.click(await screen.findByRole("button", { name: /^stop$/i }));
+    // Confirmation first — nothing is deleted until it is accepted.
+    expect(screen.getByRole("button", { name: /stop schedule/i })).toBeTruthy();
+    expect(AnalysisService.deleteSchedule).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /stop schedule/i }));
+    await waitFor(() => expect(AnalysisService.deleteSchedule).toHaveBeenCalledWith("sc1"));
   });
 });

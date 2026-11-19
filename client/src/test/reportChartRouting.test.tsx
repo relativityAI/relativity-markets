@@ -15,7 +15,6 @@ beforeAll(() => {
   }
 });
 import { render, screen } from "@testing-library/react";
-import { ChakraProvider, createSystem, defaultConfig } from "@chakra-ui/react";
 import { ThemeProvider } from "next-themes";
 import { ReportBlockRenderer, type ReportBlock } from "../components/builder/ReportBlockRenderer";
 
@@ -26,9 +25,9 @@ vi.mock("../components/builder/MarketChart", () => ({
 }));
 
 const wrap = (n: React.ReactNode) => (
-  <ChakraProvider value={createSystem(defaultConfig)}>
+  <>
     <ThemeProvider attribute="class" defaultTheme="dark">{n}</ThemeProvider>
-  </ChakraProvider>
+  </>
 );
 
 // Real block shapes from a completed technical-analysis run: OHLCV +

@@ -1,5 +1,5 @@
-import { useEffect, useState, useMemo } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useEffect, useRef, useState, useMemo } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AnalysisService, AgentService, SkillService } from "@/db";
 import { agentDisplayName } from "@/utils";
 import AgentAvatar from "@/components/shared/AgentAvatar";
@@ -10,6 +10,7 @@ import { TickerLogo } from "@/lib/sourceLogos";
 import { motion, AnimatePresence } from "motion/react";
 import { stagger, staggerItem } from "@/lib/motion";
 import { Button } from "@/components/ui/button";
+import { toaster } from "@/components/ui/toaster";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -195,7 +196,7 @@ function MenuButton({
                 <button
                     type="button"
                     className={cn(
-                        "inline-flex items-center gap-1 text-[14px] font-light transition-colors outline-none",
+                        "inline-flex items-center gap-1 text-[14px] font-light transition-colors",
                         active ? "text-[var(--gh-blue)]" : "text-[var(--gh-fg)] hover:text-[var(--gh-blue)]"
                     )}
                 >
@@ -305,6 +306,10 @@ export default function AnalysisList() {
     const [verdictFilter, setVerdictFilter] = useState(ALL);
     const [statusFilter, setStatusFilter] = useState(ALL);
     const [deleteTarget, setDeleteTarget] = useState<AnalysisItem | null>(null);
+    // Deferred deletes: run id → timer. Deliberately NOT cleared on unmount —
+    // the scheduled delete must still fire after navigating away (the setTimeout
+    // outlives the component; setState after unmount is a harmless no-op).
+    const pendingDeletes = useRef(new Map<string, ReturnType<typeof setTimeout>>());
     const [agents, setAgents] = useState<any[]>([]);
     const [viewMode, setViewMode] = useState<GroupMode>("individual");
     const [query, setQuery] = useState(symbolQuery);
@@ -366,16 +371,27 @@ export default function AnalysisList() {
             if (!silent) setLoading(true);
             const data = await AnalysisService.listAnalyses();
             if (Array.isArray(data)) {
-                setUniqueAnalysis(data);
+                // Rows with a deferred delete still pending exist on the server —
+                // drop them so a poll can't bring the row back before its timer.
+                const pending = pendingDeletes.current;
+                setUniqueAnalysis(
+                    pending.size
+                        ? data.filter((a: any) => !pending.has(a.analysis_id || a._id || a.id))
+                        : data
+                );
                 setFetchError(false);
-            } else {
+            } else if (!silent) {
                 setUniqueAnalysis([]);
                 setFetchError(true);
             }
         } catch (error) {
             console.log("Analysis fetch error:", error);
-            setUniqueAnalysis([]);
-            setFetchError(true);
+            // ponytail: a failed background poll keeps the last good list
+            // (stale beats empty); only an explicit load flips to the error state.
+            if (!silent) {
+                setUniqueAnalysis([]);
+                setFetchError(true);
+            }
         } finally {
             setLoading(false);
         }
@@ -385,16 +401,55 @@ export default function AnalysisList() {
         fetchUniqueAnalysis();
     }, []);
 
-    const handleDelete = async (id: string | undefined) => {
-        if (!id) return;
-        try {
-            await AnalysisService.deleteAnalysis(id);
-            setDeleteTarget(null);
-            setUniqueAnalysis((prev) => prev.filter((a) => (a.analysis_id || a._id || a.id) !== id));
-            fetchUniqueAnalysis(true);
-        } catch (error) {
-            console.error("Delete analysis error:", error);
-        }
+    // ponytail: fixed 15s poll while the tab is visible — 15s stale ceiling,
+    // pause-on-hidden is the only optimisation; gate on in-flight runs or push
+    // updates if polling load ever matters.
+    useEffect(() => {
+        const t = setInterval(() => {
+            if (!document.hidden) fetchUniqueAnalysis(true);
+        }, 15000);
+        return () => clearInterval(t);
+    }, []);
+
+    const handleDelete = (id: string | undefined) => {
+        // One pending delete per run — scheduling only, the dialog closes now.
+        if (!id || pendingDeletes.current.has(id)) return;
+        setDeleteTarget(null);
+        setUniqueAnalysis((prev) => prev.filter((a) => (a.analysis_id || a._id || a.id) !== id));
+        // ponytail: client-side deferral — closing the tab before the 30s elapses
+        // skips the delete; upgrade path is a server-side soft-delete
+        // (deleted_at + purge job) if that ever matters.
+        const timer = setTimeout(() => {
+            pendingDeletes.current.delete(id);
+            AnalysisService.deleteAnalysis(id).catch((error) => {
+                console.error("Delete analysis error:", error);
+                const e = error as { response?: { status?: number; data?: { error?: string } }; message?: string };
+                const detail = e.response?.data?.error || e.message || "The run could not be deleted.";
+                toaster.create({
+                    title: "Couldn't delete run",
+                    description: e.response?.status ? `HTTP ${e.response.status} — ${detail}` : detail,
+                    type: "error",
+                });
+                fetchUniqueAnalysis(true); // server kept the row — bring it back
+            });
+        }, 30_000);
+        pendingDeletes.current.set(id, timer);
+        toaster.create({
+            title: "Run deleted",
+            duration: 30000,
+            action: {
+                label: "Undo",
+                onClick: () => {
+                    const pending = pendingDeletes.current.get(id);
+                    if (!pending) return; // undo fires at most once
+                    clearTimeout(pending);
+                    pendingDeletes.current.delete(id);
+                    fetchUniqueAnalysis(true); // refetch can't desync: server still has the row
+                    toaster.create({ title: "Delete cancelled", type: "info" });
+                },
+            },
+            type: "info",
+        });
     };
 
     /** A run's agent as the meta line shows it — also the filter's value. */
@@ -533,7 +588,7 @@ export default function AnalysisList() {
                 <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
                     <div className="min-w-0">
                         <h1 className="text-[30px] leading-tight font-light tracking-[-0.01em] text-[var(--gh-fg)]">
-                            Past Runs
+                            Runs
                         </h1>
                         <p className="mt-0.5 text-[15px] font-light text-[var(--gh-muted)]">
                             Showing runs from all agents
@@ -563,7 +618,7 @@ export default function AnalysisList() {
                         aria-label="Search runs"
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
-                        className="h-9 w-full border-0 bg-transparent py-1 pr-3 pl-6 text-[16px] font-light text-[var(--gh-fg)] transition-colors outline-none placeholder:text-[var(--gh-muted)] focus:outline-none"
+                        className="h-9 w-full border-0 bg-transparent py-1 pr-3 pl-6 text-[16px] font-light text-[var(--gh-fg)] transition-colors placeholder:text-[var(--gh-muted)]"
                     />
                 </div>
 
@@ -572,8 +627,8 @@ export default function AnalysisList() {
                  * the runs table taking the wide right half.
                  */}
                 <div className="grid grid-cols-1 gap-x-16 gap-y-8 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
-                    {/* Left — insights, one below the other */}
-                    <div className="min-w-0">
+                    {/* Left — insights in one thin-bordered box */}
+                    <div className="min-w-0 rounded-xl border-[0.5px] border-[color:var(--hairline)] p-5">
                         <RunsInsights runs={uniqueAnalysis} labelAgent={runAgentLabel} />
                     </div>
 
@@ -668,6 +723,14 @@ export default function AnalysisList() {
                                                     <p className="mt-1 text-[14px] font-light text-[var(--gh-muted)]">
                                                         Check if the backend service is running.
                                                     </p>
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="mt-3"
+                                                        onClick={() => fetchUniqueAnalysis()}
+                                                    >
+                                                        Retry
+                                                    </Button>
                                                 </td>
                                             </motion.tr>
                                         ) : sorted.length === 0 && !loading ? (
@@ -746,6 +809,9 @@ export default function AnalysisList() {
                                                         layout={false}
                                                         key={id}
                                                         onClick={(e) => {
+                                                            // The title cell is a real <Link>: let it
+                                                            // navigate (native ctrl-click/new tab).
+                                                            if ((e.target as Element).closest?.("a")) return;
                                                             // Modified click = open in a new tab
                                                             // (browser-style); plain click navigates.
                                                             if (
@@ -774,9 +840,12 @@ export default function AnalysisList() {
                                                         <td className="max-w-[420px] py-3.5 pr-4 align-top">
                                                             <div className="flex min-w-0 items-center gap-2">
                                                                 <TickerLogo symbol={item.symbol} size={18} />
-                                                                <span className="truncate text-[16px] font-light text-[var(--gh-fg)]">
+                                                                <Link
+                                                                    to={`/analysis-result/${id}`}
+                                                                    className="truncate text-[16px] font-light text-[var(--gh-fg)]"
+                                                                >
                                                                     {item.share_name || item.symbol || "—"}
-                                                                </span>
+                                                                </Link>
                                                             </div>
                                                             <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] font-light text-[var(--gh-muted)]">
                                                                 {item.share_name &&
@@ -885,6 +954,9 @@ export default function AnalysisList() {
                                                                 <DropdownMenuContent
                                                                     align="end"
                                                                     className="min-w-[190px]"
+                                                                    /* Portaled menu items bubble through the
+                                                                       React tree into the row's onClick. */
+                                                                    onClick={(e) => e.stopPropagation()}
                                                                 >
                                                                     <DropdownMenuItem
                                                                         className="text-[14px]"

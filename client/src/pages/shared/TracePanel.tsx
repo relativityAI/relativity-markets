@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Box, Flex, Text, HStack, Spinner } from "@chakra-ui/react";
+import { useCallback, useMemo, useState } from "react";
+import { Box, Flex, Text, HStack, Spinner } from "@/compat/ui";
 import { MdExpandLess, MdExpandMore } from "react-icons/md";
 import { motion, AnimatePresence } from "motion/react";
 import { dur, ease } from "@/lib/motion";
-import { API_BASE } from "@/db";
-import { supabase } from "@/lib/supabase";
+import { useSseTrace } from "@/lib/useSseTrace";
 
 export interface TraceEvent {
     seq: number;
@@ -93,73 +92,6 @@ function groupEvents(events: TraceEvent[]): Record<string, Segment[]> {
     const groups: Record<string, Segment[]> = {};
     for (const ev of events) appendSegment(groups, ev);
     return groups;
-}
-
-/* ─── Live SSE hook ─────────────────────────────────────────────────────── */
-
-function useTraceStream(runId: string, onEvent: (ev: TraceEvent) => void): boolean {
-    const [connected, setConnected] = useState(false);
-    const cbRef = useRef(onEvent);
-    cbRef.current = onEvent;
-
-    useEffect(() => {
-        if (!runId) return;
-        const controller = new AbortController();
-        let cancelled = false;
-
-        const connect = async () => {
-            try {
-                const { data } = await supabase.auth.getSession();
-                const token = data.session?.access_token;
-                const res = await fetch(`${API_BASE}/analysis/${encodeURIComponent(runId)}/stream`, {
-                    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-                    signal: controller.signal,
-                });
-                if (!res.ok || !res.body) {
-                    setConnected(false);
-                    return;
-                }
-                setConnected(true);
-                const reader = res.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = "";
-                for (;;) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-                    // SSE frames are blank-line separated; we only use `data:` lines.
-                    const frames = buffer.split("\n\n");
-                    buffer = frames.pop() || "";
-                    for (const frame of frames) {
-                        const dataLine = frame
-                            .split("\n")
-                            .find((l) => l.startsWith("data:"));
-                        if (!dataLine) continue;
-                        try {
-                            const payload = JSON.parse(dataLine.slice(5).trim());
-                            if (payload?.type === "trace" && payload.event) {
-                                cbRef.current(payload.event);
-                            }
-                            if (payload?.type === "ready") setConnected(true);
-                        } catch {
-                            // Ignore malformed frames
-                        }
-                    }
-                }
-            } catch {
-                if (!cancelled) setConnected(false);
-            }
-        };
-
-        connect();
-        return () => {
-            cancelled = true;
-            controller.abort();
-            setConnected(false);
-        };
-    }, [runId]);
-
-    return connected;
 }
 
 /* ─── Reasoning block (Claude/DeepSeek-style) ──────────────────────────── */
@@ -307,7 +239,7 @@ function ParamBlock({ name, segments, isActive }: { name: string; segments: Segm
 export function TracePanel({ runId, events }: { runId?: string; events?: TraceEvent[] }) {
     const [live, setLive] = useState<TraceEvent[]>([]);
     const onEvent = useCallback((ev: TraceEvent) => setLive((prev) => [...prev, ev]), []);
-    const connected = useTraceStream(runId || "", onEvent);
+    const connected = useSseTrace(runId ? `/analysis/${encodeURIComponent(runId)}/stream` : undefined, onEvent);
 
     const all = useMemo(() => (events?.length ? events : live), [events, live]);
     const groups = useMemo(() => groupEvents(all), [all]);

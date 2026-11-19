@@ -9,17 +9,14 @@ vi.mock("@/db", () => ({
 vi.mock("@/components/skills/SkillBrowser", () => ({
     useSkillLibrary: () => ({ library: [] }),
 }));
-vi.mock("@/components/skills/SkillResultCard", () => ({ default: () => null }));
 vi.mock("../components/shared/AgentActivity", () => ({ default: () => null }));
 vi.mock("@/components/report/ReportDocumentRenderer", () => ({
     ReportDocumentRenderer: () => <div data-testid="report-doc" />,
 }));
-vi.mock("@/components/report/RunReasoningTimeline", () => ({ default: () => null }));
 vi.mock("@/components/report/WorkspaceExplorer", () => ({ WorkspaceExplorer: () => null }));
 
 import { AnalysisService } from "@/db";
 import AnalysisResult from "@/pages/AnalysisResult";
-import { ChakraProvider, createSystem, defaultConfig } from "@chakra-ui/react";
 
 const baseRun = {
     id: "r1",
@@ -35,13 +32,13 @@ const baseRun = {
 
 function wrap(ui: React.ReactElement) {
     return (
-        <ChakraProvider value={createSystem(defaultConfig)}>
+        <>
             <MemoryRouter initialEntries={["/analysis-result/r1"]}>
                 <Routes>
                     <Route path="/analysis-result/:id" element={ui} />
                 </Routes>
             </MemoryRouter>
-        </ChakraProvider>
+        </>
     );
 }
 
@@ -114,5 +111,19 @@ describe("AnalysisResult navbar", () => {
         expect(name.parentElement).toBe(ticker.parentElement);
         expect(getComputedStyle(name).color).not.toBe(getComputedStyle(ticker).color);
         expect(parseFloat(getComputedStyle(screen.getByText("Fair")).fontSize)).toBeGreaterThan(40);
+    });
+
+    it("failed harness run: says why it failed, points at Settings keys, offers retry", async () => {
+        vi.mocked(AnalysisService.readAnalysis).mockResolvedValue({
+            ...baseRun,
+            status: "failed",
+            error: "401 Unauthorized: no provider key",
+            report_document: { symbol: "ACME", sections: [] },
+        });
+        render(wrap(<AnalysisResult />));
+
+        expect(await screen.findByText("401 Unauthorized: no provider key")).toBeTruthy();
+        expect(screen.getByText(/check settings → api keys/i)).toBeTruthy();
+        expect(screen.getByRole("button", { name: /^retry$/i })).toBeTruthy();
     });
 });

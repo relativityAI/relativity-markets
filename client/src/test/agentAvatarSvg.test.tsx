@@ -1,15 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ChakraProvider, createSystem, defaultConfig } from "@chakra-ui/react";
 import { ThemeProvider } from "next-themes";
 import { agentAvatarSvg } from "@/lib/agentIdentity";
 import AgentAvatar from "@/components/shared/AgentAvatar";
 import UserAvatar from "@/components/shared/UserAvatar";
 
 const wrap = (n: React.ReactNode) => (
-  <ChakraProvider value={createSystem(defaultConfig)}>
+  <>
     <ThemeProvider attribute="class" defaultTheme="dark">{n}</ThemeProvider>
-  </ChakraProvider>
+  </>
 );
 
 describe("agent portraits", () => {
