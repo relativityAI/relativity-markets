@@ -12,7 +12,7 @@
   [![Status](https://img.shields.io/badge/status-active-success.svg)]()
   [![GitHub Issues](https://img.shields.io/github/issues/relativityAI/relativity-markets.svg)](https://github.com/relativityAI/relativity-markets/issues)
   [![GitHub Pull Requests](https://img.shields.io/github/issues-pr/relativityAI/relativity-markets.svg)](https://github.com/relativityAI/relativity-markets/pulls)
-  [![License](https://img.shields.io/badge/license-UNLICENSED-blue.svg)](https://github.com/relativityAI/relativity-markets/blob/main/LICENSE)
+  [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/relativityAI/relativity-markets/blob/main/LICENSE)
 
 </div>
 
@@ -23,9 +23,7 @@
 ---
 
 <p align="center">
-  <video src="assets/relativity-demo.mp4" controls muted playsinline width="100%">
-    <a href="assets/relativity-demo.mp4">Watch the Relativity demo</a>
-  </video>
+  <img src="assets/homepage_screenshot.png" alt="Relativity homepage screenshot" width="100%">
 </p>
 
 ## Table of Contents
@@ -33,8 +31,9 @@
 1. [Prerequisites](#prerequisites)
 2. [Install](#install)
 3. [Usage](#usage)
-4. [Top contributors:](#top-contributors)
-5. [License](#license)
+4. [Architecture](#architecture)
+5. [Top contributors:](#top-contributors)
+6. [License](#license)
 
 
 
@@ -84,6 +83,16 @@ npm run cli -- --symbol AAPL --model opencode/deepseek-v4.1-flash --max-steps 20
 
 
 
+## Architecture
+
+<p align="center">
+  <img src="assets/relativity-markets-runtime-dark.svg" alt="Relativity Markets runtime architecture: operator browser (React + Vite SPA) → API server (Express REST + SSE, loopback :8501) → run orchestrator → agent engine (deepagents + LangGraph), with LLM providers, SQLite store, toolbox client (streamable HTTP MCP), and run workspace." width="100%">
+</p>
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+
+
 ### Top contributors:
 
 <a href="https://github.com/relativityAI/relativity-markets/graphs/contributors">
@@ -96,6 +105,6 @@ npm run cli -- --symbol AAPL --model opencode/deepseek-v4.1-flash --max-steps 20
 
 ## License
 
-Distributed under the UNLICENSED license. All rights reserved.
+Distributed under the MIT License. See [`LICENSE`](LICENSE) for details.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
