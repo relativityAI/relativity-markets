@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { evaluateAlert, type AlertRuleRow } from "../schedule.js";
+import { evaluateAlert } from "../schedule.js";
+import type { AlertRuleRow } from "../../db/repo.js";
 
 // The repo layer is the DB — mock it so evaluateAlert's decision table can be
 // exercised without SQLite: which run states alert, and when dedupe kicks in.
