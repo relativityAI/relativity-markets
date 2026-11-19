@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.9.0...relativity-markets-v0.10.0) (2026-11-19)
+
+
+### Features
+
+* remove Chakra, UX audit fixes, opencode provider, workspace reorg ([#191](https://github.com/relativityAI/relativity-markets/issues/191)) ([af91d85](https://github.com/relativityAI/relativity-markets/commit/af91d85aedff8db6221645b5098aeea01ee4f65e))
+
 ## [0.9.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.8.1...relativity-markets-v0.9.0) (2026-11-18)
 
 
