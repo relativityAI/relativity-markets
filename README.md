@@ -31,16 +31,17 @@
 1. [Prerequisites](#prerequisites)
 2. [Install](#install)
 3. [Usage](#usage)
-4. [Architecture](#architecture)
-5. [Top contributors:](#top-contributors)
-6. [License](#license)
+4. [Cleanup](#cleanup)
+5. [Architecture](#architecture)
+6. [Top contributors:](#top-contributors)
+7. [License](#license)
 
 
 
 ## Prerequisites
 
 - **Git** — required
-- **Docker** — required (app + web search run on it)
+- **Docker** — required (app + web search run on it). On Linux, `install.sh` installs Docker, Compose and `curl` via the system package manager if they are missing (sudo required). Set `RELATIVITY_SKIP_PACKAGE_INSTALL=1` to opt out.
 - **Windows:** [Git Bash](https://git-scm.com/download/win)
 
 ## Install
@@ -48,6 +49,10 @@
 ```bash
 git clone https://github.com/relativityAI/relativity-markets.git && cd relativity-markets && bash install.sh
 ```
+
+`install.sh` is the single entry point: it detects the platform and delegates to `scripts/install-linux.sh` (Linux/macOS) or `scripts/install-windows.sh` (Windows/Git Bash). Shared logic lives in `scripts/install-common.sh`.
+
+Re-running `install.sh` is safe — it skips packages and PATH setup that are already in place.
 
 **First visit**
 
@@ -78,6 +83,14 @@ CLI (from `services/`, needs `npm run searxng` + `OPENCODE_API_KEY`):
 ```bash
 npm run cli -- --symbol AAPL --model opencode/deepseek-v4.1-flash --max-steps 20 --skill chartist-technical-analysis
 ```
+
+## Cleanup
+
+```bash
+bash cleanup.sh
+```
+
+Like `install.sh`, this is a single entry point that delegates to `scripts/cleanup-linux.sh` or `scripts/cleanup-windows.sh`. It removes only the `relativity` command, the PATH entries the installer added, this checkout's Docker containers, and the two images this project owns. Local data (`services/data`), system packages, Docker volumes, third-party images and other projects are left untouched.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

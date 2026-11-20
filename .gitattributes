@@ -1,1 +1,8 @@
+# Shell scripts must keep LF endings so they run on Linux even when the
+# checkout happens on Windows (core.autocrlf=true).
+.gitattributes text eol=lf
+*.sh text eol=lf
+install.sh text eol=lf
+bin/relativity text eol=lf
+README.md text eol=lf
 *.cmd -text
