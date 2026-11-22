@@ -5,6 +5,7 @@ import {
   isValidFrequency,
   isValidTime,
   occurrence,
+  occurrencesBetween,
   todayInTz,
 } from "../schedule.js";
 
@@ -90,6 +91,29 @@ describe("dueOccurrence", () => {
     // Start next Monday from a Tuesday now → nothing due this week.
     const now = Date.parse("2026-11-17T10:00:00Z"); // Tuesday
     expect(dueOccurrence({ ...base, frequency: "weekly", start_date: "2026-11-23" }, now)).toBeNull();
+  });
+});
+
+describe("occurrencesBetween", () => {
+  const rule = { time: "09:00", timezone: TZ, frequency: "weekly", start_date: "2026-11-16", created_at: "2026-11-16T08:00:00Z" };
+
+  it("expands only the qualifying dates inside the window", () => {
+    expect(occurrencesBetween(rule, "2026-11-16", "2026-11-29")).toEqual([
+      { date: "2026-11-16", at: Date.parse("2026-11-16T09:00:00Z") },
+      { date: "2026-11-23", at: Date.parse("2026-11-23T09:00:00Z") },
+    ]);
+    // Daily: one per day, and never before the start date.
+    expect(occurrencesBetween({ ...rule, frequency: "daily", start_date: "2026-11-18" }, "2026-11-16", "2026-11-19").map((o) => o.date)).toEqual([
+      "2026-11-18",
+      "2026-11-19",
+    ]);
+    // Tue 12-01 → Sun 12-06: no Monday inside, so nothing qualifies.
+    expect(occurrencesBetween(rule, "2026-12-01", "2026-12-06")).toEqual([]);
+  });
+
+  it("uses the wall-clock time in the rule's zone", () => {
+    const ist = occurrencesBetween({ ...rule, frequency: "daily", timezone: "Asia/Kolkata" }, "2026-11-16", "2026-11-16");
+    expect(ist[0].at).toBe(Date.parse("2026-11-16T03:30:00Z")); // 09:00 IST
   });
 });
 
