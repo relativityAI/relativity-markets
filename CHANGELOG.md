@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.12.0...relativity-markets-v0.12.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **alerts, navbar:** failed runs reach the bell, level-1 navbar alignment ([#202](https://github.com/relativityAI/relativity-markets/issues/202)) ([c5e32c8](https://github.com/relativityAI/relativity-markets/commit/c5e32c8a3efc25a97a68c0269099488193e35da8))
+
 ## [0.12.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.11.0...relativity-markets-v0.12.0) (2026-11-22)
 
 
