@@ -165,12 +165,9 @@ export default function Stock() {
                     <aside className="order-first w-full min-w-0 lg:order-none">
                         <div className="flex items-end justify-between gap-4">
                             <div>
-                                <h2 className="font-[family-name:var(--font-display)] text-[clamp(1.5rem,2.5vw,2rem)] leading-tight font-normal text-[var(--ink-primary)]">
+                                <h2 className="font-[family-name:var(--font-body)] text-[clamp(1.75rem,3vw,2.5rem)] leading-tight font-light text-[var(--ink-primary)]">
                                     Agent Runs
                                 </h2>
-                                <p className="mt-1 font-[family-name:var(--font-body)] text-xs font-light text-[var(--ink-tertiary)]">
-                                    Saved runs for {symbol}.
-                                </p>
                             </div>
                             <Link
                                 to={`/runs?q=${encodeURIComponent(symbol)}`}
@@ -194,18 +191,18 @@ export default function Stock() {
                                         key={runId || agent}
                                         to={runId ? `/runs/${runId}` : "/runs"}
                                         data-solid=""
-                                        className="agent-cell flex items-center gap-3 p-3 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
+                                        className="agent-cell flex items-center gap-3 p-4 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
                                     >
-                                        <span className="agent-cell-body flex min-w-0 flex-1 items-center gap-3">
-                                            <PluginAvatar plugin={agent} size={44} />
+                                        <span className="agent-cell-body flex min-w-0 flex-1 items-center gap-4">
+                                            <PluginAvatar plugin={agent} size={64} />
                                             <span className="min-w-0 flex-1">
-                                                <span className="flex items-baseline justify-between gap-2">
-                                                    <span className="truncate font-[family-name:var(--font-display)] text-[17px] leading-snug font-normal text-[var(--ink-primary)]">{agent}</span>
-                                                    <span className="shrink-0 font-[family-name:var(--font-body)] text-[11px] font-normal text-[var(--ink-tertiary)]">{timeAgo(r.created_at)}</span>
+                                                <span className="flex items-baseline gap-3">
+                                                    <span className="min-w-0 truncate font-[family-name:var(--font-display)] text-[24px] leading-tight font-normal text-[var(--ink-primary)]">{agent}</span>
+                                                    <span className="ml-auto shrink-0 font-[family-name:var(--font-display)] text-[34px] leading-none font-medium" style={{ color: verdictInk(verdict) ?? "var(--ink-secondary)" }}>
+                                                        {verdict}
+                                                    </span>
                                                 </span>
-                                                <span className="mt-1 block font-[family-name:var(--font-body)] text-[12px] font-medium" style={{ color: verdictInk(verdict) ?? "var(--ink-secondary)" }}>
-                                                    {verdict}
-                                                </span>
+                                                <span className="mt-1 block font-[family-name:var(--font-body)] text-[12px] font-normal text-[var(--ink-tertiary)]">{timeAgo(r.created_at)}</span>
                                             </span>
                                         </span>
                                         <span className="agent-cell-cue font-[family-name:var(--font-body)] text-xs font-normal text-[#4A6E8E]">

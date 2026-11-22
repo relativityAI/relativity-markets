@@ -49,16 +49,18 @@ describe("plugins store", () => {
 
   it("runs an explicit skill subset, else every plugin skill", () => {
     const all = pluginSkillIds("chartist");
-    expect(all.length).toBeGreaterThan(1);
+    expect(all).toEqual(["chartist-playbook"]);
     // No request → everything the plugins contain.
     expect(selectRunSkills(["chartist"])).toEqual(all);
     // An explicit choice wins — exactly those skills.
     expect(selectRunSkills(["chartist"], [all[0]])).toEqual([all[0]]);
-    expect(selectRunSkills(["chartist"], [all[1], all[0]])).toEqual([all[1], all[0]]);
     // Ids outside the selected plugins are filtered out…
-    expect(selectRunSkills(["chartist"], ["no-such-skill", all[1]])).toEqual([all[1]]);
-    // …and a request that resolves to nothing self-heals to all (never bare).
     expect(selectRunSkills(["chartist"], ["no-such-skill"])).toEqual(all);
+    // Two plugins: a subset keeps the requested order, drops foreign ids.
+    const both = [...pluginSkillIds("chartist"), ...pluginSkillIds("nifty-indices")];
+    expect(both.length).toBeGreaterThan(1);
+    expect(selectRunSkills(["chartist", "nifty-indices"], [both[1], both[0]])).toEqual([both[1], both[0]]);
+    expect(selectRunSkills(["chartist", "nifty-indices"], ["no-such-skill", both[1]])).toEqual([both[1]]);
     // Legacy rows with no plugins keep their raw skill ids.
     expect(selectRunSkills([], ["chartist-playbook"])).toEqual(["chartist-playbook"]);
   });
