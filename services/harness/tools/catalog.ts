@@ -56,6 +56,14 @@ export const TOOL_CATALOG: { name: string; description: string }[] = [
   { name: "tavily_extract", description: "Extract clean markdown/text content from one or more URLs." },
 ];
 
+/** Server-name → human label for the New Run MCP toggles (GET /mcp-sources). */
+export const MCP_LABELS: Record<string, string> = {
+  yfinance: "Yahoo Finance data (yfinance)",
+  searxng: "Web search (SearXNG)",
+  tradingview: "TradingView",
+  tavily: "Web search (Tavily)",
+};
+
 export function getToolCatalog(): { name: string; description: string }[] {
   return TOOL_CATALOG;
 }

@@ -14,9 +14,9 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { buildModel, ENV_KEYS, type LlmKeys } from "./model.js";
 import { runAgent, bootTracing, compactWorkspace } from "./engine.js";
-import { DEFAULT_HARNESS_AGENT, createAgent, listAgents, getAgent, type AgentDefinition } from "./store.js";
-import { compileAgent } from "./compile.js";
+import { compileAgent, type CompileProfile } from "./compile.js";
 import { loadBuiltinSkills, resolveSkill } from "./skills.js";
+import { pluginsForSkills } from "./plugins.js";
 import { buildRunTools, type ToolSourcesConfig } from "./tools/index.js";
 import { loadRunFileConfig, resolveRunConfig } from "./run-config.js";
 import { getSystemPrompt } from "./prompts.js";
@@ -75,46 +75,43 @@ async function main(): Promise<void> {
   };
 
   const userId = "cli";
-  let agent: AgentDefinition | null = flags.agent ? await getAgent(userId, String(flags.agent)) : null;
-  if (!agent) {
-    let agents = listAgents(userId);
-    if (!agents.length) await createAgent(userId, DEFAULT_HARNESS_AGENT);
-    agents = listAgents(userId);
-    agent = agents[0];
-  }
-  if (!agent) throw new Error("no agent available");
-
-  // Skill: flag/config override, else the agent's own pick.
-  const skills = (skillId ? [skillId] : agent.skillIds).slice(0, 1);
-  const resolvedSkills = skills.map((id) => resolveSkill(userId, id)).filter((s) => !!s);
-  if (skillId && !resolvedSkills.length) {
+  // Skills: --skill flag, else the config default list. The CLI is
+  // plugin-agnostic — skill → plugin resolution mounts the right routes.
+  const skillIds = skillId ? [skillId] : resolved.skills;
+  const firstResolved = skillId ? resolveSkill(userId, skillId) : null;
+  if (skillId && !firstResolved) {
     const known = loadBuiltinSkills().map((s) => s.id).join(", ");
     throw new Error(`skill "${skillId}" not found — built-ins: ${known}`);
   }
 
-  const budget = clampBudget({
-    ...agent.budget,
-    ...(flags["max-steps"] ? { maxSteps: Number(flags["max-steps"]) } : {}),
-    ...(flags["max-tokens"] ? { maxTokens: Number(flags["max-tokens"]) } : {}),
-  });
+  const profile: CompileProfile = {
+    name: "cli",
+    skillIds,
+    allowedTools: [],
+    budget: clampBudget({
+      ...(flags["max-steps"] ? { maxSteps: Number(flags["max-steps"]) } : {}),
+      ...(flags["max-tokens"] ? { maxTokens: Number(flags["max-tokens"]) } : {}),
+    }),
+  };
 
   const runId = randomUUID();
-  const seed = agentSeed(agent.name);
-  console.log(`run ${runId} — ${agent.name} · ${modelId} · ${symbol} (${source})${resolvedSkills.length ? ` · skill ${resolvedSkills[0].id}` : ""} · seed ${seed}`);
+  const seed = agentSeed(profile.name);
 
-  const compiled = compileAgent(userId, agent, {
-    template: getSystemPrompt(systemPromptName ?? agent.systemPrompt ?? ""),
-    vars: { symbol, title: symbol, date: new Date().toISOString().slice(0, 10), source, agent: agent.name },
-    skillIds: resolvedSkills.map((s) => s.id),
+  const compiled = compileAgent(userId, profile, {
+    template: getSystemPrompt(systemPromptName ?? ""),
+    vars: { symbol, title: symbol, date: new Date().toISOString().slice(0, 10), source, agent: profile.name },
   });
+  const pluginIds = pluginsForSkills(compiled.skills.map((s) => s.id));
+  console.log(`run ${runId} — ${profile.name} · ${modelId} · ${symbol} (${source})${compiled.skills.length ? ` · skills ${compiled.skills.map((s) => s.id).join(", ")}` : ""} · seed ${seed}`);
   const { tools, close } = await buildRunTools((resolved.tools ?? {}) as ToolSourcesConfig, env, { symbol, source });
   try {
   const result = await runAgent({
     runId,
     userId,
     model: buildModel(modelId, llmKeys),
-    agent,
-    skills: resolvedSkills,
+    agent: { name: profile.name },
+    pluginIds,
+    skills: compiled.skills,
     allowedTools: compiled.allowedTools,
     tools,
     template: compiled.template,
@@ -122,7 +119,7 @@ async function main(): Promise<void> {
     symbol,
     source,
     prompt: `Analyze ${symbol} (${source}). Use the tools to gather the evidence a rigorous research report needs for ${symbol}.`,
-    budget,
+    budget: profile.budget,
     saveWorkspace: flags["save-workspace"] === true,
     onEvent: (e) => {
       const t = e.type;

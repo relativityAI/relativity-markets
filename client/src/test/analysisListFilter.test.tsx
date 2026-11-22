@@ -35,11 +35,13 @@ vi.mock("@/db", () => ({
     listAnalyses: vi.fn(async () => state.runs),
     deleteAnalysis: vi.fn(async () => {}),
   },
-  AgentService: { listAgents: vi.fn(async () => []) },
+  PluginService: { list: vi.fn(async () => []) },
   SkillService: { listSkills: vi.fn(async () => []) },
+  runPluginLabel: (ids: string[] | null | undefined, plugins: { id: string; display_name: string }[], fallback?: string | null) =>
+    ids?.length ? ids.map((i) => plugins?.find((p) => p.id === i)?.display_name ?? i).join(", ") : fallback || "",
 }));
-vi.mock("@/lib/harnessAgents", () => ({
-  HarnessAgentService: { listSystemPrompts: vi.fn(async () => []) },
+vi.mock("@/lib/systemPrompts", () => ({
+  listSystemPrompts: vi.fn(async () => []),
 }));
 
 import AnalysisList from "@/pages/AnalysisList";

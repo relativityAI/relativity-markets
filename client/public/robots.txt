@@ -2,8 +2,10 @@ User-agent: *
 Allow: /
 Disallow: /agent/
 Disallow: /analysis/
+Disallow: /runs
 Disallow: /analysis-list
 Disallow: /analysis-result/
+Disallow: /plugins/
 Disallow: /settings
 
 Sitemap: https://relativity-ai.example.com/sitemap.xml

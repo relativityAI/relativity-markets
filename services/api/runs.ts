@@ -19,10 +19,10 @@ import { TraceCollector } from "../harness/trace.js";
 import { insertRunRow, updateRunRow, getRunRow, failStaleRunRows } from "../db/repo.js";
 import { alertRunFailure } from "./alerts.js";
 import {
-  getAgent,
-  listAgents,
-  createAgent,
-  DEFAULT_HARNESS_AGENT,
+  getPlugin,
+  pluginSkillIds,
+  pluginsForSkills,
+  selectRunSkills,
   compileAgent,
   clampBudget,
   runAgent,
@@ -35,12 +35,12 @@ import {
   gradeReport,
   reportDigest,
   RETRYABLE_ERROR,
-  type AgentDefinition,
   type Budget,
   type ReportDocument,
   type RunResult,
   type ResumeOptions,
   type ReviewDecision,
+  type RunProfile,
   type SystemPrompt,
   type TraceEvent as HarnessTraceEvent,
   type Verdict,
@@ -134,20 +134,39 @@ function serverTraceFields(e: any): Omit<TraceRowEvent, "seq" | "ts" | "type" | 
 interface RunHarnessOptions {
   existingRunId?: string;
   promptOverride?: string;
-  skillIdsOverride?: string[];
+  /** Selected plugins — their skill routes mount for the run. */
+  pluginIds?: string[];
+  /** Explicit skill selection (New Run's checkboxes); absent = every skill
+   *  of the selected plugins. */
+  skillIds?: string[];
+  /** Per-run MCP allowlist (server names); absent = every configured source. */
+  mcpEnabled?: string[];
   budgetOverride?: { maxSteps?: number; maxTokens?: number };
 }
 
+/** Display label for a plugin selection (raw ids as the fallback). */
+export function pluginLabel(pluginIds: string[]): string {
+  return pluginIds.map((id) => getPlugin(id)?.display_name ?? id).filter(Boolean).join(", ");
+}
+
+/** The compile profile for a run: name + the run's chosen skills — an exact
+ *  selection when one was stored (New Run's checkboxes), else every skill of
+ *  the selected plugins (legacy rows fall back to their stored skill ids). */
+function compileProfile(pluginIds: string[], label: string, selected?: string[] | null) {
+  const ids = selected?.length
+    ? [...new Set(selected)]
+    : [...new Set(pluginIds.flatMap((p) => pluginSkillIds(p)))];
+  return { name: label, skillIds: ids, allowedTools: [] as string[], budget: clampBudget({}) };
+}
+
 /**
- * Run a harness agent against a symbol: compile the definition, wire the data
- * tools (websearch + MCP data tools), execute the deepagents loop with key/model
- * fallback, persist the run, and return the typed document. Shared by
- * POST /analysis and POST /harness/agents/:id/run. Returns null when the
- * agent does not exist for the user.
+ * Run a plugin-powered analysis against a symbol: compile the profile, wire
+ * the data tools (websearch + MCP data tools, per-run enabled set), execute
+ * the deepagents loop with key/model fallback, persist the run, and return
+ * the typed document.
  */
 export async function runHarnessSymbol(
   userId: string,
-  agentId: string,
   symbol: string,
   source: string,
   requestedModel?: string,
@@ -155,20 +174,18 @@ export async function runHarnessSymbol(
   o: RunHarnessOptions = {},
 ): Promise<HarnessRunResult | null> {
   const t0 = Date.now();
-  const agent = await getAgent(userId, agentId);
-  if (!agent) return null;
+  const pluginIds = o.pluginIds ?? [];
+  const label = pluginLabel(pluginIds) || "Run";
+  const profile = compileProfile(pluginIds, label, o.skillIds);
 
-  // System prompt chosen by name (agent.yaml prompts.*): request override, else
-  // the agent's own pick, else the default `agents` doc.
-  const systemPrompt = requestedSystemPrompt || agent.systemPrompt || undefined;
+  const systemPrompt = requestedSystemPrompt || undefined;
   const template: SystemPrompt | null = getSystemPrompt(systemPrompt || "");
-  const compiled = compileAgent(userId, agent, {
+  const compiled = compileAgent(userId, profile, {
     template,
-    vars: { symbol, title: symbol, date: new Date().toISOString().slice(0, 10), source, agent: agent.name },
-    skillIds: o.skillIdsOverride,
+    vars: { symbol, title: symbol, date: new Date().toISOString().slice(0, 10), source, agent: label },
   });
   const { llmKeys, webSearchProvider } = await fetchUserKeys(userId);
-  let modelId = requestedModel || agent.modelId || keyPool.getDefaultModel(llmKeys);
+  let modelId = requestedModel || keyPool.getDefaultModel(llmKeys);
   const budget: Budget = clampBudget({ ...compiled.budget, ...o.budgetOverride });
   // API wall-clock backstop: hard stop at 180s.
   if (!budget.maxMs) budget.maxMs = 180_000;
@@ -215,6 +232,9 @@ export async function runHarnessSymbol(
   // and if the provider stays exhausted, fall back to another model.
   let result: RunResult | undefined;
   let lastError: any;
+  // MCP sources that could not connect — the run continues without them and
+  // says so (trace log + run notes).
+  let toolsSkipped: string[] = [];
   for (let attempt = 1; attempt <= 3; attempt++) {
     const provider = keyPool.modelProvider(modelId);
     const { apiKey, keyRef } = keyPool.pickKey(modelId, llmKeys);
@@ -230,18 +250,21 @@ export async function runHarnessSymbol(
           // row unreadable — run fresh
         }
       }
-      const { tools, close } = await buildRunTools((resolved.tools ?? {}) as ToolSourcesConfig, process.env, {
+      const { tools, close, skipped } = await buildRunTools((resolved.tools ?? {}) as ToolSourcesConfig, process.env, {
         symbol,
         source,
         tavilyKey: llmKeys.tavily || undefined,
         webSearchProvider,
+        mcpEnabled: o.mcpEnabled,
       });
+      toolsSkipped = skipped;
       try {
       result = await runAgent({
         runId,
         userId,
         model: buildModel(modelId, llmKeys as LlmKeys, apiKey),
-        agent,
+        agent: { name: label },
+        pluginIds,
         skills: compiled.skills,
         allowedTools: compiled.allowedTools,
         tools,
@@ -275,7 +298,7 @@ export async function runHarnessSymbol(
       if (attempt >= 3 || !RETRYABLE_ERROR.test(msg)) throw e;
       keyPool.markFailure(provider, keyRef);
       const next = keyPool.getDefaultModel(llmKeys);
-      log.warn("harness", `run ${agent.id} attempt ${attempt}/3 failed on ${modelId}: ${msg} — falling back to ${next || "same model"}`);
+      log.warn("harness", `run ${runId} attempt ${attempt}/3 failed on ${modelId}: ${msg} — falling back to ${next || "same model"}`);
       if (next && next !== modelId) modelId = next;
       await new Promise((r) => setTimeout(r, 750 * attempt));
     }
@@ -283,6 +306,11 @@ export async function runHarnessSymbol(
     // there is no close to call if buildRunTools itself threw.
   }
   if (!result) throw lastError;
+  if (toolsSkipped.length) {
+    collector.push("log", "mcp", {
+      text: `Data source${toolsSkipped.length === 1 ? "" : "s"} unavailable — continuing without ${toolsSkipped.join(", ")}`,
+    });
+  }
   await collector.flush().catch(() => {});
   await flushCanvas(result.document, true).catch(() => {});
 
@@ -294,11 +322,12 @@ export async function runHarnessSymbol(
   const notes = [...result.errors];
   if (result.status === "partial" && !paused) notes.unshift("some report sections could not be composed (see notes below)");
   if (result.status === "failed") notes.unshift("run produced no valid sections");
+  if (toolsSkipped.length) notes.push(`unavailable data sources: ${toolsSkipped.join(", ")} — the run continued without them`);
   const payload = {
     status: paused ? "RUNNING" : legacyStatus,
     symbol,
     share_name: symbol,
-    agent_name: agent.name,
+    agent_name: label,
     model: modelId,
     source,
     report: result.verdict ? { ...result.document, verdict: result.verdict } : result.document,
@@ -323,6 +352,9 @@ export async function runHarnessSymbol(
     id: runId,
     user_id: userId,
     ...payload,
+    plugin_ids: pluginIds,
+    skill_ids: compiled.skills.map((s) => s.id),
+    mcp_enabled: o.mcpEnabled ?? null,
     system_prompt: systemPrompt ?? null,
     created_at: new Date().toISOString(),
   };
@@ -347,27 +379,29 @@ export async function resumePausedRun(
   const symbol = String(row.symbol ?? "");
   const source = String(row.source ?? "SEC");
   const systemPrompt = (row.system_prompt as string | null) ?? undefined;
-  // The row keeps the agent NAME (no agent_id column) — resolve by name, fall
-  // back to the user's default when the agent was deleted mid-flight.
-  const agentName = String(row.agent_name ?? "");
-  const agent =
-    (agentName ? ((await listAgents(userId)).find((a) => a.name === agentName) ?? null) : null) ??
-    (await listAgents(userId))[0];
-  if (!agent) return null;
+  // Plugin selection is persisted on the row; rows from before plugins fall
+  // back to their skill_ids (and the stored label for display continuity).
+  const pluginIds = row.plugin_ids?.length ? row.plugin_ids : pluginsForSkills(row.skill_ids ?? []);
+  const label = String(row.agent_name ?? "") || pluginLabel(pluginIds) || "Run";
+  const profile = compileProfile(pluginIds, label, row.skill_ids);
 
   const { llmKeys, webSearchProvider } = await fetchUserKeys(userId);
-  const modelId = (row.model as string) || agent.modelId || keyPool.getDefaultModel(llmKeys);
+  const modelId = (row.model as string) || keyPool.getDefaultModel(llmKeys);
   const { apiKey } = keyPool.pickKey(modelId, llmKeys);
   const template = getSystemPrompt(systemPrompt || "");
-  const compiled = compileAgent(userId, agent, { template });
+  const compiled = compileAgent(userId, profile, { template });
   const { config: cliCfg } = loadRunFileConfig();
   const resolved = resolveRunConfig(process.env, cliCfg);
-  const { tools, close } = await buildRunTools((resolved.tools ?? {}) as ToolSourcesConfig, process.env, {
+  const { tools, close, skipped } = await buildRunTools((resolved.tools ?? {}) as ToolSourcesConfig, process.env, {
     symbol,
     source,
     tavilyKey: llmKeys.tavily || undefined,
     webSearchProvider,
+    mcpEnabled: row.mcp_enabled ?? undefined,
   });
+  if (skipped.length) {
+    log.warn("harness", `resume ${runId} continuing without: ${skipped.join(", ")}`);
+  }
 
   const collector = new TraceCollector(runId, async (events) => {
     try {
@@ -383,7 +417,8 @@ export async function resumePausedRun(
       runId,
       userId,
       model: buildModel(modelId, llmKeys as LlmKeys, apiKey),
-      agent,
+      agent: { name: label },
+      pluginIds,
       skills: compiled.skills,
       tools,
       template: compiled.template,
@@ -421,12 +456,16 @@ export interface StartAnalysisRunOpts {
   userId: string;
   symbol: string;
   source: string;
-  /** Raw request agent_id; absent → the user's default agent. */
-  agentId?: string;
+  /** Selected plugins (the UI requires ≥1). */
+  pluginIds?: string[];
+  /** Legacy skill ids — used to derive plugins when pluginIds is absent
+   *  (old alert rules) and kept on the row for display. */
+  skillIds?: string[];
+  /** Per-run MCP allowlist (server names); absent = all configured. */
+  mcpEnabled?: string[];
   model?: string;
   systemPrompt?: string;
   prompt?: string;
-  skillIds?: string[];
   budget?: { maxSteps?: number; maxTokens?: number };
 }
 
@@ -436,11 +475,13 @@ export interface StartAnalysisRunOpts {
  * schedule ticker fires the exact same path).
  */
 export async function startAnalysisRun(o: StartAnalysisRunOpts): Promise<string> {
-  let agent = o.agentId ? await getAgent(o.userId, o.agentId) : null;
-  if (!agent) {
-    const seeded = await listAgents(o.userId);
-    agent = seeded[0] ?? (await createAgent(o.userId, DEFAULT_HARNESS_AGENT));
-  }
+  // Old alert rules carry skills, not plugins — derive their plugins here so
+  // scheduled legacy runs keep loading the right skills.
+  const pluginIds = o.pluginIds?.length ? o.pluginIds : pluginsForSkills(o.skillIds ?? []);
+  const label = pluginLabel(pluginIds) || "Legacy";
+  // The requested skills are the run's selection (filtered to the plugins);
+  // absent → every skill of the plugins.
+  const skillIds = selectRunSkills(pluginIds, o.skillIds);
 
   const runId = randomUUID();
   const runRow = {
@@ -449,10 +490,12 @@ export async function startAnalysisRun(o: StartAnalysisRunOpts): Promise<string>
     status: "RUNNING",
     symbol: o.symbol,
     share_name: o.symbol,
-    agent_name: agent.name,
-    model: o.model || agent.modelId || null,
+    agent_name: label,
+    model: o.model || null,
     source: o.source,
-    skill_ids: o.skillIds ?? null,
+    skill_ids: skillIds.length ? skillIds : (o.skillIds ?? null),
+    plugin_ids: pluginIds,
+    mcp_enabled: o.mcpEnabled ?? null,
     system_prompt: o.systemPrompt ?? null,
     started_at: new Date().toISOString(),
     created_at: new Date().toISOString(),
@@ -462,14 +505,13 @@ export async function startAnalysisRun(o: StartAnalysisRunOpts): Promise<string>
 
   runHarnessSymbol(
     o.userId,
-    agent.id,
     o.symbol,
     o.source,
     o.model,
     o.systemPrompt,
-    { existingRunId: runId, promptOverride: o.prompt, skillIdsOverride: o.skillIds, budgetOverride: o.budget },
+    { existingRunId: runId, promptOverride: o.prompt, pluginIds, skillIds, mcpEnabled: o.mcpEnabled, budgetOverride: o.budget },
   ).then((result) => {
-    if (!result) throw new Error("run did not start: agent not found");
+    if (!result) throw new Error("run did not start");
   }).catch(async (e: any) => {
     console.error("background analysis run failed:", e);
     await updateRunRow(runId, { status: "ERROR", error: e?.message || "run failed" }).catch(() => {});

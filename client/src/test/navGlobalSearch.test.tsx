@@ -20,7 +20,7 @@ beforeAll(() => {
 
 vi.mock("@/db", () => ({
   API_BASE: "/api",
-  AgentService: { searchAgents: vi.fn(async () => [{ id: "a1", name: "Momentum Agent" }]) },
+  PluginService: { list: vi.fn(async () => [{ id: "p1", display_name: "NVDA Momentum", description: "Momentum plugin", origin: "custom", verified: 0, skill_count: 3, sources: [], categories: [] }]) },
   AnalysisService: {
     listAnalyses: vi.fn(async () => [{ id: "r1", symbol: "NVDA", share_name: "NVIDIA Corporation", status: "completed" }]),
   },
@@ -50,7 +50,7 @@ const renderNav = () =>
     </MemoryRouter>,
   );
 
-describe("global search (stocks/agents/skills/runs)", () => {
+describe("global search (stocks/plugins/runs)", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -63,7 +63,7 @@ describe("global search (stocks/agents/skills/runs)", () => {
     }));
   });
 
-  it("groups all four sources and selects with the keyboard via aria-activedescendant", async () => {
+  it("groups all three sources and selects with the keyboard via aria-activedescendant", async () => {
     const user = userEvent.setup();
     renderNav();
 
@@ -77,11 +77,10 @@ describe("global search (stocks/agents/skills/runs)", () => {
     // Same name twice: the stock row and the run row (both "NVIDIA Corporation").
     const nvidia = await screen.findAllByRole("option", { name: /NVIDIA Corporation/ }, { timeout: 3000 });
     expect(nvidia.length).toBe(2);
-    for (const label of ["Stocks", "Agents", "Skills", "Runs"]) {
+    for (const label of ["Stocks", "Plugins", "Runs"]) {
       expect(screen.getByRole("group", { name: label })).toBeInTheDocument();
     }
-    expect(screen.getByRole("option", { name: /Momentum Agent/ })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /NVDA sector skill/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /NVDA Momentum/ })).toBeInTheDocument();
 
     // Focus never leaves the input; the active option is announced on it.
     expect(document.activeElement).toBe(input);

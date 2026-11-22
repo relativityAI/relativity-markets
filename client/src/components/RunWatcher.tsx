@@ -48,7 +48,7 @@ export default function RunWatcher() {
                         type: failed ? "error" : "success",
                         title: failed ? `${name} — run failed` : `${name} — run finished`,
                         description: failed ? "Open the run for the cause, or check Settings → keys." : undefined,
-                        action: { label: "Open", onClick: () => navigate(`/analysis-result/${encodeURIComponent(id)}`) },
+                        action: { label: "Open", onClick: () => navigate(`/runs/${encodeURIComponent(id)}`) },
                     });
                 }
             } catch {

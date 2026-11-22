@@ -17,7 +17,7 @@
 
 import { join } from "node:path";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync, statSync, existsSync } from "node:fs";
-import { createDeepAgent, FilesystemBackend, CompositeBackend } from "deepagents";
+import { createDeepAgent, FilesystemBackend, CompositeBackend, LocalShellBackend } from "deepagents";
 import { createMiddleware, todoListMiddleware } from "langchain";
 import { Command } from "@langchain/langgraph";
 import type { BaseLanguageModel } from "@langchain/core/language_models/base";
@@ -26,8 +26,9 @@ import { HumanMessage, ToolMessage } from "@langchain/core/messages";
 import { promptDoc, shouldSaveWorkspace } from "./config.js";
 import { applyVariables, datedPrompt, hasSeriesTool, type SystemPrompt } from "./prompts.js";
 import { sectionContractMarkdown, plotReferenceMarkdown } from "./report/reference.js";
-import { reportStructureOf, skillSourceDirs, type HarnessSkill } from "./skills.js";
-import type { AgentDefinition, InterruptOn } from "./store.js";
+import { reportStructureOf, type HarnessSkill } from "./skills.js";
+import { pluginSkillsDir } from "./plugins.js";
+import type { InterruptOn } from "./store.js";
 import type { Budget, TraceEvent } from "./types.js";
 import { friendlyError } from "./types.js";
 import { TraceMapper, type RunStats } from "./trace.js";
@@ -42,12 +43,24 @@ import { getPriceHistory } from "./marketdata.js";
 import { gradeReport, reportDigest, type Verdict } from "./report/verdict.js";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 
+/** What a run needs to know about its profile: a display name and the
+ *  optional human-in-the-loop gates. (Agents as a concept are gone; this is
+ *  the structural remnant RunOptions keeps for naming + HITL.) */
+export interface RunProfile {
+  name: string;
+  interruptOn?: InterruptOn;
+}
+
 export interface RunOptions {
   runId: string;
   userId: string;
   model: BaseChatModel;
-  agent: AgentDefinition;
-  /** Resolved skills (max 1) — pinned into the run. */
+  agent: RunProfile;
+  /** Selected plugins — their skills dirs are the deepagents skill sources. */
+  pluginIds: string[];
+  /** Resolved skills (all skills of the selected plugins) — discovered by the
+   *  SkillsMiddleware from the mounted sources; report structures pinned in
+   *  the system prompt. */
   skills: HarnessSkill[];
   /** Tool allowlist (empty = all). */
   allowedTools: string[];
@@ -249,17 +262,36 @@ export function hydrateKnowledgeBase(workspaceDir: string, trace: TraceEvent[]):
   }
 }
 
-function backendFor(userId: string, workspaceDir: string) {
-  const fs = new FilesystemBackend({ rootDir: workspaceDir, virtualMode: true });
-  const sources = skillSourceDirs(userId);
-  if (!sources.length) return { backend: fs, skills: [] as string[] };
+/**
+ * Workspace = LocalShellBackend: native shell `execute` inside the run's own
+ * workspace dir (timeout-bounded), so plugin scripts actually run. Selected
+ * plugins mount as read-only routes; their skills dirs are the deepagents
+ * skill sources (multi-plugin, multi-skill).
+ */
+function backendFor(workspaceDir: string, pluginIds: string[]) {
+  const fs = new LocalShellBackend({
+    rootDir: workspaceDir,
+    virtualMode: true,
+    // ponytail: 60s command ceiling — raise if skill scripts legitimately run longer.
+    timeout: 60,
+    inheritEnv: true, // PATH/HOME so python etc. resolve; cwd stays the workspace
+  });
   const routes: Record<string, FilesystemBackend> = {};
-  for (const s of sources) routes[s.route] = new FilesystemBackend({ rootDir: s.dir, virtualMode: true });
-  return { backend: new CompositeBackend(fs, routes), skills: sources.map((s) => s.route) };
+  const sources: string[] = [];
+  for (const id of pluginIds) {
+    const dir = pluginSkillsDir(id);
+    if (!dir) {
+      console.warn(`[engine] plugin "${id}" has no skills dir — skipping`);
+      continue;
+    }
+    const route = `/plugins/${id}/skills/`;
+    routes[route] = new FilesystemBackend({ rootDir: dir, virtualMode: true });
+    sources.push(route);
+  }
+  return { backend: sources.length ? new CompositeBackend(fs, routes) : fs, skills: sources };
 }
 
 function buildSystemPrompt(o: {
-  agent: AgentDefinition;
   skills: HarnessSkill[];
   template: SystemPrompt | null;
   toolNames: string[];
@@ -294,7 +326,7 @@ function buildSystemPrompt(o: {
       ].join("\n\n")
     : "";
   const skillNote = o.skills.length
-    ? `## Skill\nYour operating skill for this run: ${o.skills.map((s) => s.id).join(", ")}. Its full SKILL.md is pinned below and its reference files live under its skill directory on the filesystem — read them with read_file when the instructions call for them.`
+    ? `## Skills\nYour operating skills for this run: ${o.skills.map((s) => s.id).join(", ")}. Their full SKILL.md files are pinned below and their reference files live under each skill's directory on the filesystem — read them with read_file when the instructions call for them.`
     : "";
   const budgetNote = [
     "## Run budget",
@@ -307,7 +339,7 @@ function buildSystemPrompt(o: {
 }
 
 async function createRunAgent(o: RunOptions, toolNames: string[], canvas: ReportCanvas, notify: () => void) {
-  const { backend, skills } = backendFor(o.userId, runWorkspaceDir(o.runId));
+  const { backend, skills } = backendFor(runWorkspaceDir(o.runId), o.pluginIds);
   const interruptOn: InterruptOn | undefined = o.agent.interruptOn;
   return createDeepAgent({
     model: o.model,
@@ -522,7 +554,8 @@ export interface ResumeOptions {
   runId: string;
   userId: string;
   model: BaseChatModel;
-  agent: AgentDefinition;
+  agent: RunProfile;
+  pluginIds: string[];
   skills: HarnessSkill[];
   tools: StructuredTool[];
   template: SystemPrompt | null;
@@ -557,6 +590,7 @@ export async function resumeAgent(o: ResumeOptions, decisions: ReviewDecision[])
       userId: o.userId,
       model: o.model,
       agent: o.agent,
+      pluginIds: o.pluginIds,
       skills: o.skills,
       allowedTools: [],
       tools: o.tools,

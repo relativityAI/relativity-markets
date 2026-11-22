@@ -75,13 +75,36 @@ export function FaviconMark({ url, size = 12 }: { url: string; size?: number }) 
     );
 }
 
+// Circular country mark for a run's exchange — replaces the 🇮🇳/🇺🇸 emoji.
+// TradingView's own SVGs, hotlinked (no asset to babysit).
+const COUNTRY_FLAGS: Record<string, string> = {
+    IN: "https://s3-symbol-logo.tradingview.com/country/IN--big.svg",
+    US: "https://s3-symbol-logo.tradingview.com/country/US--big.svg",
+};
+
+export function FlagLogo({ source, size = 14 }: { source?: string | null; size?: number }) {
+    const key = String(source || "").toUpperCase() === "NSE" ? "IN" : "US";
+    return (
+        <img
+            src={COUNTRY_FLAGS[key]}
+            alt=""
+            aria-hidden="true"
+            title={key === "IN" ? "India" : "United States"}
+            width={size}
+            height={size}
+            loading="lazy"
+            style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0, display: "inline-block" }}
+        />
+    );
+}
+
 // Company logo for a ticker, served by our own /logo/:symbol route (which
 // resolves symbol → domain server-side and redirects to the Ticker Logos
 // CDN). Unknown ticker falls back to its initial rather than a broken image.
 export function TickerLogo({ symbol, size = 20 }: { symbol?: string; size?: number }) {
     const sym = String(symbol || "").trim();
     const [failed, setFailed] = useState(false);
-    const radius = Math.max(3, Math.round(size * 0.15));
+    const radius = "50%"; // circle, TradingView-style
     if (!sym) return null;
     if (failed) {
         return (

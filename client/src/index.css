@@ -49,6 +49,10 @@
   --signal-caution-text: #7A5C24;
   --signal-negative-text: #9C4444;
 
+  /* Watchlist change columns — vivid green/red, still AA on the light canvas */
+  --signal-up: #1F8A4C;
+  --signal-down: #C0392B;
+
   /* File-type accents. Spreadsheet green is Excel's own, so the icon and button
      read as "this is a workbook" rather than as decoration.
      The icon chip mixes it into a fixed pale tint rather than the theme
@@ -99,6 +103,10 @@ html.dark {
   --signal-positive-text: #63A882;
   --signal-caution-text: #B8935A;
   --signal-negative-text: #D98080;
+
+  /* Watchlist change columns — bright on the dark canvas */
+  --signal-up: #22C55E;
+  --signal-down: #EF4444;
 }
 
 /* ── GitHub Primer accents ──────────────────────────────────────────────────

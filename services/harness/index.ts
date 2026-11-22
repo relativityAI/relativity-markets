@@ -22,6 +22,7 @@ export {
   type RunOptions,
   type RunResult,
   type RunStatus,
+  type RunProfile,
   type ResumeOptions,
   type ReviewDecision,
 } from "./engine.js";
@@ -52,7 +53,7 @@ export {
   type AgentInput,
   type InterruptOn,
 } from "./store.js";
-export { compileAgent, type CompiledAgent, type CompileOptions } from "./compile.js";
+export { compileAgent, type CompiledAgent, type CompileOptions, type CompileProfile } from "./compile.js";
 export {
   parseAgentMd,
   serializeAgentMd,
@@ -80,12 +81,44 @@ export {
   reportStructureOf,
   slugifySkillName,
   SPEC_NAME_RE,
-  skillSourceDirs,
+  RELATIVITY_PLUGINS_DIR,
+  MY_SKILLS_PLUGIN_ID,
+  customPluginsDir,
   type HarnessSkill,
   type CustomSkillRecord,
   type SkillFiles,
 } from "./skills.js";
 export { listRepoSkills, fetchSkillMarkdown, listSkillRepos, resolveSkillPath } from "./skill-repos.js";
+
+// ── Plugins (directories on disk + metadata rows) ───────────────────────────
+export {
+  RELATIVITY_SAFETY,
+  listPlugins,
+  getPlugin,
+  pluginDir,
+  pluginOrigin,
+  pluginSkillsDir,
+  pluginSkills,
+  pluginSkillIds,
+  pluginsForSkills,
+  selectRunSkills,
+  skillToPluginIndex,
+  updatePluginMeta,
+  deletePlugin,
+  readPluginFiles,
+  writePluginFiles,
+  normalizePluginFiles,
+  importPluginFromDir,
+  importPluginFromUrl,
+  importPluginFromZip,
+  seedPluginMeta,
+  backfillPluginRefs,
+  migrateLegacyCustomSkills,
+  initPlugins,
+  type PluginRecord,
+  type PluginMetaPatch,
+  type ImportResult,
+} from "./plugins.js";
 
 // ── System prompts ──────────────────────────────────────────────────────────
 export { loadSystemPrompts, getSystemPrompt, applyVariables, type SystemPrompt } from "./prompts.js";
