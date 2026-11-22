@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Calendar } from "lucide-react";
 import {
     Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
@@ -76,9 +76,10 @@ export function DateTimePicker({ value, onChange }: { value: DateTimeValue; onCh
     }, [hour12, pm]);
 
     const commit = () => {
-        const time = `${pad2(hours24)}:${pad2(minutes)}`;
-        const next = { date: toDateKey(view), time };
-        setDraft(next);
+        // draft holds both halves: the clicked day (date) and the steppers'
+        // time. `view` is only the month cursor — committing it (the old bug)
+        // silently discarded the selected day.
+        const next = { ...draft };
         onChange(next);
         setOpen(false);
     };
@@ -91,10 +92,15 @@ export function DateTimePicker({ value, onChange }: { value: DateTimeValue; onCh
 
     const todayKey = toDateKey(new Date());
     const grid = monthGrid(view.getFullYear(), view.getMonth());
-    const summary = `${pad2(view.getMonth() + 1)}/${pad2(view.getDate())}/${view.getFullYear()} · ${(() => {
-        const h = hours24 % 12 === 0 ? 12 : hours24 % 12;
-        return `${h}:${pad2(minutes)} ${pm ? "PM" : "AM"}`;
-    })()}`;
+    // Render from the committed `value`, never from `view`/steppers — those
+    // only move while the popover is open, so the button would keep showing
+    // the previous pick after OK.
+    const summary = (() => {
+        const [y, m, d] = value.date.split("-").map(Number);
+        const h24 = Number(value.time.split(":")[0]);
+        const h = h24 % 12 === 0 ? 12 : h24 % 12;
+        return `${pad2(m)}/${pad2(d)}/${y} · ${h}:${value.time.split(":")[1]} ${h24 >= 12 ? "PM" : "AM"}`;
+    })();
 
     return (
         <Popover open={open} onOpenChange={setOpen}>
@@ -103,10 +109,11 @@ export function DateTimePicker({ value, onChange }: { value: DateTimeValue; onCh
                     type="button"
                     aria-label="Pick date and time"
                     data-testid="schedule-datetime"
-                    className="flex h-9 w-full max-w-xs cursor-pointer items-center justify-between gap-2 rounded-[6px] border-[0.5px] border-[color:var(--hairline)] bg-transparent px-2.5 text-sm text-console-ink shadow-none outline-none focus-visible:ring-1 focus-visible:ring-console-accent/40 dark:bg-transparent"
+                    className="flex h-10 w-full cursor-pointer items-center justify-between gap-2 rounded-[8px] border border-transparent bg-[var(--surface-recessed)] px-3.5 text-sm text-console-ink shadow-none outline-none focus-visible:ring-1 focus-visible:ring-console-accent/40"
                 >
-                    <span className="truncate">{summary}</span>
-                    <span className="font-app-body text-[11px] text-console-ink-3">Change</span>
+                    <Calendar className="size-4 shrink-0 text-[var(--ink-tertiary)]" aria-hidden />
+                    <span className="min-w-0 flex-1 truncate text-left">{summary}</span>
+                    <span className="shrink-0 font-app-body text-[11px] text-[var(--ink-tertiary)]">Change</span>
                 </button>
             </PopoverTrigger>
             <PopoverContent align="start" sideOffset={6} className="w-auto max-w-[calc(100vw-2rem)] border-none bg-transparent p-0 shadow-none">
