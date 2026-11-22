@@ -68,10 +68,11 @@ const wrap = (n: React.ReactNode) => (
 );
 
 describe("home watchlists", () => {
-  it("stacks tagline, Active Agents and Latest runs in one rail beside the watchlist", async () => {
+  it("stacks the market heatmap, Active Agents and Latest runs in one rail beside the watchlist", async () => {
     render(wrap(<HomePage />));
-    const tagline = screen.getByRole("heading", { level: 1 });
-    const rail = tagline.parentElement!.parentElement!;
+    // The heatmap took the tagline's place at the head of the rail.
+    const heatmap = screen.getByRole("heading", { name: "Market heatmap" }).closest("section")!;
+    const rail = heatmap.parentElement!;
 
     // Every right-hand block lives in the same column…
     for (const name of ["Active Agents", "Latest runs"]) {
@@ -85,7 +86,8 @@ describe("home watchlists", () => {
     expect(watchlist.parentElement).not.toBe(rail);
     expect(watchlist.parentElement!.parentElement).toBe(rail.parentElement);
     expect(rail.parentElement!.className).toContain("items-start");
-    expect(tagline.className).toContain("leading-none");
+    // the index switcher rides with it
+    expect(screen.getByRole("radiogroup", { name: "Heatmap index" })).toBeTruthy();
   });
 
   beforeEach(() => {
