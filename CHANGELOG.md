@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.12.1...relativity-markets-v0.13.0) (2026-11-22)
+
+
+### Features
+
+* **watchlist:** TradingView-style watchlist rail + full-page watchlists ([#204](https://github.com/relativityAI/relativity-markets/issues/204)) ([5d24b80](https://github.com/relativityAI/relativity-markets/commit/5d24b80ea13da518c757da9e40939a32824d0259))
+
 ## [0.12.1](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.12.0...relativity-markets-v0.12.1) (2026-11-22)
 
 
