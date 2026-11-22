@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { TickerLogo } from "@/lib/sourceLogos";
 import { ModelLogo } from "@/lib/modelLogos";
-import AgentAvatar from "@/components/shared/AgentAvatar";
+import PluginAvatar from "@/components/shared/PluginAvatar";
 import { runVerdict } from "@/lib/analysisFormat";
 import { cn } from "@/lib/utils";
 
@@ -39,11 +39,11 @@ const tone = (score: number) => (score >= 70 ? "var(--gh-green)" : score >= 40 ?
 
 export default function RunsInsights({
     runs,
-    labelAgent,
+    labelPlugin,
 }: {
     runs: any[];
-    /** Resolve a run's raw agent id to a display name (page owns the lookup). */
-    labelAgent: (a: any) => string;
+    /** Resolve a run to its plugin display name (page owns the lookup). */
+    labelPlugin: (a: any) => string;
 }) {
     const [period, setPeriod] = useState("7");
 
@@ -133,20 +133,21 @@ export default function RunsInsights({
         return Array.from(m.values()).sort((a, b) => b.count - a.count).slice(0, 5);
     }, [inPeriod]);
 
-    const topAgents = useMemo(() => {
+    const topPlugins = useMemo(() => {
         const m = new Map<string, { name: string; seed: any; count: number; scores: number[]; last: number }>();
         inPeriod.forEach((a) => {
-            const name = labelAgent(a);
+            const name = labelPlugin(a);
             if (!name || name === "—") return;
             const e =
-                m.get(name) ?? { name, seed: a.agent_name || a.agent || a.system_prompt, count: 0, scores: [], last: 0 };
+                m.get(name) ??
+                { name, seed: a.plugin_ids?.[0] || a.agent_name || a.system_prompt || name, count: 0, scores: [], last: 0 };
             e.count += 1;
             if (typeof a.total_score === "number") e.scores.push(a.total_score);
             e.last = Math.max(e.last, a.created_at ? +new Date(a.created_at) : 0);
             m.set(name, e);
         });
         return Array.from(m.values()).sort((a, b) => b.count - a.count).slice(0, 5);
-    }, [inPeriod, labelAgent]);
+    }, [inPeriod, labelPlugin]);
 
     const topModels = useMemo(() => {
         const m = new Map<string, number>();
@@ -276,20 +277,20 @@ export default function RunsInsights({
                     )}
                 </div>
 
-                {/* Top agents */}
+                {/* Top plugins */}
                 <div className="flex min-w-0 flex-col gap-2">
-                    <h3 className="text-[17px] leading-none font-light text-[var(--gh-fg)]">Top agents</h3>
-                    {topAgents.length === 0 ? (
+                    <h3 className="text-[17px] leading-none font-light text-[var(--gh-fg)]">Top plugins</h3>
+                    {topPlugins.length === 0 ? (
                         <InsightEmpty />
                     ) : (
                         <div className="flex flex-col gap-1">
-                            {topAgents.map((a) => {
+                            {topPlugins.map((a) => {
                                 const avg = a.scores.length
                                     ? Math.round(a.scores.reduce((x, y) => x + y, 0) / a.scores.length)
                                     : null;
                                 return (
                                     <div key={a.name} className="flex items-center gap-3 py-1">
-                                        <AgentAvatar agent={a.seed} size={18} />
+                                        <PluginAvatar plugin={a.seed} size={18} />
                                         <div className="min-w-0 flex-1">
                                             <div className="truncate text-[14px] text-[var(--gh-fg)]">{a.name}</div>
                                             <div className="text-[13px] text-[var(--gh-muted)]">

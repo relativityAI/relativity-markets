@@ -2,8 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { Box, Flex, Text } from "@/compat/ui";
 import { useSseTrace } from "@/lib/useSseTrace";
 import type { TraceEvent } from "@/pages/shared/TracePanel";
-import AgentAvatar from "@/components/shared/AgentAvatar";
-import type { AgentSeedLike } from "@/lib/agentIdentity";
+import PluginAvatar from "@/components/shared/PluginAvatar";
+import type { PluginSeedLike } from "@/lib/pluginIdentity";
 import { ToolCall } from "@/components/assistant-ui/elements/tool-call";
 import { GenerationLoader } from "@/components/assistant-ui/elements/loading-state";
 import { AgentPlan } from "@/components/assistant-ui/elements/agent-plan";
@@ -410,7 +410,7 @@ interface AgentActivityProps {
     variant?: "panel" | "plain";
     subtitle?: string;
     /** Agent identity — renders the agent's chip in the header. */
-    agent?: AgentSeedLike | string;
+    agent?: PluginSeedLike | string;
     /** SSE endpoint (relative to API_BASE) for live events. */
     streamUrl?: string;
     /** Static trace events (used when not streaming). */
@@ -511,7 +511,7 @@ export default function AgentActivity({
                     return (
                         <Flex key={i} align="flex-start" gap={2.5} minW={0}>
                             <Flex flexShrink={0} align="center" mt="2px">
-                                <AgentAvatar agent={agent} size={20} />
+                                <PluginAvatar plugin={agent} size={20} />
                             </Flex>
                             <FadeLine fontSize="14px" lineHeight="1.65" color="var(--ink-secondary)" minW={0}>
                                 {statementFor(row)}
@@ -521,7 +521,7 @@ export default function AgentActivity({
                 })}
                 {feed.length === 0 && (
                     <Flex align="center" gap={2.5}>
-                        <AgentAvatar agent={agent} size={20} />
+                        <PluginAvatar plugin={agent} size={20} />
                         <Text fontSize="13px" color="var(--ink-tertiary)">
                             {connected ? "Starting…" : "Connecting…"}
                         </Text>
@@ -545,7 +545,7 @@ export default function AgentActivity({
                 plan under it, exactly where they render today. */}
             <Box flexShrink={0} w={{ base: "full", md: "320px" }} minW={0}>
                 <Flex align="center" gap={3} minW={0}>
-                    <AgentAvatar agent={agent} size={112} label={agentName} />
+                    <PluginAvatar plugin={agent} size={112} label={agentName} />
                     <Flex direction="column" minW={0} gap={1.5}>
                         <Text fontSize="16px" fontWeight={300} lineHeight="1.2" color="var(--ink-primary)" truncate>
                             {agentName || title}

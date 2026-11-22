@@ -1,0 +1,15 @@
+{
+  "name": "chartist",
+  "displayName": "Chartist",
+  "description": "Technical-analysis playbook for equities — chart patterns, indicators, levels and the report structure every chartist run follows.",
+  "version": "v7.0.2",
+  "versionDate": "Nov 12",
+  "listed": "November 2026",
+  "license": "MIT",
+  "verified": true,
+  "safety": "Relativity scans every plugin for safety and security, but can't guarantee this plugin will work as intended or won't change.",
+  "sources": [
+    { "label": "github.com/relativityAI/relativity-markets", "url": "https://github.com/relativityAI/relativity-markets" }
+  ],
+  "categories": ["Technical analysis", "Equities", "Department: Investing"]
+}

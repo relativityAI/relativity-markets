@@ -154,9 +154,83 @@ export async function deleteSkillRow(userId: string, skillId: string): Promise<v
   getSqlite().prepare("DELETE FROM skills WHERE user_id = ? AND skill_id = ?").run(userId, skillId);
 }
 
+// ── Plugins (metadata rows; the files live on disk) ─────────────────────────
+
+export interface PluginRow {
+  id: string;
+  name: string;
+  display_name: string;
+  description: string;
+  origin: "relativity" | "custom";
+  verified: number;
+  listed_date: string | null;
+  version: string | null;
+  version_date: string | null;
+  license: string | null;
+  safety: string | null;
+  sources: { label: string; url: string }[];
+  categories: string[];
+  developer_url: string | null;
+  install_source: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+const PLUGIN_JSON_COLS = ["sources", "categories"] as const;
+
+function pluginRowOut(r: any): PluginRow {
+  const row = { ...r } as Record<string, unknown>;
+  for (const c of PLUGIN_JSON_COLS) row[c] = fromJson(row[c], []);
+  return row as unknown as PluginRow;
+}
+
+function pluginRowIn(row: Record<string, any>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) {
+    if (v === undefined) continue;
+    out[k] = (PLUGIN_JSON_COLS as readonly string[]).includes(k) && v != null ? toJson(v) : v;
+  }
+  return out;
+}
+
+export async function listPluginRows(): Promise<PluginRow[]> {
+  return listPluginRowsSync();
+}
+
+/** Sync readers — node:sqlite is synchronous under the async convention;
+ *  the plugin store is sync (scan + merge) so it needs the rows inline. */
+export function listPluginRowsSync(): PluginRow[] {
+  return getSqlite().prepare("SELECT * FROM plugins ORDER BY display_name ASC").all().map(pluginRowOut) as PluginRow[];
+}
+
+export function getPluginRowSync(id: string): PluginRow | null {
+  const r = getSqlite().prepare("SELECT * FROM plugins WHERE id = ?").get(id) as any;
+  return r ? pluginRowOut(r) : null;
+}
+
+export async function getPluginRow(id: string): Promise<PluginRow | null> {
+  return getPluginRowSync(id);
+}
+
+export async function upsertPluginRow(row: Record<string, any>): Promise<PluginRow> {
+  const r = pluginRowIn(row);
+  r.updated_at = r.updated_at ?? now();
+  r.created_at = r.created_at ?? now();
+  const cols = Object.keys(r);
+  getSqlite()
+    .prepare(`INSERT OR REPLACE INTO plugins (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`)
+    .run(...cols.map((c) => sqlVal(r[c])));
+  return (await getPluginRow(String(r.id)))!;
+}
+
+export async function deletePluginRow(id: string): Promise<void> {
+  getSqlite().prepare("DELETE FROM plugins WHERE id = ?").run(id);
+}
+
 // ── Analysis runs ───────────────────────────────────────────────────────────
 
 const RUN_JSON_COLS = ["report", "trace", "workspace", "skill_outputs", "market_snapshot"] as const;
+const RUN_JSON_LIST_COLS = ["skill_ids", "plugin_ids", "mcp_enabled"] as const;
 
 export interface RunRow {
   id: string;
@@ -170,6 +244,8 @@ export interface RunRow {
   run_mode?: string | null;
   skill_id?: string | null;
   skill_ids?: string[] | null;
+  plugin_ids?: string[] | null;
+  mcp_enabled?: string[] | null;
   system_prompt?: string | null;
   report?: Record<string, unknown> | null;
   trace?: unknown[] | null;
@@ -195,7 +271,7 @@ export interface RunRow {
 function runRowOut(r: any): RunRow {
   const row = { ...r } as Record<string, unknown>;
   for (const c of RUN_JSON_COLS) row[c] = fromJson(row[c], null);
-  row.skill_ids = fromJson(row.skill_ids, null);
+  for (const c of RUN_JSON_LIST_COLS) row[c] = fromJson(row[c], null);
   return row as RunRow;
 }
 
@@ -203,7 +279,7 @@ function runRowIn(row: Record<string, any>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(row)) {
     if (v === undefined) continue;
-    out[k] = ((RUN_JSON_COLS as readonly string[]).includes(k) || k === "skill_ids") && v != null ? toJson(v) : v;
+    out[k] = ((RUN_JSON_COLS as readonly string[]).includes(k) || (RUN_JSON_LIST_COLS as readonly string[]).includes(k)) && v != null ? toJson(v) : v;
   }
   return out;
 }
@@ -252,18 +328,53 @@ export async function listRunRows(userId: string): Promise<RunRow[]> {
 export async function listRunSummaries(userId: string): Promise<RunRow[]> {
   const rows = getSqlite()
     .prepare(
-      `SELECT id, user_id, symbol, share_name, agent_name, run_mode, skill_id, skill_ids, system_prompt,
+      `SELECT id, user_id, symbol, share_name, agent_name, run_mode, skill_id, skill_ids, plugin_ids, mcp_enabled, system_prompt,
               status, total_score, quantitative_score, qualitative_score, coverage, fit_low, fit_high,
               duration, model, source, error, started_at, created_at, updated_at,
               json_extract(report, '$.verdict') AS verdict
        FROM analysis_runs WHERE user_id = ? ORDER BY created_at DESC`,
     )
     .all(userId) as any[];
-  return rows.map((r) => ({ ...r, skill_ids: fromJson(r.skill_ids, null), verdict: fromJson(r.verdict, null) }));
+  return rows.map((r) => ({
+    ...r,
+    skill_ids: fromJson(r.skill_ids, null),
+    plugin_ids: fromJson(r.plugin_ids, null),
+    mcp_enabled: fromJson(r.mcp_enabled, null),
+    verdict: fromJson(r.verdict, null),
+  }));
 }
 
 export async function deleteRunRow(userId: string, id: string): Promise<void> {
   getSqlite().prepare("DELETE FROM analysis_runs WHERE id = ? AND user_id = ?").run(id, userId);
+}
+
+// ── Plugin backfill (one-time: rows created before plugin_ids existed) ──────
+
+/** Runs that predate the plugins column — skill_ids + agent_name feed the map. */
+export function listRunsMissingPlugins(): { id: string; skill_ids: string[] | null; agent_name: string }[] {
+  return getSqlite()
+    .prepare("SELECT id, skill_ids, agent_name FROM analysis_runs WHERE plugin_ids IS NULL")
+    .all()
+    .map((r: any) => ({ ...r, skill_ids: fromJson<string[] | null>(r.skill_ids, null) })) as any;
+}
+
+export function setRunPluginIds(id: string, pluginIds: string[]): void {
+  getSqlite().prepare("UPDATE analysis_runs SET plugin_ids = ? WHERE id = ?").run(toJson(pluginIds), id);
+}
+
+/** Alert rules that predate the plugins column — including the empty-array
+ *  rows an older backfill pass wrote before agent-id mapping existed. */
+export function listAlertRulesMissingPlugins(): { id: string; skill_ids: string[] | null; agent_id: string | null }[] {
+  return getSqlite()
+    .prepare(
+      "SELECT id, skill_ids, agent_id FROM alert_rules WHERE plugin_ids IS NULL OR (plugin_ids = '[]' AND agent_id IS NOT NULL AND agent_id != '')",
+    )
+    .all()
+    .map((r: any) => ({ ...r, skill_ids: fromJson<string[] | null>(r.skill_ids, null) })) as any;
+}
+
+export function setAlertRulePluginIds(id: string, pluginIds: string[]): void {
+  getSqlite().prepare("UPDATE alert_rules SET plugin_ids = ? WHERE id = ?").run(toJson(pluginIds), id);
 }
 
 /** Fail every PENDING/RUNNING row (in-process runs die with the process). */
@@ -289,6 +400,7 @@ export interface AlertRuleRow {
   model: string | null;
   system_prompt: string | null;
   skill_ids: string[] | null;
+  plugin_ids: string[] | null;
   max_steps: number | null;
   max_tokens: number | null;
   time: string;
@@ -302,11 +414,11 @@ export interface AlertRuleRow {
 }
 
 function alertRuleRowOut(r: any): AlertRuleRow {
-  return { ...r, skill_ids: fromJson(r.skill_ids, null) };
+  return { ...r, skill_ids: fromJson(r.skill_ids, null), plugin_ids: fromJson(r.plugin_ids, null) };
 }
 
 export async function insertAlertRuleRow(row: Record<string, any>): Promise<AlertRuleRow> {
-  const r: Record<string, any> = { ...row, skill_ids: toJson(row.skill_ids ?? null) };
+  const r: Record<string, any> = { ...row, skill_ids: toJson(row.skill_ids ?? null), plugin_ids: toJson(row.plugin_ids ?? null) };
   if (!r.id) r.id = randomUUID();
   if (!r.created_at) r.created_at = now();
   const cols = Object.keys(r);

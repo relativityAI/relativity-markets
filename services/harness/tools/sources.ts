@@ -36,7 +36,7 @@ export const McpSourceSchema = z
     /** Web-search provider this source belongs to ("searxng" | "tavily");
      *  the source only connects when the run's provider matches. */
     webProvider: z.enum(["searxng", "tavily"]).optional(),
-    /** true (default) → the run fails if this server can't be reached. */
+    /** true → logged loudly when unreachable; the run proceeds without it. */
     required: z.boolean().optional(),
   })
   .refine((s) => s.url || s.urlEnv, { message: `needs "url" or "urlEnv"` });
@@ -55,26 +55,34 @@ export interface RunToolContext {
   tavilyKey?: string;
   /** Which web-search source set to connect: "searxng" (default) | "tavily". */
   webSearchProvider?: "searxng" | "tavily";
+  /** Per-run MCP allowlist (server names). Absent = every configured source
+   *  connects (CLI/back-compat); a list = only those names are considered. */
+  mcpEnabled?: string[];
 }
 
 export interface RunTools {
   tools: StructuredTool[];
+  /** Sources that could not connect (unreachable / no url / no key) — the
+   *  run continues without them; the caller surfaces these. */
+  skipped: string[];
   /** Close every MCP connection opened for this run — call in finally. */
   close: () => Promise<void>;
 }
 
+/** A down or absent MCP source degrades the toolbox, never the run: skip it,
+ *  log loudly, and let the caller report what was missing (the run's notes
+ *  carry it to the result page). */
 const failOrSkip = (required: boolean, message: string): void => {
-  if (required) throw new Error(message);
-  log.warn("tools", `skipping — ${message}`);
+  log.warn("tools", `${required ? "[required] " : ""}skipping — ${message}`);
 };
 
 /**
  * Compose the run's full toolset — the toolbox the deep agent runs with.
  *
  * Every configured MCP server's tools, first-wins on name collision (a
- * louder log than the old last-wins silent replacement). Throws when a
- * `required` source has no url or is unreachable; optional sources warn and
- * the run continues without them.
+ * louder log than the old last-wins silent replacement). No source is fatal:
+ * a missing url, missing key or unreachable server is skipped and reported
+ * in `skipped`, and the run continues with the toolbox it has.
  *
  * The caller MUST run `close()` when the run ends — MCP connections stay
  * open otherwise (each one is ~1 file descriptor).
@@ -87,6 +95,7 @@ export async function buildRunTools(
   const cfg = ToolSourcesSchema.parse(sources ?? {});
   const clients: MultiServerMCPClient[] = [];
   const tools: StructuredTool[] = [];
+  const skipped: string[] = [];
   const seen = new Map<string, string>();
 
   const push = (source: string, tool: StructuredTool): void => {
@@ -99,10 +108,14 @@ export async function buildRunTools(
   };
 
   for (const entry of cfg.mcp ?? []) {
+    // Per-run toggle: a disabled server never connects — explicitly disabled
+    // beats the config's `required` flag (the user chose to turn it off).
+    if (ctx.mcpEnabled && !ctx.mcpEnabled.includes(entry.name)) continue;
     if (entry.webProvider && entry.webProvider !== (ctx.webSearchProvider ?? "searxng")) continue;
     const url = entry.url ?? env[entry.urlEnv ?? ""];
     const required = entry.required ?? true;
     if (!url) {
+      skipped.push(entry.name);
       failOrSkip(required, `MCP source "${entry.name}" has no url — set ${entry.urlEnv ?? '"url"'} (in harness.config.json or the environment)`);
       continue;
     }
@@ -111,6 +124,7 @@ export async function buildRunTools(
     if (entry.keyFrom) {
       const key = (ctx as unknown as Record<string, unknown>)[entry.keyFrom];
       if (typeof key !== "string" || !key.trim()) {
+        skipped.push(entry.name);
         failOrSkip(false, `MCP source "${entry.name}" skipped — no ${entry.keyFrom} key for this run`);
         continue;
       }
@@ -130,6 +144,7 @@ export async function buildRunTools(
         push(entry.name, t);
       }
     } catch (e: any) {
+      skipped.push(entry.name);
       failOrSkip(required, `MCP source "${entry.name}" unreachable at ${url} — start the server or fix the url\n  ${e?.message || e}`);
     }
   }
@@ -138,5 +153,5 @@ export async function buildRunTools(
   // NSE/BSE). Local tool, so it stays available even if an MCP source is down.
   push("local", stockTechnicalAnalysisTool());
 
-  return { tools, close: () => Promise.allSettled(clients.map((c) => c.close())).then(() => undefined) };
+  return { tools, skipped, close: () => Promise.allSettled(clients.map((c) => c.close())).then(() => undefined) };
 }

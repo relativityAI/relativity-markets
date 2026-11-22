@@ -20,7 +20,11 @@ describe("sqlite migrations", () => {
     expect(tableExists(d, "watchlists")).toBe(true);
     expect(tableExists(d, "alert_rules")).toBe(true);
     expect(tableExists(d, "alerts")).toBe(true);
+    expect(tableExists(d, "plugins")).toBe(true);
     expect(tableExists(d, "schedules")).toBe(false);
+    const runCols = (d.prepare("SELECT name FROM pragma_table_info('analysis_runs')").all() as { name: string }[]).map((c) => c.name);
+    expect(runCols).toContain("plugin_ids");
+    expect(runCols).toContain("mcp_enabled");
     expect(version(d)).toBe(SCHEMA_VERSION);
     expect(d.prepare("SELECT value FROM app_meta WHERE key='first_run_at'").get()).toBeTruthy();
   });
@@ -35,6 +39,8 @@ describe("sqlite migrations", () => {
       source TEXT NOT NULL, time TEXT NOT NULL, timezone TEXT NOT NULL, last_fired_date TEXT,
       created_at TEXT NOT NULL DEFAULT 'now'
     )`);
+    // v6 ALTERs analysis_runs — a real v3 database carries it (it is v1 schema).
+    d.exec("CREATE TABLE analysis_runs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL)");
     d.exec("PRAGMA user_version = 3");
     migrateSqlite(d);
     expect(version(d)).toBe(SCHEMA_VERSION);
@@ -67,6 +73,8 @@ describe("sqlite migrations", () => {
     );
     // v3 migration ALTERs user_settings — a real pre-versioning DB has it too.
     d.exec("CREATE TABLE user_settings (user_id TEXT PRIMARY KEY, llm_keys_encrypted TEXT)");
+    // v6 ALTERs analysis_runs — present in every real pre-versioning database.
+    d.exec("CREATE TABLE analysis_runs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL)");
     d.prepare("INSERT INTO schedules (id, user_id, symbol, share_name, source, time, timezone) VALUES ('s1','u1','AAPL','Apple','SEC','21:00','UTC')").run();
     migrateSqlite(d);
     expect(version(d)).toBe(SCHEMA_VERSION);
@@ -97,6 +105,8 @@ describe("sqlite migrations", () => {
     )`);
     d.exec("CREATE INDEX schedules_user_idx ON schedules (user_id)");
     d.exec(`CREATE TABLE user_settings (user_id TEXT PRIMARY KEY, llm_keys_encrypted TEXT, prefs TEXT NOT NULL DEFAULT '{}')`);
+    // v6 ALTERs analysis_runs — a real v4 database carries it (v1 schema).
+    d.exec("CREATE TABLE analysis_runs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL)");
     d.exec("PRAGMA user_version = 4");
     d.prepare(
       "INSERT INTO schedules (id, user_id, symbol, share_name, source, time, timezone, frequency, last_fired_date) VALUES ('r1','u1','RELIANCE','Reliance','NSE','09:00','Asia/Kolkata','daily','2026-11-18')",

@@ -29,7 +29,7 @@ import {
 import { fetchUserKeys, ensureUserSettings } from "./provision.js";
 import { getSourceStatuses } from "./datasources.js";
 import { getModels, getModelIds, getAvailableModelsForUser } from "./models.js";
-import { getAgentCategories, isValidAgentCategory } from "./categories.js";
+import { getAgentCategories } from "./categories.js";
 import { getSources, searchStocks } from "./discovery.js";
 import { tickerLogoUrl } from "./tickerLogos.js";
 import { getPriceHistory, toYahooSymbol } from "../harness/marketdata.js";
@@ -37,16 +37,13 @@ import { yf } from "./yf-client.js";
 import { getMetricsCatalog, getFlatCatalog, mergeCatalogFields, normalizeQuantRules, type MetricDef } from "./metrics.js";
 import { keyPool } from "./keypool.js";
 import { buildModel, type LlmKeys } from "../harness/model.js";
-import { draftParameters } from "../harness/drafts.js";
 import { classifyModelError } from "./modelcheck.js";
 import { processBuilderTurn, extractDocumentSignals, skillDraftTurn, type BuilderRequest, type SkillDraftRequest } from "../harness/drafts.js";
-import { getSchemaDescriptor } from "../harness/schema.js";
-import { getToolCatalog } from "../harness/tools/catalog.js";
+import { getToolCatalog, MCP_LABELS } from "../harness/tools/catalog.js";
 // Artifact files render workbooks per request — lazy so a bad workbook can't
 // take the whole server down.
 import type { WorkbookRecipe } from "../harness/artifacts/types.js";
 import { getPreset, listPresets } from "./presets.js";
-import { fixAgentMarkdown, parseAgentMd, serializeAgentMd, validateAgentV3 } from "../harness/agentmd.js";
 import {
   listAllSkillsForUser, saveCustomSkill, deleteCustomSkill, loadBuiltinSkills,
   normalizeSkillFiles, getBuiltinSkillFiles, getCustomSkillFiles, fixSkillMarkdown,
@@ -56,20 +53,26 @@ import {
 import { fetchSkillMarkdown, listRepoSkills, listSkillRepos, resolveSkillPath } from "../harness/skill-repos.js";
 import {
   // Harness module — one interface (see harness/index.ts).
-  listAgents as listHarnessAgents,
-  createAgent as createHarnessAgent,
-  updateAgent as updateHarnessAgent,
-  deleteAgent as deleteHarnessAgent,
-  getAgent as getHarnessAgent,
-  DEFAULT_AGENTS,
-  DEFAULT_HARNESS_AGENT,
-  harnessToView,
-  viewToHarnessPatch,
+  listAgents as listHarnessAgents, // legacy read only: resolves old UUID agent_name in PDF exports
   loadSystemPrompts,
+  loadRunFileConfig,
+  resolveRunConfig,
+  listPlugins,
+  getPlugin,
+  pluginSkills,
+  updatePluginMeta,
+  deletePlugin,
+  readPluginFiles,
+  writePluginFiles,
+  normalizePluginFiles,
+  importPluginFromUrl,
+  importPluginFromZip,
+  initPlugins,
+  type PluginRecord,
   type ReportDocument,
   type Verdict,
 } from "../harness/index.js";
-import { runHarnessSymbol, resumePausedRun, startAnalysisRun, startStaleRunSweeper } from "./runs.js";
+import { resumePausedRun, startAnalysisRun, startStaleRunSweeper } from "./runs.js";
 import { startAlertTicker, isValidTime, isValidTimeZone, isValidFrequency, todayInTz } from "./schedule.js";
 import { extractText } from "./upload.js";
 import multer from "multer";
@@ -82,6 +85,9 @@ import { bootTracing } from "../harness/index.js";
 
 // Langfuse tracing (callback handler) — no-op without env keys.
 await bootTracing();
+// Plugins: move legacy custom skills, seed metadata rows, backfill run/rule
+// plugin references. Idempotent; cheap after the first run.
+await initPlugins();
 
 const METHOD_COLORS: Record<string, string> = {
   GET: "1;32",
@@ -111,6 +117,13 @@ function statusColor(code: number): string {
 
 const app = express();
 app.set("trust proxy", 1);
+
+/** A GET the SPA owns: a browser navigation (no /api prefix) must fall
+ *  through to index.html — the client always calls these as /api/...,
+ *  marked by the strip middleware below. */
+const apiOnly = (req: express.Request, _res: express.Response, next: express.NextFunction): void => {
+  (req as unknown as { apiPath?: boolean }).apiPath ? next() : next("route");
+};
 // Clients call /api/... — in dev vite's proxy and in docker nginx stripped the
 // prefix. With UI+API in one process nothing else does, so strip it here.
 // (req as any).apiPath marks stripped requests so the SPA fallback can skip them.
@@ -310,155 +323,140 @@ app.delete("/user/settings/llm-key/:keyName", requireAuth, async (req, res) => {
   }
 });
 
-// ---- agents (authenticated, scoped to the signed-in user) ----
-/* ── Console agent CRUD — harness-native ───────────────────────────────────
- * Harness agents live in the same `agents` table, flagged by
- * configuration.harness_version. These endpoints project a harness definition
- * into the shape the console expects (persona.philosophy, skills[]) and route
- * writes back into `configuration`, so the console edits the new format with
- * no separate data path. Legacy v3 rows stay readable via the fallbacks. */
-
-app.get("/agents", requireAuth, async (req, res) => {
-  try {
-    const userId = (req as AuthedRequest).user.id;
-    let agents = await listHarnessAgents(userId);
-    if (agents.length === 0) {
-      await createHarnessAgent(userId, DEFAULT_HARNESS_AGENT);
-      agents = await listHarnessAgents(userId);
-    }
-    agents.sort((a, b) => +new Date(b.createdAt ?? 0) - +new Date(a.createdAt ?? 0));
-    res.json(agents.map(harnessToView));
-  } catch (e: any) {
-    res.status(503).json({ error: e.message });
-  }
-});
-
-app.get("/agents/search", requireAuth, async (req, res) => {
-  try {
-    const userId = (req as AuthedRequest).user.id;
-    const q = String(req.query.query || "").toLowerCase();
-    const agents = await listHarnessAgents(userId);
-    const out = agents
-      .filter((a) => !q || a.name.toLowerCase().includes(q) || a.soulPrompt.toLowerCase().includes(q))
-      .map(harnessToView);
-    res.json(out);
-  } catch (e: any) {
-    res.status(503).json({ error: e.message });
-  }
-});
-
-/**
- * Endpoint for the Raw Markdown editor: validate md without saving.
- * Returns { valid, parsed?, issues: [{line, message, severity}] }.
- */
-app.post("/agents/validate-md", requireAuth, async (req, res) => {
-  try {
-    const md = String(req.body?.md || "");
-    if (!md.trim()) return res.status(400).json({ valid: false, issues: [{ line: 1, message: "empty markdown", severity: "error" }] });
-    const { agent, issues } = parseAgentMd(md);
-    if (!agent) {
-      return res.json({
-        valid: false,
-        parsed: null,
-        issues,
-        fixed: issues.some((i) => i.severity === "error") ? fixAgentMarkdown(md) : null,
-      });
-    }
-    const check = validateAgentV3(agent);
-    const all = check.ok ? issues : check.issues.concat(issues);
-    const hasErrors = all.some((i) => i.severity === "error");
-    res.json({
-      valid: !hasErrors,
-      parsed: agent,
-      issues: all,
-      fixed: hasErrors ? fixAgentMarkdown(md) : null,
-    });
-  } catch (e: any) {
-    res.status(503).json({ error: e.message });
-  }
-});
-
-app.post("/agents", requireAuth, async (req, res) => {
-  try {
-    const userId = (req as AuthedRequest).user.id;
-    const patch = viewToHarnessPatch(req.body || {});
-    // One class/category per agent — required, and only configured ones.
-    if (!isValidAgentCategory(patch.category)) {
-      return res.status(400).json({ error: `category is required and must be one of: ${getAgentCategories().join(", ")}` });
-    }
-    const created = await createHarnessAgent(userId, {
-      name: patch.name || "Untitled Agent",
-      category: patch.category,
-      soulPrompt: patch.soulPrompt,
-      skillIds: patch.skillIds,
-      allowedTools: patch.allowedTools,
-      modelId: patch.modelId,
-      systemPrompt: patch.systemPrompt ?? null,
-    });
-    res.status(201).json(harnessToView(created));
-  } catch (e: any) {
-    res.status(503).json({ error: e.message });
-  }
-});
-
-/** File-defined default agents (harness/agents/defaults/*.md) — static
- *  content, no auth: the workspace lists them beside the user's own. */
-app.get("/agents/defaults", (_req, res) => {
-  const builtins = loadBuiltinSkills();
-  res.json(
-    DEFAULT_AGENTS.map((a) => {
-      const skillId = a.skillIds?.[0] ?? "";
-      return {
-        name: a.name,
-        skill_name: (skillId && builtins.find((s) => s.id === skillId)?.name) || skillId,
-        category: a.category || null,
-        model: a.modelId || null,
-        // The soul prompt body is the agent's own description — shown
-        // read-only in the workspace viewer popup.
-        description: (a.soulPrompt || "").trim() || null,
-      };
-    }),
-  );
-});
+// ---- categories (run form company-class list) ----
 
 /** Agent class/category list (services/config/categories.yaml) — static, no auth. */
-app.get("/agents/categories", (_req, res) => {
+app.get("/categories", (_req, res) => {
   res.json(getAgentCategories());
 });
 
-app.get("/agents/:id", requireAuth, async (req, res) => {
+// ---- plugins ----
+// A plugin = a directory on disk (skills/ + optional plugin.json); metadata
+// (sources, tags, version, disclaimer) lives in the `plugins` table.
+// Relativity plugins (origin=relativity) are read-only; custom ones edit.
+
+const pluginView = (p: PluginRecord) => {
+  const { dir: _dir, ...rest } = p;
+  return rest; // never leak the server-side directory path
+};
+
+/** List every plugin with its skill count (workspace directory). */
+app.get("/plugins", apiOnly, (_req, res) => {
   try {
-    const userId = (req as AuthedRequest).user.id;
-    const harness = await getHarnessAgent(userId, String(req.params.id));
-    if (harness) return res.json(harnessToView(harness));
-    return res.status(404).json({ error: "Agent not found" });
+    res.json(listPlugins().map(pluginView));
   } catch (e: any) {
     res.status(503).json({ error: e.message });
   }
 });
 
-app.put("/agents/:id", requireAuth, async (req, res) => {
+// Registered before GET /plugins/:id so "import" is never read as an id.
+app.post("/plugins/import-url", requireAuth, async (req, res) => {
   try {
-    const userId = (req as AuthedRequest).user.id;
+    const url = String(req.body?.url || "").trim();
+    if (!url) return res.status(400).json({ error: "url is required" });
+    const result = await importPluginFromUrl(url);
+    if (!result.plugin) return res.status(400).json({ error: result.error || "Import failed" });
+    res.status(201).json({ ...pluginView(result.plugin), warning: result.error });
+  } catch (e: any) {
+    res.status(503).json({ error: e.message });
+  }
+});
+
+const pluginZipUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 64 * 1024 * 1024 } });
+app.post("/plugins/import", requireAuth, pluginZipUpload.single("file"), async (req, res) => {
+  try {
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: "a plugin zip file is required" });
+    const result = await importPluginFromZip(file.buffer);
+    if (!result.plugin) return res.status(400).json({ error: result.error || "Import failed" });
+    res.status(201).json({ ...pluginView(result.plugin), warning: result.error });
+  } catch (e: any) {
+    res.status(503).json({ error: e.message });
+  }
+});
+
+/** One plugin with its full skill list (detail page). */
+app.get("/plugins/:id", apiOnly, requireAuth, async (req, res) => {
+  try {
+    const plugin = getPlugin(String(req.params.id));
+    if (!plugin) return res.status(404).json({ error: "Plugin not found" });
+    res.json({ ...pluginView(plugin), skills: pluginSkills(plugin.id) });
+  } catch (e: any) {
+    res.status(503).json({ error: e.message });
+  }
+});
+
+/** Editable metadata — custom plugins only (Relativity → 403). */
+app.put("/plugins/:id", requireAuth, async (req, res) => {
+  try {
     const id = String(req.params.id);
-    const patch = viewToHarnessPatch(req.body || {});
-    // Category optional on update (legacy agents have none) but never invalid.
-    if (patch.category !== undefined && !isValidAgentCategory(patch.category)) {
-      return res.status(400).json({ error: `category must be one of: ${getAgentCategories().join(", ")}` });
-    }
-    const updated = await updateHarnessAgent(userId, id, patch);
-    if (!updated) return res.status(404).json({ error: "Agent not found" });
-    return res.json(harnessToView(updated));
+    const plugin = getPlugin(id);
+    if (!plugin) return res.status(404).json({ error: "Plugin not found" });
+    if (plugin.origin === "relativity") return res.status(403).json({ error: "Relativity plugins are read-only" });
+    const updated = await updatePluginMeta(id, (req.body?.meta ?? req.body) ?? {});
+    if (!updated) return res.status(400).json({ error: "No valid metadata fields to update" });
+    res.json(pluginView(updated));
   } catch (e: any) {
     res.status(503).json({ error: e.message });
   }
 });
 
-app.delete("/agents/:id", requireAuth, async (req, res) => {
+app.delete("/plugins/:id", requireAuth, async (req, res) => {
   try {
-    const userId = (req as AuthedRequest).user.id;
-    await deleteHarnessAgent(userId, String(req.params.id));
+    const id = String(req.params.id);
+    const plugin = getPlugin(id);
+    if (!plugin) return res.status(404).json({ error: "Plugin not found" });
+    if (plugin.origin === "relativity") return res.status(403).json({ error: "Relativity plugins cannot be deleted" });
+    deletePlugin(id);
     res.json({ deleted: true });
+  } catch (e: any) {
+    res.status(503).json({ error: e.message });
+  }
+});
+
+/** The plugin's files as a flat path→content map (the navigator). */
+app.get("/plugins/:id/files", requireAuth, async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    if (!getPlugin(id)) return res.status(404).json({ error: "Plugin not found" });
+    res.json(readPluginFiles(id));
+  } catch (e: any) {
+    res.status(503).json({ error: e.message });
+  }
+});
+
+/** Write files into a custom plugin (merge; `deleted` removes paths). */
+app.put("/plugins/:id/files", requireAuth, async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const plugin = getPlugin(id);
+    if (!plugin) return res.status(404).json({ error: "Plugin not found" });
+    if (plugin.origin === "relativity") return res.status(403).json({ error: "Relativity plugins are read-only" });
+    const files = normalizePluginFiles(req.body?.files);
+    if (!files) {
+      return res.status(400).json({ error: "Invalid files: values must be strings, no absolute paths, no \"..\", folders end with \"/\" and hold no content." });
+    }
+    const deleted = Array.isArray(req.body?.deleted) ? req.body.deleted.map(String) : [];
+    if (!writePluginFiles(id, files, deleted)) return res.status(400).json({ error: "Could not write those files" });
+    res.json(readPluginFiles(id));
+  } catch (e: any) {
+    res.status(503).json({ error: e.message });
+  }
+});
+
+/** Configured MCP servers for the New Run toggles (name + web-search flag). */
+app.get("/mcp-sources", (_req, res) => {
+  try {
+    const { config: fileCfg } = loadRunFileConfig();
+    const resolved = resolveRunConfig(process.env, fileCfg);
+    res.json(
+      (resolved.tools?.mcp ?? []).map((entry) => ({
+        name: entry.name,
+        label: MCP_LABELS[entry.name] ?? entry.name,
+        webProvider: entry.webProvider ?? null,
+        required: entry.required ?? true,
+      })),
+    );
   } catch (e: any) {
     res.status(503).json({ error: e.message });
   }
@@ -666,21 +664,22 @@ app.post("/analysis", requireAuth, async (req, res) => {
   try {
     const body = req.body || {};
     const symbol = String(body.symbol || "").trim();
-    const agentId = String(body.agent_id || body.agentId || "").trim();
     const source = String(body.source || "NSE").toUpperCase();
     if (!symbol) return res.status(400).json({ error: "symbol is required" });
     if (source !== "NSE" && source !== "SEC") return res.status(400).json({ error: "source must be NSE or SEC" });
-    // Request contract: 1 prompt (optional) + ONE skill (optional id).
+    // Request contract: plugin(s) required — every skill inside them loads.
+    const pluginIds = Array.isArray(body.plugin_ids) ? body.plugin_ids.map(String).filter(Boolean) : [];
+    const skillIds = Array.isArray(body.skills) && body.skills.length ? body.skills.map(String) : undefined;
+    if (!pluginIds.length && !skillIds?.length) {
+      return res.status(400).json({ error: "plugin_ids is required — select at least one plugin" });
+    }
+    const mcpEnabled = Array.isArray(body.mcp_enabled) ? body.mcp_enabled.map(String).filter(Boolean) : undefined;
     const prompt = typeof body.prompt === "string" && body.prompt.trim() ? body.prompt.trim() : undefined;
-    const skillIds = Array.isArray(body.skills) && body.skills.length ? body.skills.map(String).slice(0, 1) : undefined;
 
     const userId = (req as AuthedRequest).user.id;
-    // agent_id is optional: no agent → the seeded default agent (the CLI
-    // resolves its persona the same way — config defaults, no --agent flag).
-    if (agentId && !(await getHarnessAgent(userId, agentId))) return res.status(404).json({ error: "Agent not found" });
 
     // Budget overrides (--max-steps / --max-tokens): only present keys are
-    // forwarded, so an absent flag keeps the agent's own budget.
+    // forwarded, so an absent flag keeps the default budget.
     const budgetOverride: { maxSteps?: number; maxTokens?: number } = {};
     for (const [key, raw] of [["maxSteps", body.max_steps], ["maxTokens", body.max_tokens]] as const) {
       if (raw == null || raw === "") continue;
@@ -694,11 +693,12 @@ app.post("/analysis", requireAuth, async (req, res) => {
       userId,
       symbol,
       source,
-      agentId: agentId || undefined,
+      pluginIds: pluginIds.length ? pluginIds : undefined,
+      skillIds,
+      mcpEnabled,
       model: body.model ? String(body.model) : undefined,
       systemPrompt: body.system_prompt ? String(body.system_prompt) : undefined,
       prompt,
-      skillIds,
       budget: budgetOverride,
     });
     res.json({ id: runId, status: "RUNNING" });
@@ -735,7 +735,6 @@ app.post("/alert-rules", requireAuth, async (req, res) => {
   try {
     const body = req.body || {};
     const symbol = String(body.symbol || "").trim();
-    const agentId = String(body.agent_id || body.agentId || "").trim();
     const source = String(body.source || "NSE").toUpperCase();
     const time = String(body.time || "").trim();
     const timezone = String(body.timezone || "").trim();
@@ -748,9 +747,12 @@ app.post("/alert-rules", requireAuth, async (req, res) => {
     const startDate = body.start_date ? String(body.start_date).trim() : "";
     if (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) return res.status(400).json({ error: "start_date must be YYYY-MM-DD" });
     const userId = (req as AuthedRequest).user.id;
-    if (agentId && !(await getHarnessAgent(userId, agentId))) return res.status(404).json({ error: "Agent not found" });
 
-    const skillIds = Array.isArray(body.skills) && body.skills.length ? body.skills.map(String).slice(0, 1) : null;
+    const pluginIds = Array.isArray(body.plugin_ids) ? body.plugin_ids.map(String).filter(Boolean) : [];
+    const skillIds = Array.isArray(body.skills) && body.skills.length ? body.skills.map(String) : null;
+    if (!pluginIds.length && !skillIds?.length) {
+      return res.status(400).json({ error: "plugin_ids is required — select at least one plugin" });
+    }
     const maxSteps = body.max_steps != null && body.max_steps !== "" && Number.isFinite(Number(body.max_steps)) ? Number(body.max_steps) : null;
     const maxTokens = body.max_tokens != null && body.max_tokens !== "" && Number.isFinite(Number(body.max_tokens)) ? Number(body.max_tokens) : null;
     const data = await insertAlertRuleRow({
@@ -758,7 +760,7 @@ app.post("/alert-rules", requireAuth, async (req, res) => {
       symbol,
       share_name: String(body.share_name || symbol),
       source,
-      agent_id: agentId || null,
+      plugin_ids: pluginIds.length ? pluginIds : null,
       model: body.model ? String(body.model) : null,
       system_prompt: body.system_prompt ? String(body.system_prompt) : null,
       skill_ids: skillIds,
@@ -898,7 +900,7 @@ app.delete("/watchlists/:id", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/analysis", requireAuth, async (req, res) => {
+app.get("/analysis", apiOnly, requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
     // Summary columns only — the full report/trace stay in the DB; the list
@@ -928,7 +930,7 @@ app.post("/analysis/:id/cancel", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/analysis/:id", requireAuth, async (req, res) => {
+app.get("/analysis/:id", apiOnly, requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
     const data = await getRunRow(userId, String(req.params.id));
@@ -1246,88 +1248,11 @@ app.get("/metrics/fields", requireAuth, (_req, res) => {
 
 // ── builder agent routes ──────────────────────────────────────────────
 
-app.get("/agent-schema", (_req, res) => {
-  res.json(getSchemaDescriptor());
-});
-
-// Read-only catalog of the tools an agent's skills can call, with their
+// Read-only catalog of the tools a run's skills can call, with their
 // descriptions — powers the console Tools reference and the skill editor's
 // data-source picker. Static; no auth-sensitive data.
 app.get("/tool-catalog", (_req, res) => {
   res.json(getToolCatalog());
-});
-
-// ---- harness agents (v2, skill-driven custom agents) ----
-app.get("/harness/agents", requireAuth, async (req, res) => {
-  try {
-    const userId = (req as AuthedRequest).user.id;
-    let agents = await listHarnessAgents(userId);
-    if (agents.length === 0) {
-      // Seed the built-in technical agent for anyone with none, so the new
-      // analysis dropdown is never empty (mirrors the legacy preset seeding).
-      // ponytail: no deletion tracking — delete every harness agent and this
-      // reseeds. Add a suppression flag if that turns out to matter.
-      await createHarnessAgent(userId, DEFAULT_HARNESS_AGENT);
-      agents = await listHarnessAgents(userId);
-    }
-    res.json(agents);
-  } catch (e: any) {
-    res.status(503).json({ error: e.message });
-  }
-});
-
-app.post("/harness/agents", requireAuth, async (req, res) => {
-  try {
-    const body = req.body || {};
-    if (!body.name) return res.status(400).json({ error: "name is required" });
-    res.status(201).json(await createHarnessAgent((req as AuthedRequest).user.id, body));
-  } catch (e: any) {
-    res.status(503).json({ error: e.message });
-  }
-});
-
-app.put("/harness/agents/:id", requireAuth, async (req, res) => {
-  try {
-    const updated = await updateHarnessAgent((req as AuthedRequest).user.id, String(req.params.id), req.body || {});
-    if (!updated) return res.status(404).json({ error: "Agent not found" });
-    res.json(updated);
-  } catch (e: any) {
-    res.status(503).json({ error: e.message });
-  }
-});
-
-app.delete("/harness/agents/:id", requireAuth, async (req, res) => {
-  try {
-    await deleteHarnessAgent((req as AuthedRequest).user.id, String(req.params.id));
-    res.json({ deleted: true });
-  } catch (e: any) {
-    res.status(503).json({ error: e.message });
-  }
-});
-
-// Run a custom harness agent against a symbol and return its ReportDocument.
-app.post("/harness/agents/:id/run", requireAuth, async (req, res) => {
-  try {
-    const userId = (req as AuthedRequest).user.id;
-    const body = req.body || {};
-    const symbol = String(body.symbol || "").trim();
-    if (!symbol) return res.status(400).json({ error: "symbol is required" });
-    const prompt = typeof body.prompt === "string" && body.prompt.trim() ? body.prompt.trim() : undefined;
-    const skillIds = Array.isArray(body.skills) && body.skills.length ? body.skills.map(String).slice(0, 1) : undefined;
-    const result = await runHarnessSymbol(
-      userId,
-      String(req.params.id),
-      symbol,
-      String(body.source || "NSE").toUpperCase(),
-      body.model ? String(body.model) : undefined,
-      body.system_prompt ? String(body.system_prompt) : undefined,
-      { promptOverride: prompt, skillIdsOverride: skillIds },
-    );
-    if (!result) return res.status(404).json({ error: "Agent not found" });
-    res.json({ id: result.runId, status: result.status, document: result.document, errors: result.errors });
-  } catch (e: any) {
-    res.status(503).json({ error: e.message });
-  }
 });
 
 // The system-prompt list (agent.yaml prompts.* — every named prompt, live without restart).
@@ -1480,26 +1405,6 @@ app.post("/builder/extract-signals", requireAuth, async (req, res) => {
 });
 
 // Draft qualitative parameters from an investor's persona text via their LLM key.
-app.post("/agents/draft-parameters", requireAuth, async (req, res) => {
-  try {
-    const persona = String(req.body?.persona || "").trim();
-    if (!persona) {
-      return res.status(400).json({
-        error: "Write your Philosophy & Mindset first — drafts are generated from it.",
-      });
-    }
-    const { llmKeys } = await fetchUserKeys((req as AuthedRequest).user.id);
-    // Quota-aware default: server farm if available, else the user's key, else curated list.
-    const modelId = keyPool.getDefaultModel(llmKeys);
-    const section = req.body?.section === "macro_evaluation" ? "macro_evaluation" : "asset_evaluation";
-    const count = Math.min(Math.max(Number(req.body?.count) || 5, 1), 8);
-    const parameters = await draftParameters(modelId, llmKeys as LlmKeys, persona, section, count);
-    res.json({ parameters });
-  } catch (e: any) {
-    res.status(502).json({ error: e?.message || "Draft generation failed" });
-  }
-});
-
 // Serve the built web app when present — the docker image ships UI+API as one
 // process on :8501. Bare dev (vite:5173 + `npm run dev`) is unaffected: this is
 // a no-op unless client/dist exists.

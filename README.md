@@ -72,10 +72,10 @@ Opens http://127.0.0.1:8501. Stop: `Ctrl+C`. Every run pulls the latest app imag
 
 Pages:
 
-- **`/new-analysis`** — start an analysis run
-- **`/analysis-list`** — saved runs
-- **`/agents`** — investor agents
-- **`/my-workspace`** — agent library, skills, builder, tools
+- **`/new-run`** — start an analysis run
+- **`/runs`** — saved runs
+- **`/plugins/:id`** — plugin detail (overview + files)
+- **`/my-workspace`** — plugins, active runs, alerts
 - **`/settings`** — API keys (encrypted)
 
 CLI (from `services/`, needs `npm run searxng` + `OPENCODE_API_KEY`):

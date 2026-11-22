@@ -2,8 +2,7 @@ import { Flex, Text, Spinner, Box } from "@/compat/ui";
 import { useEffect, useState, useCallback, useRef, type ReactNode, type CSSProperties } from "react";
 import { MdCheck, MdClose } from "react-icons/md";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { AgentService, AnalysisService, API_BASE, type AlertRuleRow } from "@/db";
-import { HarnessAgentService, type HarnessAgent } from "@/lib/harnessAgents";
+import { AnalysisService, API_BASE, PluginService, listCategories, type AlertRuleRow, type McpSource, type PluginSummary, type SkillSummary } from "@/db";
 import { formatSeconds } from "@/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { type RunStep, runProgressPct } from "./shared/RunStatus";
@@ -11,8 +10,9 @@ import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress
 import AgentActivity from "@/components/shared/AgentActivity";
 import { motion, AnimatePresence } from "motion/react";
 import { dur, ease } from "@/lib/motion";
-import { TickerLogo } from "@/lib/sourceLogos";
-import { AgentAvatar } from "@/components/shared/AgentCell";
+import { FlagLogo, TickerLogo } from "@/lib/sourceLogos";
+import PluginAvatar from "@/components/shared/PluginAvatar";
+import PluginPicker from "@/components/plugins/PluginPicker";
 import { ModelLogo } from "@/lib/modelLogos";
 import { Play, CalendarDays, Check, Clock } from "lucide-react";
 import { toaster } from "@/compat/ui";
@@ -25,6 +25,7 @@ import {
 } from "./shared/AnalysisControls";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { DateTimePicker, type DateTimeValue, toDateKey } from "./shared/DateTimePicker";
 
@@ -214,7 +215,7 @@ function RunFooter({
                 {status === "COMPLETED" && (
                     <>
                         {correlationId && (
-                            <Link to={`/analysis-result/${correlationId}`} style={{ textDecoration: "none" }}>
+                            <Link to={`/runs/${correlationId}`} style={{ textDecoration: "none" }}>
                                 <PrimaryButton style={action}>View report</PrimaryButton>
                             </Link>
                         )}
@@ -224,7 +225,7 @@ function RunFooter({
                 {status === "ERROR" && (
                     <>
                         {correlationId && (
-                            <Link to={`/analysis-result/${correlationId}`} style={{ textDecoration: "none" }}>
+                            <Link to={`/runs/${correlationId}`} style={{ textDecoration: "none" }}>
                                 <SecondaryButton style={ghost}>View report</SecondaryButton>
                             </Link>
                         )}
@@ -326,42 +327,87 @@ export default function Analysis() {
     const [modelError, setModelError] = useState<string | null>(null);
     const [maxSteps, setMaxSteps] = useState("");
     const [maxTokens, setMaxTokens] = useState("");
-    // Configured harness agents (the Agents page). No default: the run stays
-    // blocked until an agent is explicitly picked.
-    const [agents, setAgents] = useState<HarnessAgent[]>([]);
-    const [agentId, setAgentId] = useState("");
-    // A failed fetch must not look like "no agents yet".
-    const [agentsError, setAgentsError] = useState(false);
+    // Available plugins — the run selects one or more; ALL of their skills load.
+    const [plugins, setPlugins] = useState<PluginSummary[]>([]);
+    const [pluginIds, setPluginIds] = useState<string[]>([]);
+    // A failed fetch must not look like "no plugins yet".
+    const [pluginsError, setPluginsError] = useState(false);
     // …and neither must the empty state, before the first fetch lands.
-    const [agentsLoading, setAgentsLoading] = useState(true);
-    // Category narrows the agent list; empty = all agents.
+    const [pluginsLoading, setPluginsLoading] = useState(true);
+    // Skills inside the selected plugins — all on by default; unchecking
+    // narrows the run to a chosen subset (one or many).
+    const [pluginSkills, setPluginSkills] = useState<Record<string, SkillSummary[]>>({});
+    const [deselectedSkills, setDeselectedSkills] = useState<Set<string>>(new Set());
+    // Per-run MCP toggles; default = every configured server enabled.
+    const [mcpSources, setMcpSources] = useState<McpSource[]>([]);
+    const [mcpEnabled, setMcpEnabled] = useState<string[]>([]);
+    // Category narrows the company picker (equity is the runnable class).
     const [categories, setCategories] = useState<string[]>([]);
     const [category, setCategory] = useState("");
 
-    const loadAgents = useCallback(() => {
-        setAgentsError(false);
-        setAgentsLoading(true);
-        HarnessAgentService.list()
-            .then((list) => setAgents(list))
+    const loadPlugins = useCallback(() => {
+        setPluginsError(false);
+        setPluginsLoading(true);
+        PluginService.list()
+            .then((list) => setPlugins(list))
             .catch(() => {
-                setAgents([]);
-                setAgentsError(true);
+                setPlugins([]);
+                setPluginsError(true);
             })
-            .finally(() => setAgentsLoading(false));
+            .finally(() => setPluginsLoading(false));
     }, []);
 
     useEffect(() => {
-        loadAgents();
-        AgentService.listCategories()
+        loadPlugins();
+        listCategories()
             .then((data) => { if (Array.isArray(data)) setCategories(data); })
             .catch(() => {});
-    }, [loadAgents]);
+        PluginService.mcpSources()
+            .then((list) => {
+                setMcpSources(list);
+                setMcpEnabled(list.map((m) => m.name));
+            })
+            .catch(() => {});
+    }, [loadPlugins]);
+
+    const togglePlugin = useCallback(
+        (id: string) => setPluginIds((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id])),
+        [],
+    );
+
+    // Load each selected plugin's skill list (cached per id; failures cached
+    // as empty so a down API can't retry-loop the effect).
+    useEffect(() => {
+        for (const id of pluginIds) {
+            if (pluginSkills[id]) continue;
+            PluginService.read(id)
+                .then((d) => setPluginSkills((prev) => ({ ...prev, [id]: d.skills ?? [] })))
+                .catch(() => setPluginSkills((prev) => ({ ...prev, [id]: [] })));
+        }
+    }, [pluginIds, pluginSkills]);
+
+    const toggleSkill = useCallback((id: string) => {
+        setDeselectedSkills((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }, []);
+    const selectAllSkills = useCallback(() => setDeselectedSkills(new Set()), []);
+    const toggleMcp = useCallback(
+        (name: string) => setMcpEnabled((prev) => (prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name])),
+        [],
+    );
+
+    // ?plugin=id preselects — the directory card's “+” shortcut.
+    useEffect(() => {
+        const preset = searchParams.get("plugin");
+        if (preset) setPluginIds((prev) => (prev.includes(preset) ? prev : [...prev, preset]));
+    }, [searchParams]);
 
     const handleCategoryChange = (next: string) => {
         setCategory(next);
-        // The picked agent must belong to the chosen category — else clear it.
-        const picked = agents.find((a) => a.id === agentId);
-        if (!next || (picked && (picked.category ?? "") !== next)) setAgentId("");
         // Only equity supports a company pick; leaving equity drops it.
         if (next !== "equity") {
             setPickedStock(null);
@@ -440,7 +486,7 @@ export default function Analysis() {
 
     const runAnalysis = async () => {
         if (starting || status !== "EMPTY") return;
-        if (!config.share) return;
+        if (!config.share || !pluginIds.length) return;
 
         setStarting(true);
         setRunError(null);
@@ -453,13 +499,15 @@ export default function Analysis() {
                 symbol: config.share,
                 model: model.trim(),
                 source: config.source,
+                plugin_ids: pluginIds,
+                skills: selectedSkillIds,
+                mcp_enabled: mcpEnabled,
                 max_steps: maxSteps ? Number(maxSteps) : undefined,
                 max_tokens: maxTokens ? Number(maxTokens) : undefined,
-                agent_id: selectedAgent?.id,
             });
 
             if (result?.id) {
-                navigate(`/analysis-result/${result.id}`);
+                navigate(`/runs/${result.id}`);
             } else {
                 failRun(result?.errors?.join("; ") || "The run could not be started — no run id was returned.");
             }
@@ -476,7 +524,7 @@ export default function Analysis() {
     };
 
     const createAlert = async () => {
-        if (starting || status !== "EMPTY" || !config.share || !selectedAgent) return;
+        if (starting || status !== "EMPTY" || !config.share || !pluginIds.length) return;
 
         setStarting(true);
         setRunError(null);
@@ -487,7 +535,8 @@ export default function Analysis() {
                 share_name: config.shareName || config.share,
                 source: config.source,
                 model: model.trim(),
-                agent_id: selectedAgent.id,
+                plugin_ids: pluginIds,
+                skills: selectedSkillIds,
                 max_steps: maxSteps ? Number(maxSteps) : undefined,
                 max_tokens: maxTokens ? Number(maxTokens) : undefined,
                 frequency,
@@ -580,7 +629,7 @@ export default function Analysis() {
                                 setAnalysisDuration(d >= 60 ? `${Math.floor(d / 60)}m ${Math.floor(d % 60)}s` : `${d.toFixed(1)}s`);
                             }
                             clearInterval(interval);
-                            if (isComplete) navigate(`/analysis-result/${correlationId}`);
+                            if (isComplete) navigate(`/runs/${correlationId}`);
                             return;
                         }
                     }
@@ -603,9 +652,23 @@ export default function Analysis() {
 
     const isConfigComplete = config.share !== "" && !!model.trim();
     // Equity only, for now: industry/commodities runs say "not supported yet".
-    const visibleAgents = category ? agents.filter((a) => (a.category ?? "") === category) : agents;
-    const selectedAgent = agents.find((a) => a.id === agentId) ?? null;
-    const canRunAnalysis = category === "equity" && isConfigComplete && !!selectedAgent && (runMode === "once" || (!!scheduleAt.date && !!scheduleAt.time));
+    const webSearchEnabled = mcpSources.some((m) => m.webProvider && mcpEnabled.includes(m.name));
+    const skillsByPlugin = pluginIds.flatMap((id) => {
+        const plugin = plugins.find((x) => x.id === id);
+        return plugin ? [{ plugin, skills: pluginSkills[id] ?? [] }] : [];
+    });
+    const availableSkillIds = skillsByPlugin.flatMap((g) => g.skills.map((s) => s.id));
+    const selectedSkillIds = availableSkillIds.filter((id) => !deselectedSkills.has(id));
+    const skillsLoading = pluginIds.some((id) => pluginSkills[id] === undefined);
+    // A plugin with no skills can't gate on a choice that doesn't exist —
+    // the run just goes bare (routes still mount for the plugin).
+    const canRunAnalysis =
+        category === "equity" &&
+        isConfigComplete &&
+        pluginIds.length > 0 &&
+        !skillsLoading &&
+        (selectedSkillIds.length > 0 || availableSkillIds.length === 0) &&
+        (runMode === "once" || (!!scheduleAt.date && !!scheduleAt.time));
     // One line naming what's still missing while the run button is disabled.
     const runHint = canRunAnalysis
         ? ""
@@ -617,7 +680,13 @@ export default function Analysis() {
                     ? "Pick a company first"
                     : !model.trim()
                         ? "Choose a model"
-                        : "Choose an agent";
+                        : !pluginIds.length
+                            ? "Choose a plugin"
+                            : skillsLoading
+                                ? "Loading skills…"
+                                : availableSkillIds.length === 0
+                                    ? ""
+                                    : "Choose at least one skill";
     const statusLine = config.share
         ? `${config.share} · ${config.source} · ${runMode === "scheduled" ? `${FREQ_LABEL[frequency]} from ${scheduleAt.date} at ${scheduleAt.time}` : "Single run"}`
         : "";
@@ -772,7 +841,12 @@ export default function Analysis() {
                                                     <DropdownItem
                                                         key={`${market}-${sym}`}
                                                         label={nm}
-                                                        sub={`${india ? "🇮🇳" : "🇺🇸"} ${market}:${sym}`}
+                                                        sub={
+                                                            <span className="flex items-center gap-1">
+                                                                <FlagLogo source={stock.source} size={11} />
+                                                                {market}:{sym}
+                                                            </span>
+                                                        }
                                                         selected={sym === config.share && market === config.source}
                                                         logo={<TickerLogo symbol={sym} size={18} />}
                                                         onClick={() => {
@@ -795,7 +869,7 @@ export default function Analysis() {
                                                 </div>
                                                 <div className="mt-1 flex items-center gap-1.5 font-app-body text-[12px] font-normal text-[var(--ink-tertiary)]">
                                                     <span className="text-[14px] leading-none">
-                                                        {config.source === "NSE" ? "🇮🇳" : "🇺🇸"}
+                                                        <FlagLogo source={config.source} size={14} />
                                                     </span>
                                                     <span className="truncate">
                                                         {config.source}
@@ -819,92 +893,110 @@ export default function Analysis() {
                         )}
 </FormSection>
 
-                    <FormSection title="Agent settings">
-                        {/* Agent — the configured harness agents (Agents page) */}
-                        {agentsLoading ? (
-                            <FormRow label="Agent">
-                                <Text fontSize="12px" fontWeight={400} fontFamily="var(--font-body)" color="var(--ink-tertiary)">
-                                    Loading agents…
-                                </Text>
-                            </FormRow>
-                        ) : agentsError ? (
-                            <FormRow label="Agent">
-                                <div className="flex flex-col items-start gap-2">
-                                    <Text fontSize="12px" fontWeight={400} fontFamily="var(--font-body)" color="var(--signal-negative)">
-                                        Couldn&apos;t load agents.
-                                    </Text>
-                                    <Button size="sm" variant="outline" className="px-4" onClick={loadAgents}>
-                                        Retry
-                                    </Button>
-                                </div>
-                            </FormRow>
-                        ) : agents.length === 0 ? (
-                            <FormRow label="Agent">
-                                <div className="flex flex-col items-center py-6 text-center">
-                                    <p className="font-app-body text-lg font-light text-console-ink">No agents yet.</p>
-                                    <p className="mx-auto mt-1.5 max-w-[46ch] font-app-body text-sm text-console-ink-2">
-                                        An agent is a name, a category and a skill. Create one to start.
-                                    </p>
-                                    <Button asChild className="mt-4" data-testid="create-agent-empty">
-                                        <Link to="/my-workspace?new=1">Create an agent</Link>
-                                    </Button>
-                                </div>
-                            </FormRow>
-                        ) : (
-                            <FormRow label="Agent">
-                                <div className="flex flex-col gap-2.5">
-                                    <MenuDropdown
-                                        value={null}
-                                        placeholder={selectedAgent ? "Change agent…" : "Select agent…"}
-                                        disabled={!category}
-                                    >
-                                    {(close) => (
-                                        <Box>
-                                            {visibleAgents.length === 0 && (
-                                                <Text px={3} py={2.5} fontSize="12px" fontFamily="var(--font-body)" color="var(--ink-tertiary)">
-                                                    {category ? `No ${category} agents yet.` : "No agents yet."}
-                                                </Text>
+                    <FormSection title="Plugins">
+                        {/* Plugins — Claude/ChatGPT-style picker: toggle one or
+                            more; every selected plugin's skills load. */}
+                        <FormRow label="Plugins">
+                            <PluginPicker
+                                plugins={plugins}
+                                selected={pluginIds}
+                                onToggle={togglePlugin}
+                                loading={pluginsLoading}
+                                error={pluginsError}
+                                onRetry={loadPlugins}
+                            />
+                            {/* The chosen plugins' skills — every skill on by
+                                default; uncheck to narrow the run. */}
+                            {pluginIds.length > 0 && (
+                                <div
+                                    className="mt-1 overflow-hidden rounded-[8px] border border-[color:var(--hairline)]"
+                                    data-testid="skill-picker"
+                                >
+                                    <div className="flex items-center justify-between border-b border-[color:var(--hairline)] px-3 py-2">
+                                        <span className="font-app-body text-[11px] font-semibold tracking-[0.14em] text-console-ink-3 uppercase">
+                                            Skills
+                                        </span>
+                                        <span className="flex items-center gap-3">
+                                            <span className="font-app-body text-[11px] text-console-ink-3" role="status">
+                                                {skillsLoading
+                                                    ? "Loading…"
+                                                    : `${selectedSkillIds.length} of ${availableSkillIds.length} selected`}
+                                            </span>
+                                            {!skillsLoading && availableSkillIds.length > 1 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={selectAllSkills}
+                                                    className="font-app-body text-[11px] text-[var(--gh-blue)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/40"
+                                                >
+                                                    All
+                                                </button>
                                             )}
-                                            {visibleAgents.map((a) => (
-                                                <DropdownItem
-                                                    key={a.id}
-                                                    label={a.name}
-                                                    sub={a.skillIds.join(", ") || undefined}
-                                                    selected={a.id === selectedAgent?.id}
-                                                    logo={<AgentAvatar seed={a.id} size={18}/>}
-                                                    onClick={() => {
-                                                        setAgentId(a.id);
-                                                        close();
-                                                    }}
-                                                />
-                                            ))}
-                                        </Box>
-                                    )}
-                                    </MenuDropdown>
-                                    {/* The picked agent — plain line under the picker. */}
-                                    {selectedAgent && (
-                                        <div className="flex items-center gap-3 px-1 py-1">
-                                            <AgentAvatar seed={selectedAgent.id} size={40} />
-                                            <div className="min-w-0">
-                                                <div className="truncate font-app-body text-[15px] font-light leading-tight text-[var(--ink-primary)]">
-                                                    {selectedAgent.name}
-                                                </div>
-                                                <div className="mt-1 truncate font-app-body text-[12px] font-normal text-[var(--ink-tertiary)]">
-                                                    {selectedAgent.category || "No category"}
-                                                    {" · "}
-                                                    {selectedAgent.skillIds.length} skill{selectedAgent.skillIds.length === 1 ? "" : "s"}
-                                                    {" · "}
-                                                    {selectedAgent.modelId || "server default model"}
-                                                    {" · "}
-                                                    max {selectedAgent.budget.maxSteps} steps
-                                                </div>
+                                        </span>
+                                    </div>
+                                    {skillsLoading ? (
+                                        <p className="px-3 py-3 font-app-body text-[12px] text-console-ink-3">
+                                            Loading skills…
+                                        </p>
+                                    ) : (
+                                        skillsByPlugin.map(({ plugin, skills }) => (
+                                            <div
+                                                key={plugin.id}
+                                                className="divide-y divide-[color:var(--hairline)]"
+                                            >
+                                                {skillsByPlugin.length > 1 && (
+                                                    <div className="flex items-center gap-2 bg-[color-mix(in_srgb,var(--ink-primary)_4%,transparent)] px-3 py-1.5">
+                                                        <PluginAvatar plugin={plugin.id} size={16} />
+                                                        <span className="truncate font-app-body text-[12px] text-console-ink-2">
+                                                            {plugin.display_name}
+                                                        </span>
+                                                    </div>
+                                                )}
+                                                {skills.length === 0 && (
+                                                    <p className="px-3 py-2 font-app-body text-[12px] text-console-ink-3">
+                                                        No skills in this plugin.
+                                                    </p>
+                                                )}
+                                                {skills.map((sk) => {
+                                                    const on = !deselectedSkills.has(sk.id);
+                                                    return (
+                                                        <label
+                                                            key={sk.id}
+                                                            className="flex w-full cursor-pointer items-center gap-3 px-3 py-2 transition-colors hover:bg-[color-mix(in_srgb,var(--ink-primary)_4%,transparent)] focus-within:bg-[color-mix(in_srgb,var(--ink-primary)_4%,transparent)]"
+                                                        >
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={on}
+                                                                onChange={() => toggleSkill(sk.id)}
+                                                                aria-label={`Skill ${sk.id}`}
+                                                                data-testid={`skill-check-${sk.id}`}
+                                                                className="size-4 shrink-0 accent-[var(--signal-positive)]"
+                                                            />
+                                                            <span className="w-[34%] max-w-[200px] shrink-0 truncate font-app-mono text-[12.5px] text-console-ink">
+                                                                {sk.id}
+                                                            </span>
+                                                            <span className="min-w-0 flex-1 truncate font-app-body text-[12.5px] font-light text-console-ink-3">
+                                                                {sk.description}
+                                                            </span>
+                                                        </label>
+                                                    );
+                                                })}
                                             </div>
-                                        </div>
+                                        ))
+                                    )}
+                                    {!skillsLoading && availableSkillIds.length > 0 && selectedSkillIds.length === 0 && (
+                                        <p
+                                            role="alert"
+                                            className="border-t border-[color:var(--hairline)] px-3 py-2 font-app-body text-[12px] text-[var(--signal-negative)]"
+                                        >
+                                            Pick at least one skill for this run.
+                                        </p>
                                     )}
                                 </div>
-                            </FormRow>
-                        )}
+                            )}
+                        </FormRow>
+                    </FormSection>
 
+                    <FormSection title="Model & limits">
                         <FormRow label="Model">
                             <div className="flex items-center gap-3">
                             <div className="min-w-0 flex-1" data-testid="run-model">
@@ -969,6 +1061,62 @@ export default function Analysis() {
                         </FormRow>
                     </FormSection>
 
+                    <FormSection title="MCP tools">
+                        <FormRow label="Servers">
+                            <div className="flex flex-col gap-2.5">
+                                {mcpSources.length === 0 && (
+                                    <Text fontSize="12px" fontWeight={400} fontFamily="var(--font-body)" color="var(--ink-tertiary)">
+                                        No MCP servers configured.
+                                    </Text>
+                                )}
+                                {mcpSources.map((m) => {
+                                    const on = mcpEnabled.includes(m.name);
+                                    return (
+                                        <div key={m.name} className="flex items-center gap-3">
+                                            <button
+                                                type="button"
+                                                role="switch"
+                                                aria-checked={on}
+                                                aria-label={m.label}
+                                                data-testid={`mcp-${m.name}`}
+                                                onClick={() => toggleMcp(m.name)}
+                                                className={cn(
+                                                    "relative h-5 w-9 shrink-0 rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/50",
+                                                    on
+                                                        ? "border-[var(--signal-positive)] bg-[var(--signal-positive)]"
+                                                        : "border-[color:var(--hairline)] bg-transparent",
+                                                )}
+                                            >
+                                                <span
+                                                    className={cn(
+                                                        "absolute top-0.5 size-3.5 rounded-full bg-white transition-all",
+                                                        on ? "left-[18px]" : "left-0.5 bg-console-ink-3",
+                                                    )}
+                                                />
+                                            </button>
+                                            <span className="min-w-0">
+                                                <span className="font-app-body text-[13px] text-console-ink">{m.label}</span>
+                                                {m.webProvider && (
+                                                    <span className="ml-2 rounded-[4px] border border-[color:var(--hairline)] px-1.5 py-0.5 font-app-mono text-[10px] tracking-wide text-console-ink-3 uppercase">
+                                                        web search
+                                                    </span>
+                                                )}
+                                            </span>
+                                        </div>
+                                    );
+                                })}
+                                {!webSearchEnabled && mcpSources.length > 0 && (
+                                    <Alert variant="destructive" className="mt-1">
+                                        <AlertTitle>No web search enabled</AlertTitle>
+                                        <AlertDescription>
+                                            Neither web-search MCP (SearXNG or Tavily) is selected — the run can start, but it won&apos;t be able to search the web.
+                                        </AlertDescription>
+                                    </Alert>
+                                )}
+                            </div>
+                        </FormRow>
+                    </FormSection>
+
                     <RunFooter
                         status={status}
                         resuming={!!id && status === "EMPTY"}
@@ -978,7 +1126,7 @@ export default function Analysis() {
                         scheduled={runMode === "scheduled"}
                         onRun={runMode === "scheduled" ? createAlert : runAnalysis}
                         onReset={() => {
-                            navigate("/analysis");
+                            navigate("/new-run");
                             setStatus("EMPTY");
                             setRunError(null);
                             setSteps([]);

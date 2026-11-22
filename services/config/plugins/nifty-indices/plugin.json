@@ -1,0 +1,15 @@
+{
+  "name": "nifty-indices",
+  "displayName": "Nifty Indices",
+  "description": "Index-level analysis for NSE benchmarks — breadth, rotation and index constituents.",
+  "version": "v2.1.0",
+  "versionDate": "Nov 12",
+  "listed": "November 2026",
+  "license": "MIT",
+  "verified": true,
+  "safety": "Relativity scans every plugin for safety and security, but can't guarantee this plugin will work as intended or won't change.",
+  "sources": [
+    { "label": "github.com/relativityAI/relativity-markets", "url": "https://github.com/relativityAI/relativity-markets" }
+  ],
+  "categories": ["Indices", "India", "Department: Investing"]
+}

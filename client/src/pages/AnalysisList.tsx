@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { AnalysisService, AgentService, SkillService } from "@/db";
-import { agentDisplayName } from "@/utils";
-import AgentAvatar from "@/components/shared/AgentAvatar";
+import { AnalysisService, PluginService, SkillService, runPluginLabel, type PluginSummary } from "@/db";
+import PluginAvatar from "@/components/shared/PluginAvatar";
 import RunsInsights from "@/components/RunsInsights";
-import { HarnessAgentService } from "@/lib/harnessAgents";
+import { listSystemPrompts } from "@/lib/systemPrompts";
 import { ModelLogo } from "@/lib/modelLogos";
 import { TickerLogo } from "@/lib/sourceLogos";
 import { motion, AnimatePresence } from "motion/react";
@@ -36,6 +35,7 @@ interface AnalysisItem {
     symbol?: string;
     agent_name?: string;
     agent?: string;
+    plugin_ids?: string[] | null;
 }
 
 function formatDuration(sec: number): string {
@@ -146,7 +146,7 @@ function StatusGlyph({ status }: { status: string }) {
 const GROUP_VIEWS: { key: GroupMode; label: string }[] = [
     { key: "individual", label: "All runs" },
     { key: "date", label: "Date" },
-    { key: "agent", label: "Agent" },
+    { key: "agent", label: "Plugin" },
     { key: "stock", label: "Stock" },
     { key: "model", label: "Model" },
 ];
@@ -310,7 +310,7 @@ export default function AnalysisList() {
     // the scheduled delete must still fire after navigating away (the setTimeout
     // outlives the component; setState after unmount is a harmless no-op).
     const pendingDeletes = useRef(new Map<string, ReturnType<typeof setTimeout>>());
-    const [agents, setAgents] = useState<any[]>([]);
+    const [plugins, setPlugins] = useState<PluginSummary[]>([]);
     const [viewMode, setViewMode] = useState<GroupMode>("individual");
     const [query, setQuery] = useState(symbolQuery);
 
@@ -330,10 +330,8 @@ export default function AnalysisList() {
     };
 
     useEffect(() => {
-        AgentService.listAgents()
-            .then((data) => {
-                if (Array.isArray(data)) setAgents(data);
-            })
+        PluginService.list()
+            .then(setPlugins)
             .catch(() => {});
     }, []);
 
@@ -348,13 +346,15 @@ export default function AnalysisList() {
     }, []);
     const skillName = (id: string | undefined) => skills.find((s) => s.id === id)?.name || id || "—";
 
-    const agentName = (raw: string | undefined) => agentDisplayName(raw, agents) || "—";
+    // Legacy rows keep their stored label (agent era); plugin runs resolve
+    // their plugin_ids to display names below.
+    const agentName = (raw: string | undefined) => raw || "";
 
     // Named system prompts (agent.yaml prompts.*) the runs read — the New Run
     // page's "Agent" pick, persisted on the row as system_prompt.
     const [systemPrompts, setSystemPrompts] = useState<{ id: string; name: string; default?: boolean }[]>([]);
     useEffect(() => {
-        HarnessAgentService.listSystemPrompts()
+        listSystemPrompts()
             .then((data) => {
                 if (Array.isArray(data)) setSystemPrompts(data);
             })
@@ -452,8 +452,9 @@ export default function AnalysisList() {
         });
     };
 
-    /** A run's agent as the meta line shows it — also the filter's value. */
-    const runAgentLabel = (a: any) => agentName(a.agent_name || a.agent) || promptName(a.system_prompt);
+    /** A run's plugin as the meta line shows it — also the filter's value. */
+    const runAgentLabel = (a: any) =>
+        runPluginLabel(a.plugin_ids, plugins, null) || agentName(a.agent_name || a.agent) || promptName(a.system_prompt);
 
     const sorted = useMemo(() => {
         // Free-text search across share, agent, skill and model.
@@ -465,7 +466,7 @@ export default function AnalysisList() {
                       a.share_name,
                       a.model,
                       promptName(a.system_prompt),
-                      agentName(a.agent_name || a.agent),
+                      runAgentLabel(a),
                       skillName(a.skill_id),
                       ...(Array.isArray(a.skill_ids) ? a.skill_ids.map(skillName) : []),
                   ].some((v) => String(v ?? "").toLowerCase().includes(q))
@@ -493,8 +494,8 @@ export default function AnalysisList() {
                     bVal = b.total_score ?? -1;
                     break;
                 case "agent":
-                    aVal = promptName(a.system_prompt).toLowerCase();
-                    bVal = promptName(b.system_prompt).toLowerCase();
+                    aVal = runAgentLabel(a).toLowerCase();
+                    bVal = runAgentLabel(b).toLowerCase();
                     break;
                 case "model":
                     aVal = (a.model || "").toLowerCase();
@@ -515,12 +516,12 @@ export default function AnalysisList() {
             if (aVal > bVal) return s.dir === "asc" ? 1 : -1;
             return 0;
         });
-    }, [uniqueAnalysis, sort, query, agentFilter, verdictFilter, statusFilter, agents, skills, systemPrompts]);
+    }, [uniqueAnalysis, sort, query, agentFilter, verdictFilter, statusFilter, plugins, skills, systemPrompts]);
 
     // Header filter-menu options, derived from the data actually loaded.
     const agentOptions = useMemo(
         () => uniq(uniqueAnalysis.map(runAgentLabel).filter((l) => l && l !== "—")),
-        [uniqueAnalysis, agents, systemPrompts]
+        [uniqueAnalysis, plugins, systemPrompts]
     );
     const verdictOptions = useMemo(
         () => uniq(uniqueAnalysis.map((a) => runVerdict(a)?.label ?? null)),
@@ -541,7 +542,7 @@ export default function AnalysisList() {
                 case "date":
                     return a.created_at ? new Date(a.created_at).toISOString().slice(0, 10) : "undated";
                 case "agent":
-                    return promptName(a.system_prompt);
+                    return runAgentLabel(a);
                 case "stock":
                     return String(a.share_name || a.symbol || "Unknown stock");
                 case "model":
@@ -560,7 +561,7 @@ export default function AnalysisList() {
             viewMode === "date" ? y.localeCompare(x) : x.localeCompare(y)
         );
         return keys.map((k) => ({ key: k, items: map.get(k)! }));
-    }, [viewMode, sorted, systemPrompts]);
+    }, [viewMode, sorted, systemPrompts, plugins]);
 
     // Collapsed groups render only their header row.
     const visibleSections = useMemo(
@@ -574,7 +575,7 @@ export default function AnalysisList() {
     const colSpan = 5;
 
     const onRowClick = (id: string) => {
-        navigate("/analysis-result/" + id);
+        navigate("/runs/" + id);
     };
 
     return (
@@ -591,14 +592,14 @@ export default function AnalysisList() {
                             Runs
                         </h1>
                         <p className="mt-0.5 text-[15px] font-light text-[var(--gh-muted)]">
-                            Showing runs from all agents
+                            Every run, powered by the plugins it used
                         </p>
                     </div>
                     <motion.div whileHover={{ y: -1 }} whileTap={{ scale: 0.97 }} className="shrink-0">
                         <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => navigate("/new-analysis")}
+                            onClick={() => navigate("/new-run")}
                             className="px-4"
                         >
                             <Plus /> New Run
@@ -629,7 +630,7 @@ export default function AnalysisList() {
                 <div className="grid grid-cols-1 gap-x-16 gap-y-8 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
                     {/* Left — insights in one thin-bordered box */}
                     <div className="min-w-0 rounded-xl border-[0.5px] border-[color:var(--hairline)] p-5">
-                        <RunsInsights runs={uniqueAnalysis} labelAgent={runAgentLabel} />
+                        <RunsInsights runs={uniqueAnalysis} labelPlugin={runAgentLabel} />
                     </div>
 
                     {/* Main table */}
@@ -675,7 +676,7 @@ export default function AnalysisList() {
                                                     </div>
                                                     <div className="flex flex-wrap items-center gap-1.5">
                                                         <MenuButton
-                                                            label="Agent"
+                                                            label="Plugin"
                                                             value={agentFilter}
                                                             items={agentOptions.map((a) => ({ value: a, label: a }))}
                                                             onChange={setAgentFilter}
@@ -751,7 +752,7 @@ export default function AnalysisList() {
                                                             key={`h-${sec.key}`}
                                                             avatar={
                                                                 viewMode === "agent" ? (
-                                                                    <AgentAvatar agent={sec.key} size={24} />
+                                                                    <PluginAvatar plugin={sec.key} size={24} />
                                                                 ) : viewMode === "model" ? (
                                                                     <ModelLogo model={sec.key} size={14} />
 ) : viewMode === "stock" ? (
@@ -795,12 +796,8 @@ export default function AnalysisList() {
                                                                 +new Date(item.created_at)) /
                                                             1000
                                                           : null;
-                                                // The system prompt the run read
-                                                // (New Run's "Agent" pick,
-                                                // persisted as system_prompt).
-                                                const promptLabel = promptName(item.system_prompt);
-                                                // The run's agent when it resolved; the prompt name otherwise.
-                                                const agentLabel = agentName(item.agent_name || item.agent) || promptLabel;
+                                                // The run's plugin (legacy rows: stored label, then prompt name).
+                                                const agentLabel = runAgentLabel(item);
 
                                                 return (
                                                     <motion.tr
@@ -821,7 +818,7 @@ export default function AnalysisList() {
                                                                 e.altKey
                                                             ) {
                                                                 window.open(
-                                                                    "/analysis-result/" + id,
+                                                                    "/runs/" + id,
                                                                     "_blank"
                                                                 );
                                                                 return;
@@ -841,7 +838,7 @@ export default function AnalysisList() {
                                                             <div className="flex min-w-0 items-center gap-2">
                                                                 <TickerLogo symbol={item.symbol} size={18} />
                                                                 <Link
-                                                                    to={`/analysis-result/${id}`}
+                                                                    to={`/runs/${id}`}
                                                                     className="truncate text-[16px] font-light text-[var(--gh-fg)]"
                                                                 >
                                                                     {item.share_name || item.symbol || "—"}
@@ -856,10 +853,10 @@ export default function AnalysisList() {
                                                                             <span aria-hidden="true">·</span>
                                                                         </>
                                                                     )}
-                                                                <AgentAvatar
-                                                                    agent={
+                                                                <PluginAvatar
+                                                                    plugin={
+                                                                        item.plugin_ids?.[0] ||
                                                                         item.agent_name ||
-                                                                        item.agent ||
                                                                         item.system_prompt
                                                                     }
                                                                     size={16}
@@ -968,7 +965,7 @@ export default function AnalysisList() {
                                                                         className="text-[14px]"
                                                                         onSelect={() =>
                                                                             window.open(
-                                                                                "/analysis-result/" + id,
+                                                                                "/runs/" + id,
                                                                                 "_blank"
                                                                             )
                                                                         }
@@ -979,7 +976,7 @@ export default function AnalysisList() {
                                                                         className="text-[14px]"
                                                                         onSelect={() =>
                                                                             navigator.clipboard?.writeText(
-                                                                                `${window.location.origin}/analysis-result/${id}`
+                                                                                `${window.location.origin}/runs/${id}`
                                                                             )
                                                                         }
                                                                     >
@@ -1019,9 +1016,9 @@ export default function AnalysisList() {
                 message={
                     deleteTarget
                         ? `"${deleteTarget.share_name || deleteTarget.symbol || "this run"}"${
-deleteTarget.agent_name || deleteTarget.agent
-                              ? ` by ${agentName(deleteTarget.agent_name || deleteTarget.agent)}`
-                              : ""
+                              runAgentLabel(deleteTarget) && runAgentLabel(deleteTarget) !== "—"
+                                  ? ` · ${runAgentLabel(deleteTarget)}`
+                                  : ""
                           } will be permanently removed and cannot be undone.`
                         : ""
                 }

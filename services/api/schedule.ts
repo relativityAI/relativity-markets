@@ -216,10 +216,10 @@ async function tick(): Promise<void> {
             userId: s.user_id,
             symbol: s.symbol,
             source: s.source,
-            agentId: s.agent_id || undefined,
+            pluginIds: s.plugin_ids?.length ? s.plugin_ids : undefined,
+            skillIds: s.skill_ids?.length ? s.skill_ids : undefined,
             model: s.model || undefined,
             systemPrompt: s.system_prompt || undefined,
-            skillIds: s.skill_ids?.length ? s.skill_ids : undefined,
             budget: {
               ...(s.max_steps ? { maxSteps: s.max_steps } : {}),
               ...(s.max_tokens ? { maxTokens: s.max_tokens } : {}),

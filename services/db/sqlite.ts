@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS alert_rules (
   model          TEXT,
   system_prompt  TEXT,
   skill_ids      TEXT,
+  plugin_ids     TEXT,
   max_steps      INTEGER,
   max_tokens     INTEGER,
   time           TEXT NOT NULL,
@@ -128,6 +129,8 @@ CREATE TABLE IF NOT EXISTS analysis_runs (
   run_mode              TEXT DEFAULT 'agent',
   skill_id              TEXT,
   skill_ids             TEXT,
+  plugin_ids            TEXT,
+  mcp_enabled           TEXT,
   system_prompt         TEXT,
   report                TEXT,
   trace                 TEXT DEFAULT '[]',
@@ -185,6 +188,25 @@ CREATE TABLE IF NOT EXISTS builder_sessions (
   sources               TEXT,
   created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+CREATE TABLE IF NOT EXISTS plugins (
+  id             TEXT PRIMARY KEY,
+  name           TEXT NOT NULL,
+  display_name   TEXT NOT NULL,
+  description    TEXT NOT NULL DEFAULT '',
+  origin         TEXT NOT NULL DEFAULT 'custom',
+  verified       INTEGER NOT NULL DEFAULT 0,
+  listed_date    TEXT,
+  version        TEXT,
+  version_date   TEXT,
+  license        TEXT,
+  safety         TEXT,
+  sources        TEXT NOT NULL DEFAULT '[]',
+  categories     TEXT NOT NULL DEFAULT '[]',
+  developer_url  TEXT,
+  install_source TEXT,
+  created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
 `;
 
 function ensureSchema(d: DatabaseSync): void {
@@ -206,7 +228,7 @@ function ensureSchema(d: DatabaseSync): void {
  * When the schema changes: append a {version, sql} entry (never edit old
  * ones), bump SCHEMA_VERSION to match, and cover it in db/tests.
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 // v2: scheduled-run frequencies (daily/weekly/biweekly/monthly) — frequency
 // plus the first-run date the recurrence is anchored to. Existing rows keep
@@ -255,6 +277,35 @@ CREATE TABLE IF NOT EXISTS alerts (
   read_at     TEXT
 );
 CREATE INDEX IF NOT EXISTS alerts_user_idx ON alerts (user_id, created_at);`,
+  },
+  // v6: plugins replace the agents+skills concept. A plugin is a directory on
+  // disk; this row holds the metadata the UI edits (sources, tags, version…).
+  // Runs and alert rules gain the plugin reference (plugin_ids JSON) and runs
+  // remember which MCP servers were enabled (mcp_enabled JSON).
+  {
+    version: 6,
+    sql: `CREATE TABLE IF NOT EXISTS plugins (
+  id             TEXT PRIMARY KEY,
+  name           TEXT NOT NULL,
+  display_name   TEXT NOT NULL,
+  description    TEXT NOT NULL DEFAULT '',
+  origin         TEXT NOT NULL DEFAULT 'custom',
+  verified       INTEGER NOT NULL DEFAULT 0,
+  listed_date    TEXT,
+  version        TEXT,
+  version_date   TEXT,
+  license        TEXT,
+  safety         TEXT,
+  sources        TEXT NOT NULL DEFAULT '[]',
+  categories     TEXT NOT NULL DEFAULT '[]',
+  developer_url  TEXT,
+  install_source TEXT,
+  created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+ALTER TABLE analysis_runs ADD COLUMN plugin_ids TEXT;
+ALTER TABLE analysis_runs ADD COLUMN mcp_enabled TEXT;
+ALTER TABLE alert_rules ADD COLUMN plugin_ids TEXT;`,
   },
 ];
 

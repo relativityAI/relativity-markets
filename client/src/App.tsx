@@ -13,7 +13,7 @@ import { useAuth } from "./auth/useAuth";
 import Login from "./pages/Login";
 import AuthCallback from "./pages/AuthCallback";
 import HomePage from "./pages/HomePage";
-import AgentsList from "./pages/AgentsList";
+import Watchlists from "./pages/Watchlists";
 import AnalysisList from "./pages/AnalysisList";
 import Analysis from "./pages/Analysis";
 import AnalysisResult from "./pages/AnalysisResult";
@@ -30,9 +30,10 @@ import RunWatcher from "./components/RunWatcher";
 import { MotionConfig, AnimatePresence, motion } from "motion/react";
 import { page, dur, ease } from "@/lib/motion";
 import { Toaster } from "./components/ui/toaster";
-// My Workspace — the single agents+skills page (shell + inline agent redirects).
+// My Workspace — plugins + active runs (shell + the plugin directory).
 import ConsoleLayout from "./pages/console/ConsoleLayout";
-import AgentLibrary from "./pages/console/AgentLibrary";
+import PluginLibrary from "./pages/console/PluginLibrary";
+import PluginDetail from "./pages/plugins/PluginDetail";
 
 // App is usable without a sign-in — no auth gate, no redirect to /login.
 function Protected({ children }: { children: ReactNode }) {
@@ -69,12 +70,15 @@ function UnknownRoute() {
   return user ? <Navigate to="/" replace /> : <NotFound />;
 }
 
-/** Old agent editor URLs open the workspace — deep-linked to the agent (or
- *  with the inline create form open for "new"). */
+/** Old agent editor URLs open the workspace (agents are gone → plugins). */
 function AgentRedirect() {
+  return <Navigate to="/my-workspace" replace />;
+}
+
+/** Old run-result URLs → /runs/:id (same result page). */
+function LegacyRunResultRedirect() {
   const { id } = useParams();
-  if (!id || id === "new") return <Navigate to="/my-workspace?new=1" replace />;
-  return <Navigate to={`/my-workspace?agent=${encodeURIComponent(id)}`} replace />;
+  return <Navigate to={`/runs/${encodeURIComponent(id ?? "")}`} replace />;
 }
 
 /** Old /console URLs → /my-workspace, keeping the sub-path and query. */
@@ -108,12 +112,11 @@ function AppRoutes() {
       // One name per concept (same words as the nav): New Run / Runs / Workspace.
       if (path === "/login") return "Sign in";
       if (path === "/") return "Relativity";
-      if (path === "/new-analysis" || path === "/analysis") return "New Run";
-      if (path === "/agents") return "Agents";
-      if (path === "/agent/builder" || path.startsWith("/agent/builder/")) return "Agent Detail";
-      if (path.startsWith("/agent/")) return "Agent Detail";
-      if (path === "/analysis-list") return "Runs";
-      if (path.startsWith("/analysis-result/")) return "Run Result";
+      if (path === "/new-run" || path === "/new-analysis" || path === "/analysis") return "New Run";
+      if (path === "/runs" || path === "/analysis-list") return "Runs";
+      if (path === "/watchlists") return "Watchlist";
+      if (path.startsWith("/runs/") || path.startsWith("/analysis-result/")) return "Run Result";
+      if (path.startsWith("/plugins/")) return "Plugin";
       if (path.startsWith("/stock/")) return "Stock";
       if (path === "/settings") return "Settings";
       if (path === "/my-workspace" || path.startsWith("/my-workspace/")) return "Workspace";
@@ -125,14 +128,18 @@ function AppRoutes() {
   }, [locationPath, user]);
 
   const isLogin = locationPath === "/login";
-  const isConsole = locationPath.startsWith("/my-workspace");
+  const isConsole = locationPath.startsWith("/my-workspace") || locationPath.startsWith("/plugins");
   const isPublicPage = PUBLIC_PATHS.includes(locationPath);
-  // The new analysis page owns the whole viewport — no footer under it.
+  // The new run page owns the whole viewport — no footer under it.
   // "/" is always footerless: HomePage renders its own.
+  // /runs (+ result) keep the old /analysis* footerless behavior.
   const isAnalysisPage =
     locationPath.startsWith("/analysis") ||
-    locationPath === "/new-analysis" ||
+    locationPath === "/new-run" ||
+    locationPath === "/runs" ||
+    locationPath.startsWith("/runs/") ||
     locationPath === "/" ||
+    locationPath === "/watchlists" ||
     locationPath.startsWith("/agent/");
   const showNav = !isLogin;
   // Remove footer from analysis result page (and analysis-related pages as requested)
@@ -163,25 +170,21 @@ function AppRoutes() {
                     <Route path="/login" element={<Login />} />
                     <Route path="/auth/callback" element={<AuthCallback />} />
                     <Route path="/" element={<Home />} />
-                    <Route
-                      path="/agent"
-                      element={<Navigate to="/agents" replace />}
-                    />
-                    {/* Old builder / wizard URLs now open the console editor. */}
+                    <Route path="/watchlists" element={<Watchlists />} />
+                    {/* Legacy URLs → their new homes. */}
+                    <Route path="/new-analysis" element={<Navigate to="/new-run" replace />} />
+                    <Route path="/analysis-list" element={<Navigate to="/runs" replace />} />
+                    <Route path="/analysis-result/:id" element={<LegacyRunResultRedirect />} />
+                    <Route path="/analysis-result" element={<Navigate to="/runs" replace />} />
+                    <Route path="/agents" element={<Navigate to="/my-workspace" replace />} />
+                    <Route path="/agent" element={<Navigate to="/my-workspace" replace />} />
                     <Route path="/agent/builder" element={<AgentRedirect />} />
                     <Route path="/agent/builder/:id" element={<AgentRedirect />} />
                     <Route path="/agent/new" element={<AgentRedirect />} />
                     <Route path="/agent/:id" element={<AgentRedirect />} />
+                    <Route path="/plugins" element={<Navigate to="/my-workspace" replace />} />
                     <Route
-                      path="/agents"
-                      element={
-                        <Protected>
-                          <AgentsList />
-                        </Protected>
-                      }
-                    />
-                    <Route
-                      path="/analysis-list"
+                      path="/runs"
                       element={
                         <Protected>
                           <AnalysisList />
@@ -189,7 +192,15 @@ function AppRoutes() {
                       }
                     />
                     <Route
-                      path="/new-analysis"
+                      path="/runs/:id"
+                      element={
+                        <Protected>
+                          <AnalysisResult />
+                        </Protected>
+                      }
+                    />
+                    <Route
+                      path="/new-run"
                       element={
                         <Protected>
                           <Analysis />
@@ -212,18 +223,6 @@ function AppRoutes() {
                         </Protected>
                       }
                     />
-                    <Route
-                      path="/analysis-result/:id"
-                      element={
-                        <Protected>
-                          <AnalysisResult />
-                        </Protected>
-                      }
-                    />
-                    <Route
-                      path="/analysis-result"
-                      element={<Navigate to="/analysis-list" replace />}
-                    />
                     <Route path="/stock/:symbol" element={<Stock />} />
                     <Route
                       path="/settings"
@@ -237,7 +236,7 @@ function AppRoutes() {
                     <Route path="/terms" element={<Terms />} />
                     <Route path="/thank-you" element={<ThankYou />} />
                     <Route path="/index.html" element={<Navigate to="/" replace />} />
-                    {/* My Workspace — shadcn/Tailwind shell. */}
+                    {/* My Workspace — plugins + active runs. */}
                     <Route
                       path="/my-workspace"
                       element={
@@ -246,11 +245,17 @@ function AppRoutes() {
                         </Protected>
                       }
                     >
-                      <Route index element={<AgentLibrary />} />
-                      {/* No agent editor page — the workspace list edits inline. */}
-                      <Route path="agent/new" element={<AgentRedirect />} />
-                      <Route path="agent/:id" element={<AgentRedirect />} />
+                      <Route index element={<PluginLibrary />} />
                     </Route>
+                    {/* Plugin detail — its own page (Overview / Files). */}
+                    <Route
+                      path="/plugins/:id"
+                      element={
+                        <Protected>
+                          <PluginDetail />
+                        </Protected>
+                      }
+                    />
                     {/* Old /console URLs keep working. */}
                     <Route path="/console" element={<Navigate to="/my-workspace" replace />} />
                     <Route path="/console/*" element={<ConsoleLegacyRedirect />} />

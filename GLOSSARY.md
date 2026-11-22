@@ -45,13 +45,17 @@ codebase-design skill, not from here.
 
 ### Persistence
 
-- **Agent definitions** — markdown files at `data/agents/<userId>/<id>.md`
-  (agentmd v3 grammar; runtime fields ride the frontmatter). Defaults seed new
-  users from `harness/agent-defaults/*.md`.
-- **Skills** — directories: built-ins at `config/skills/`, customs at
-  `data/skills/<userId>/<skillId>/` (SKILL.md + references). The same paths
-  are the agent's skill sources (`/skills/builtin/`, `/skills/custom/`
-  backend routes) — one format, one store, zero databases.
+- **Plugins** — one directory per plugin (`harness/plugins.ts`):
+  `config/plugins/<id>/` (Relativity built-ins, read-only) and
+  `data/plugins/<id>/` (custom/imported). Layout is the Claude plugin shape —
+  `plugin.json` + `skills/<skill>/SKILL.md`. Editable metadata (sources, tags,
+  version, disclaimer) lives in the `plugins` SQLite row; files stay on disk
+  and mount as the run's deepagents skill sources. Every skill in the app
+  lives inside a plugin; custom saves land in the implicit `my-skills` plugin.
+- **Runs** — `analysis_runs.plugin_ids` records the plugins a run used
+  (`skill_ids` mirrors their skills); `mcp_enabled` records the per-run MCP
+  allowlist. Rows predating plugins are backfilled from their skill ids once
+  at boot (`initPlugins`).
 - **Checkpointer** — SQLite (`data/checkpoints.db`) via LangGraph: runs are
   resumable, interrupts survive a restart. Legacy runs live in
   `analysis_runs` (SQLite) as before.

@@ -25,6 +25,7 @@ export interface AlertRuleRow {
     share_name: string;
     source: string;
     agent_id: string | null;
+    plugin_ids: string[] | null;
     model: string | null;
     system_prompt: string | null;
     skill_ids: string[] | null;
@@ -98,77 +99,117 @@ export const WatchlistService = {
 };
 
 /**
- * Global Agent Service - delegates to the backend API
+ * Plugin service — plugins are directories on disk; these endpoints carry
+ * their metadata (editable for custom plugins) and their files.
  */
-export const AgentService = {
-    async listAgents() {
-        const response = await axios.get(`${API_BASE}/agents`);
+export interface PluginSource {
+    label: string;
+    url: string;
+}
+
+export interface PluginSummary {
+    id: string;
+    name: string;
+    display_name: string;
+    description: string;
+    origin: "relativity" | "custom";
+    verified: 0 | 1;
+    listed_date: string | null;
+    version: string | null;
+    version_date: string | null;
+    license: string | null;
+    safety: string | null;
+    sources: PluginSource[];
+    categories: string[];
+    developer_url: string | null;
+    install_source: string | null;
+    skill_count: number;
+}
+
+export interface PluginDetail extends PluginSummary {
+    skills: SkillSummary[];
+}
+
+/** One configured MCP server for the New Run toggles. */
+export interface McpSource {
+    name: string;
+    label: string;
+    webProvider: "searxng" | "tavily" | null;
+    required: boolean;
+}
+
+export const PluginService = {
+    async list(): Promise<PluginSummary[]> {
+        const response = await axios.get(`${API_BASE}/plugins`);
         return response.data;
     },
 
-    /** File-defined default agents (services/harness/agents/defaults/*.md). */
-    async listDefaultAgents() {
-        const response = await axios.get(`${API_BASE}/agents/defaults`);
+    async read(id: string): Promise<PluginDetail> {
+        const response = await axios.get(`${API_BASE}/plugins/${encodeURIComponent(id)}`);
         return response.data;
     },
 
-    /** Agent class/category list (services/config/categories.yaml). */
-    async listCategories() {
-        const response = await axios.get(`${API_BASE}/agents/categories`);
+    /** Metadata edit — the API rejects Relativity (read-only) plugins. */
+    async updateMeta(id: string, meta: Partial<Omit<PluginSummary, "id" | "origin" | "skill_count">>): Promise<PluginSummary> {
+        const response = await axios.put(`${API_BASE}/plugins/${encodeURIComponent(id)}`, { meta });
         return response.data;
     },
 
-    async readAgent(id: string) {
-        const response = await axios.get(`${API_BASE}/agents/${encodeURIComponent(id)}`);
+    async remove(id: string): Promise<{ deleted: boolean }> {
+        const response = await axios.delete(`${API_BASE}/plugins/${encodeURIComponent(id)}`);
         return response.data;
     },
 
-    async createAgent(payload?: string | Record<string, unknown>) {
-        const body = typeof payload === "string" ? { name: payload } : payload || {};
-        const response = await axios.post(`${API_BASE}/agents`, body);
+    async readFiles(id: string): Promise<{ files: Record<string, string>; skipped: string[] }> {
+        const response = await axios.get(`${API_BASE}/plugins/${encodeURIComponent(id)}/files`);
         return response.data;
     },
 
-    async updateAgent(agent: any) {
-        const id = agent?._id ?? agent?.id;
-        if (!id) throw new Error("Agent id required for update");
-        const { id: _id, _id: _id2, ...payload } = agent;
-        const response = await axios.put(`${API_BASE}/agents/${encodeURIComponent(id)}`, payload);
+    /** Merge-write files into a custom plugin; `deleted` removes paths. */
+    async writeFiles(id: string, files: Record<string, string>, deleted: string[] = []): Promise<{ files: Record<string, string>; skipped: string[] }> {
+        const response = await axios.put(`${API_BASE}/plugins/${encodeURIComponent(id)}/files`, { files, deleted });
         return response.data;
     },
 
-    async deleteAgent(id: string) {
-        const response = await axios.delete(`${API_BASE}/agents/${encodeURIComponent(id)}`);
+    async importUrl(url: string): Promise<PluginSummary & { warning?: string }> {
+        const response = await axios.post(`${API_BASE}/plugins/import-url`, { url });
         return response.data;
     },
 
-    async searchAgents(query: string) {
-        const response = await axios.get(`${API_BASE}/agents/search`, {
-            params: { query }
+    async importZip(file: File): Promise<PluginSummary & { warning?: string }> {
+        const form = new FormData();
+        form.append("file", file);
+        const response = await axios.post(`${API_BASE}/plugins/import`, form, {
+            headers: { "Content-Type": "multipart/form-data" },
         });
         return response.data;
     },
 
-    async validateMd(md: string): Promise<{ valid: boolean; parsed?: any; issues: { line: number; message: string; severity: "warn" | "error" }[]; fixed?: string | null }> {
-        const response = await axios.post(`${API_BASE}/agents/validate-md`, { md });
-        return response.data;
-    },
-
-    async getRubric(id: string) {
-        const response = await axios.get(`${API_BASE}/agents/${encodeURIComponent(id)}/rubric`);
-        return response.data;
-    },
-
-    async compileRubric(id: string) {
-        const response = await axios.post(`${API_BASE}/agents/${encodeURIComponent(id)}/rubric/compile`);
-        return response.data;
-    },
-
-    async approveRubric(id: string, rubricId: string) {
-        const response = await axios.post(`${API_BASE}/agents/${encodeURIComponent(id)}/rubric/${encodeURIComponent(rubricId)}/approve`);
+    async mcpSources(): Promise<McpSource[]> {
+        const response = await axios.get(`${API_BASE}/mcp-sources`);
         return response.data;
     },
 };
+
+/** Company class list for the run form (services/config/categories.yaml). */
+export async function listCategories(): Promise<string[]> {
+    const response = await axios.get(`${API_BASE}/categories`);
+    return response.data;
+}
+
+/** Display label for a run's plugin selection — legacy rows fall back to the
+ *  stored agent_name (shown with a "Legacy" chip on the client). */
+export function runPluginLabel(
+    pluginIds: string[] | null | undefined,
+    plugins: PluginSummary[],
+    fallback?: string | null,
+): string {
+    if (pluginIds?.length) {
+        const names = pluginIds.map((id) => plugins.find((p) => p.id === id)?.display_name ?? id);
+        return names.join(", ");
+    }
+    return fallback || "";
+}
 
 export const AnalysisService = {
     async listAnalyses() {
@@ -199,14 +240,18 @@ export const AnalysisService = {
         return response.data;
     },
 
-    /** Run a harness agent against a symbol; resolves with the typed ReportDocument. */
+    /** Start a plugin-powered analysis run; resolves with the run id. */
     async runAnalysis(config: {
         symbol: string;
-        agent_id?: string;
+        /** Selected plugins — at least one (server enforces). */
+        plugin_ids: string[];
+        /** Chosen skills (subset of the selected plugins' skills); absent = all. */
+        skills?: string[];
         model?: string;
         source?: string;
         share_name?: string;
-        skills?: string[];
+        /** Per-run MCP allowlist (server names); omitted = all configured. */
+        mcp_enabled?: string[];
         max_steps?: number;
         max_tokens?: number;
         /** Named system prompt (agent.yaml prompts.<name>); omitted = default. */
@@ -227,7 +272,9 @@ export const AnalysisService = {
         symbol: string;
         share_name?: string;
         source?: string;
-        agent_id?: string;
+        plugin_ids: string[];
+        /** Chosen skills (subset of the selected plugins' skills); absent = all. */
+        skills?: string[];
         model?: string;
         system_prompt?: string;
         max_steps?: number;

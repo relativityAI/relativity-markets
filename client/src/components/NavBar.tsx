@@ -7,8 +7,8 @@ import { LOCAL_AUTH } from "@/auth/AuthContext";
 import { useColorMode } from "@/components/ui/color-mode";
 import UserAvatar from "@/components/shared/UserAvatar";
 import AlertBell from "@/components/AlertBell";
-import { AgentService, AnalysisService, API_BASE, SettingsService, SkillService, type SkillSummary } from "@/db";
-import { TickerLogo } from "@/lib/sourceLogos";
+import { AnalysisService, API_BASE, PluginService, SettingsService, type PluginSummary } from "@/db";
+import { FlagLogo, TickerLogo } from "@/lib/sourceLogos";
 import { cn } from "@/lib/utils";
 import searxngLogo from "@/assets/searxng.svg";
 import yahooLogo from "@/assets/yahoo_finance.png";
@@ -74,14 +74,13 @@ export default function NavBar() {
     };
   }, [user]);
 
-  // Global search — stocks, agents, skills and runs in one listbox; ⌘K/Ctrl-K
+  // Global search — stocks, plugins and runs in one listbox; ⌘K/Ctrl-K
   // focuses it from anywhere. 300ms debounce: stocks stream from
-  // /stocks/search and agents from /agents/search, while skills and runs are
-  // small stable lists — fetched once per session, filtered locally.
+  // /stocks/search, while plugins and runs are small stable lists — fetched
+  // once per session, filtered locally.
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<StockRow[]>([]);
-  const [agentHits, setAgentHits] = useState<{ id: string; name: string }[]>([]);
-  const [skillHits, setSkillHits] = useState<{ id: string; name: string }[]>([]);
+  const [pluginHits, setPluginHits] = useState<{ id: string; name: string }[]>([]);
   const [runHits, setRunHits] = useState<{ id: string; label: string; symbol?: string; status?: string }[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -90,7 +89,7 @@ export default function NavBar() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const catalogRef = useRef<{ skills?: SkillSummary[]; runs?: any[] }>({});
+  const catalogRef = useRef<{ plugins?: PluginSummary[]; runs?: any[] }>({});
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -100,8 +99,7 @@ export default function NavBar() {
     debounceRef.current = setTimeout(async () => {
       if (!q) {
         setResults([]);
-        setAgentHits([]);
-        setSkillHits([]);
+        setPluginHits([]);
         setRunHits([]);
         setSearching(false);
         return;
@@ -122,14 +120,18 @@ export default function NavBar() {
           if (live() && (!(err instanceof DOMException) || err.name !== "AbortError")) setResults([]);
         });
 
-      const agents = AgentService.searchAgents(q)
-        .then((d) => { if (live()) setAgentHits((Array.isArray(d) ? d : []).slice(0, 5)); })
-        .catch(() => {});
-
-      const skills = (catalogRef.current.skills
-          ? Promise.resolve(catalogRef.current.skills)
-          : SkillService.listSkills().then((s) => { catalogRef.current.skills = s; return s; }))
-        .then((s) => { if (live()) setSkillHits(s.filter((x) => match(`${x.name} ${x.description || ""}`)).slice(0, 5)); })
+      const plugins = (catalogRef.current.plugins
+          ? Promise.resolve(catalogRef.current.plugins)
+          : PluginService.list().then((p) => { catalogRef.current.plugins = p; return p; }))
+        .then((p) => {
+          if (live())
+            setPluginHits(
+              p
+                .filter((x) => match(`${x.display_name} ${x.description || ""}`))
+                .slice(0, 5)
+                .map((x) => ({ id: x.id, name: x.display_name })),
+            );
+        })
         .catch(() => {});
 
       const runs = (catalogRef.current.runs
@@ -154,7 +156,7 @@ export default function NavBar() {
         })
         .catch(() => {});
 
-      await Promise.allSettled([stocks, agents, skills, runs]);
+      await Promise.allSettled([stocks, plugins, runs]);
       if (live()) setSearching(false);
     }, 300);
     return () => clearTimeout(debounceRef.current);
@@ -190,7 +192,7 @@ export default function NavBar() {
   };
 
   // Hits are flattened in render order — that index is the keyboard cursor.
-  type Hit = { label: string; sub?: string; logo?: ReactNode; select: () => void };
+  type Hit = { label: string; sub?: ReactNode; logo?: ReactNode; select: () => void };
   const rawGroups: { label: string; hits: Hit[] }[] = [
     {
       label: "Stocks",
@@ -199,26 +201,23 @@ export default function NavBar() {
         const india = String(stock.source || "").toLowerCase() === "nse";
         return {
           label: stock.name || stock.NAME || sym,
-          sub: `${india ? "🇮🇳" : "🇺🇸"} ${india ? "NSE" : "SEC"}:${sym}`,
+          sub: (
+            <span className="flex items-center gap-1">
+              <FlagLogo source={stock.source} size={11} />
+              {india ? "NSE" : "SEC"}:{sym}
+            </span>
+          ),
           logo: <TickerLogo symbol={sym} size={18} />,
           select: () => pickStock(stock),
         };
       }),
     },
     {
-      label: "Agents",
-      hits: agentHits.map((a) => ({
+      label: "Plugins",
+      hits: pluginHits.map((a) => ({
         label: a.name,
-        sub: "Agent",
-        select: () => navigate(`/my-workspace?agent=${encodeURIComponent(a.id)}`),
-      })),
-    },
-    {
-      label: "Skills",
-      hits: skillHits.map((s) => ({
-        label: s.name,
-        sub: "Skill",
-        select: () => navigate(`/my-workspace?skill=${encodeURIComponent(s.id)}`),
+        sub: "Plugin",
+        select: () => navigate(`/plugins/${encodeURIComponent(a.id)}`),
       })),
     },
     {
@@ -227,7 +226,7 @@ export default function NavBar() {
         label: r.label,
         sub: r.status ? `Run · ${r.status}` : "Run",
         logo: r.symbol ? <TickerLogo symbol={r.symbol} size={18} /> : undefined,
-        select: () => navigate(`/analysis-result/${encodeURIComponent(r.id)}`),
+        select: () => navigate(`/runs/${encodeURIComponent(r.id)}`),
       })),
     },
   ].filter((g) => g.hits.length > 0);
@@ -357,7 +356,6 @@ export default function NavBar() {
             </div>
           </div>
         </div>
-
 
         {/* Global search — stocks/agents/skills/runs; centered between the
             mast and the account controls on md+, own row on phones. */}
@@ -538,8 +536,9 @@ export default function NavBar() {
             {[
               // One name per concept, used by nav, h1, tab title and footer.
               { to: "/my-workspace", label: "Workspace", end: true, dot: "#7A8B9E" },
-              { to: "/new-analysis", label: "New Run", end: false, dot: "#7A9E7E" },
-              { to: "/analysis-list", label: "Runs", end: false, dot: "#C49A6C" },
+              { to: "/new-run", label: "New Run", end: false, dot: "#7A9E7E" },
+              { to: "/runs", label: "Runs", end: false, dot: "#C49A6C" },
+              { to: "/watchlists", label: "Watchlist", end: false, dot: "#3B82F6" },
             ].map((item) => (
               <NavLink
                 key={item.to}

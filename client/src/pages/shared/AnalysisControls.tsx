@@ -238,7 +238,7 @@ export function MenuDropdown({ value, placeholder, search, logo, disabled, child
 
 export function DropdownItem({ label, sub, tag, selected, logo, onClick }: {
     label: string;
-    sub?: string;
+    sub?: ReactNode;
     /** Right-aligned trailing chip — rendered in the lighter ink (e.g. market name). */
     tag?: string;
     selected?: boolean;

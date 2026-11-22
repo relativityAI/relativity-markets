@@ -15,7 +15,7 @@ import { AnalysisService, API_BASE } from "@/db";
 import { toaster } from "@/components/ui/toaster";
 import axios from "axios";
 import { formatSeconds } from "@/utils";
-import SkillAvatar from "@/components/shared/SkillAvatar";
+import PluginAvatar from "@/components/shared/PluginAvatar";
 import AgentActivity from "../components/shared/AgentActivity";
 import { MdArrowBack, MdInfo } from "react-icons/md";
 import { Download } from "lucide-react";
@@ -33,7 +33,7 @@ import { formatTokenCount } from "@/components/assistant-ui/utils/tokens";
 import type { ReportDocument } from "@/lib/reportContract";
 
 import SkillResultCard from "./sections/SkillResultCard";
-import { useSkillLibrary } from "@/components/skills/SkillBrowser";
+import { useSkillLibrary } from "@/lib/skillLibrary";
 import { SourceMark, TickerLogo } from "@/lib/sourceLogos";
 import { ModelLogo } from "@/lib/modelLogos";
 import {
@@ -156,7 +156,7 @@ export function runMetadata(run: any): { rows: MetaRow[] } {
     push("Duration", duration);
     push("Tokens in", tokens ? formatTokens(tokens.input) : "—");
     push("Tokens out", tokens ? formatTokens(tokens.output) : "—");
-    push("Agent", run?.agent_name);
+    push("Plugin", run?.agent_name);
     push("Stock", run?.symbol);
 
     return { rows };
@@ -508,7 +508,7 @@ export default function AnalysisResult() {
                         </Callout>
                     </Box>
                     <HStack gap={3}>
-                        <Link to="/analysis-list" style={{ textDecoration: "none" }}>
+                        <Link to="/runs" style={{ textDecoration: "none" }}>
                             <Button variant="subtle" size="sm" color="var(--ink-secondary)">
                                 <MdArrowBack style={{ marginRight: 6 }} /> Back to Runs
                             </Button>
@@ -591,7 +591,7 @@ export default function AnalysisResult() {
                             styled with utility classes so the icon, label
                             and hover/focus states actually apply. */}
                         <Link
-                            to="/analysis-list"
+                            to="/runs"
                             aria-label="Back to runs"
                             className="inline-flex shrink-0 items-center gap-1 rounded-[4px] px-1.5 py-1 text-[13px] text-[var(--ink-secondary)] transition-colors hover:text-[var(--ink-primary)] focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
                         >
@@ -716,10 +716,10 @@ export default function AnalysisResult() {
                             {verdict.label}
                         </Text>
                         <Flex align="flex-start" gap={3} mb={4}>
-                            <SkillAvatar skill={{ id: analysis.skill_id, name: skillOutputs[0]?.skill_name }} size={56} />
+                            <PluginAvatar plugin={analysis.plugin_ids?.[0] || analysis.agent_name || "run"} size={56} />
                             <Box minW={0}>
                                 <Text fontSize="15px" fontWeight={600} color="var(--ink-primary)" lineHeight="1.35">
-                                    {runSubject || "Agent"}
+                                    {runSubject || "Plugin"}
                                 </Text>
                                 {identityLine && (
                                     <Text
@@ -1082,7 +1082,7 @@ function HarnessRunView({ run, onRetry }: { run: any; tags?: string[]; onRetry?:
                     itself with the scrollbar hidden. */}
                 <Flex align="center" gap={2} minH="44px" mb={3}>
                     <Link
-                        to="/analysis-list"
+                        to="/runs"
                         aria-label="Back to runs"
                         className="inline-flex shrink-0 items-center gap-1 rounded-[4px] px-1.5 py-1 text-[13px] text-[var(--ink-secondary)] transition-colors hover:text-[var(--ink-primary)] focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
                     >
@@ -1226,7 +1226,7 @@ function HarnessRunView({ run, onRetry }: { run: any; tags?: string[]; onRetry?:
                         {hasTrace && (
                             <Box mt={4} mb={2}>
                                 <AgentActivity
-                                    title={`Analyzing ${run.share_name || run.symbol || "…"} with ${run.agent_name || "agent"}`}
+                                    title={`Analyzing ${run.share_name || run.symbol || "…"} with ${run.agent_name || "plugin"}`}
                                     subtitle={drafting ? "gathering data, searching, scoring" : "full tool and thought trace"}
                                     events={run.trace || []}
                                     agent={run.agent_name || undefined}

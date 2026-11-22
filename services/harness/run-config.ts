@@ -109,8 +109,8 @@ export function resolveRunConfig(env: NodeJS.ProcessEnv, file: RunFileConfig): R
   const skillsRaw = firstValue(env.HARNESS_SKILLS, file.skills?.join(","));
   return {
     model: firstValue(env.HARNESS_MODEL, file.model, DEFAULT_MODEL)!,
-    // One skill per run — a comma list keeps only its first entry.
-    skills: (skillsRaw ?? DEFAULT_SKILLS.join(",")).split(",").map((s) => s.trim()).filter(Boolean).slice(0, 1),
+    // Skill ids the CLI/config pins — every entry loads (plugins are multi-skill).
+    skills: (skillsRaw ?? DEFAULT_SKILLS.join(",")).split(",").map((s) => s.trim()).filter(Boolean),
     source: firstValue(env.HARNESS_SOURCE, file.source, "SEC")!.toUpperCase(),
     budget,
     tools: file.tools,

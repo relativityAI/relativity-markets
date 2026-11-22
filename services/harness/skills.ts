@@ -3,11 +3,9 @@
  * backed by the FILESYSTEM (deepagents convention: a skill is a directory
  * with a SKILL.md).
  *
- * Built-ins: `services/config/skills/<name>/SKILL.md` (agentskills.io layout),
- * cached after first load. Custom skills: `services/data/skills/<userId>/<skillId>/`
- * — one directory per skill (SKILL.md + optional reference files), no
- * database. The same paths feed deepagents' SkillsMiddleware: the engine
- * routes `/skills/builtin/` and `/skills/custom/` backend prefixes here.
+ * Every skill lives inside a plugin directory (see Paths below); the engine
+ * mounts the SELECTED plugins' skills dirs as deepagents routes so skills
+ * from other plugins stay invisible to the run.
  *
  * Parsing/validation stays here (it defines what a skill IS); the filesystem
  * is the storage.
@@ -61,13 +59,34 @@ export interface SkillParseResult {
 
 // ── Paths ───────────────────────────────────────────────────────────────────
 
-export const BUILTIN_SKILLS_DIR = join(process.cwd(), "config", "skills");
-/** Custom skills: services/data/skills/<userId>/<skillId>/. */
-export function customSkillsDir(userId: string): string {
-  return join(process.cwd(), "data", "skills", userId);
+/**
+ * Skills now live INSIDE plugin directories (one layout for seeded and
+ * imported plugins — the deepagents routes mount plugin skill dirs):
+ *   config/plugins/<pluginId>/skills/<skillId>/SKILL.md   (Relativity, read-only)
+ *   data/plugins/<pluginId>/skills/<skillId>/SKILL.md     (custom, editable)
+ * "my-skills" is the implicit custom plugin every saved custom skill lands in.
+ */
+export const RELATIVITY_PLUGINS_DIR = join(process.cwd(), "config", "plugins");
+export const MY_SKILLS_PLUGIN_ID = "my-skills";
+
+/** Custom plugin root — resolved at call time so cwd-isolated tests stay isolated. */
+export function customPluginsDir(): string {
+  return join(process.cwd(), "data", "plugins");
+}
+
+/** Custom skills: data/plugins/my-skills/skills/<skillId>/.
+ *  ponytail: userId kept for signature compatibility — the app runs local,
+ *  single-user; per-user plugin roots only if multi-tenant ever returns. */
+export function customSkillsDir(_userId: string): string {
+  return join(customPluginsDir(), MY_SKILLS_PLUGIN_ID, "skills");
 }
 export function customSkillDir(userId: string, skillId: string): string {
   return join(customSkillsDir(userId), skillId);
+}
+
+/** A Relativity plugin's skills dir. */
+export function relativityPluginSkillsDir(pluginId: string): string {
+  return join(RELATIVITY_PLUGINS_DIR, pluginId, "skills");
 }
 
 // ── Parsing (agentskills.io) ────────────────────────────────────────────────
@@ -196,23 +215,32 @@ export function parseSkillMarkdown(
 
 let builtinCache: HarnessSkill[] | null = null;
 
-function builtinSkillFiles(): { slug: string; file: string }[] {
-  const out: { slug: string; file: string }[] = [];
-  let entries: string[];
+function builtinSkillFiles(): { slug: string; file: string; dir: string }[] {
+  const out: { slug: string; file: string; dir: string }[] = [];
+  const seen = new Set<string>();
+  let plugins: string[];
   try {
-    entries = readdirSync(BUILTIN_SKILLS_DIR);
+    plugins = readdirSync(RELATIVITY_PLUGINS_DIR).sort();
   } catch {
     return out;
   }
-  for (const entry of entries.sort()) {
-    const dir = join(BUILTIN_SKILLS_DIR, entry);
+  for (const plugin of plugins) {
+    const skillsDir = join(RELATIVITY_PLUGINS_DIR, plugin, "skills");
+    let entries: string[];
     try {
-      if (!statSync(dir).isDirectory()) continue;
+      entries = readdirSync(skillsDir).sort();
     } catch {
       continue;
     }
-    const file = join(dir, "SKILL.md");
-    if (existsSync(file)) out.push({ slug: entry, file });
+    for (const entry of entries) {
+      if (seen.has(entry)) continue; // first plugin wins a duplicate skill id
+      const dir = join(skillsDir, entry);
+      const file = join(dir, "SKILL.md");
+      if (existsSync(file)) {
+        seen.add(entry);
+        out.push({ slug: entry, file, dir });
+      }
+    }
   }
   return out;
 }
@@ -220,9 +248,9 @@ function builtinSkillFiles(): { slug: string; file: string }[] {
 export function loadBuiltinSkills(): HarnessSkill[] {
   if (builtinCache) return builtinCache;
   const out: HarnessSkill[] = [];
-  for (const { slug, file } of builtinSkillFiles()) {
+  for (const { slug, file, dir } of builtinSkillFiles()) {
     try {
-      const { skill, issues } = parseSkillMarkdown(readFileSync(file, "utf8"), "builtin", slug, join(BUILTIN_SKILLS_DIR, slug));
+      const { skill, issues } = parseSkillMarkdown(readFileSync(file, "utf8"), "builtin", slug, dir);
       if (skill) out.push({ ...skill, created_at: fileCreatedAt(file) });
       else console.warn(`[skills] builtin ${slug} failed to parse: ${issues.map((i) => i.message).join("; ")}`);
     } catch (e: any) {
@@ -390,22 +418,7 @@ export function importSkillDir(userId: string, srcDir: string, skillId?: string)
   return getCustomSkill(userId, id);
 }
 
-// ── deepagents wiring — the ENGINE builds backend routes from these paths ───
-
-/** Skill dirs this run exposes to the agent (route → real dir); the engine
- *  turns them into a CompositeBackend. One home for the layout convention:
- *  built-ins at config/skills, customs at data/skills/<userId>. */
-export interface SkillSourceDir {
-  route: string;
-  dir: string;
-}
-
-export function skillSourceDirs(userId: string): SkillSourceDir[] {
-  const out: SkillSourceDir[] = [];
-  if (existsSync(BUILTIN_SKILLS_DIR)) out.push({ route: "/skills/builtin/", dir: BUILTIN_SKILLS_DIR });
-  if (existsSync(customSkillsDir(userId))) out.push({ route: "/skills/custom/", dir: customSkillsDir(userId) });
-  return out;
-}
+// ── deepagents wiring — the ENGINE builds backend routes per plugin ─────────
 
 /** The skill's report-structure reference — its binding presentation spec.
  *  Matched by path (report-structure.md), never inlined into harness code:

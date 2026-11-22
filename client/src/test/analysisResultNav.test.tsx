@@ -6,7 +6,7 @@ vi.mock("@/db", () => ({
     AnalysisService: { readAnalysis: vi.fn() },
     API_BASE: "/api",
 }));
-vi.mock("@/components/skills/SkillBrowser", () => ({
+vi.mock("@/lib/skillLibrary", () => ({
     useSkillLibrary: () => ({ library: [] }),
 }));
 vi.mock("../components/shared/AgentActivity", () => ({ default: () => null }));
