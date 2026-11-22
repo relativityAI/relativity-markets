@@ -20,21 +20,30 @@
   Built by <a href="https://github.com/avishkarArjan/"><img src="https://github.com/avishkarArjan.png" alt="avishkarArjan" width="28" style="border-radius: 50%"></a>
 </div>
 
----
+## Screenshots
 
 <p align="center">
-  <img src="assets/homepage_screenshot.png" alt="Relativity homepage screenshot" width="100%">
+  <img src="assets/homepage.png" alt="Relativity homepage — market heatmap, watchlist and this week's scheduled runs" width="100%">
 </p>
+
+<table align="center">
+  <tr>
+    <td align="center" width="33%"><img src="assets/past_runs.png" alt="Past runs list"></td>
+    <td align="center" width="33%"><img src="assets/workspace.png" alt="Workspace — plugins, active runs and alerts"></td>
+    <td align="center" width="33%"><img src="assets/new_run_page.png" alt="New run page — schedule an agent analysis"></td>
+  </tr>
+</table>
 
 ## Table of Contents
 
-1. [Prerequisites](#prerequisites)
-2. [Install](#install)
-3. [Usage](#usage)
-4. [Cleanup](#cleanup)
-5. [Architecture](#architecture)
-6. [Top contributors:](#top-contributors)
-7. [License](#license)
+1. [Screenshots](#screenshots)
+2. [Prerequisites](#prerequisites)
+3. [Install](#install)
+4. [Usage](#usage)
+5. [Cleanup](#cleanup)
+6. [Architecture](#architecture)
+7. [Top contributors:](#top-contributors)
+8. [License](#license)
 
 
 
@@ -81,7 +90,7 @@ Pages:
 CLI (from `services/`, needs `npm run searxng` + `OPENCODE_API_KEY`):
 
 ```bash
-npm run cli -- --symbol AAPL --model opencode/deepseek-v4.1-flash --max-steps 20 --skill chartist-technical-analysis
+npm run cli -- --symbol AAPL --model opencode/deepseek-v4.1-flash --max-steps 20 --skill chartist-playbook
 ```
 
 ## Cleanup
