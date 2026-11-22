@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { motion } from "motion/react";
 import { Avatar, Style } from "@dicebear/core";
 import discoDefinition from "@dicebear/styles/disco.json";
-import { ArrowUpRight, ChevronDown, Loader2, MoreHorizontal, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { ArrowUpRight, ChevronDown, Download, Loader2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { API_BASE, WatchlistService, runPluginLabel, type PluginSummary, type WatchlistRow, type WatchlistItem } from "@/db";
 import { FlagLogo, TickerLogo } from "@/lib/sourceLogos";
 import { DropdownItem } from "@/pages/shared/AnalysisControls";
@@ -18,8 +18,13 @@ import { toaster } from "@/compat/ui";
  *  Last/Chg/Chg%, verdict badges). Shared by the homepage rail (`page=false`)
  *  and the full-page /watchlists route. */
 
-const ICON_BTN =
-    "flex h-7 w-7 items-center justify-center rounded-[6px] text-[var(--ink-tertiary)] transition-colors hover:bg-[var(--surface-recessed)] hover:text-[var(--ink-primary)] focus-visible:text-[var(--ink-primary)]";
+/** Shared shell of every header icon button; colour comes per button so the
+ *  destructive one can stay red without fighting the muted hover. */
+const ICON_BTN = "flex h-7 w-7 items-center justify-center rounded-[6px] transition-colors";
+const ICON_BTN_MUTED =
+    `${ICON_BTN} text-[var(--ink-tertiary)] hover:bg-[var(--surface-recessed)] hover:text-[var(--ink-primary)] focus-visible:text-[var(--ink-primary)]`;
+const ICON_BTN_DANGER =
+    `${ICON_BTN} text-[var(--signal-negative-text)] hover:bg-[var(--surface-recessed)] hover:text-[var(--signal-negative-text)]`;
 
 /** Both menus in this panel: same rounded shell and rounded rows. */
 const MENU_CLS = "rounded-[12px] [&_[data-slot=dropdown-menu-item]]:rounded-[8px]";
@@ -230,6 +235,8 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
     const [query, setQuery] = useState("");
     const [results, setResults] = useState<StockRow[]>([]);
     const [searching, setSearching] = useState(false);
+    /** Highlighted row of the search results — moved with ArrowUp/ArrowDown. */
+    const [cursor, setCursor] = useState(-1);
     const [sort, setSort] = useState<{ k: SortKey; dir: 1 | -1 } | null>(null);
     const searchRef = useRef<HTMLDivElement>(null);
     const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -294,7 +301,7 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
         if (debounceRef.current) clearTimeout(debounceRef.current);
         abortRef.current?.abort();
         const q = query.trim();
-        if (!q) { setResults([]); setSearching(false); return; }
+        if (!q) { setResults([]); setCursor(-1); setSearching(false); return; }
         debounceRef.current = setTimeout(async () => {
             setSearching(true);
             const controller = new AbortController();
@@ -302,15 +309,22 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
             try {
                 const res = await fetch(`${API_BASE}/stocks/search?${new URLSearchParams({ query: q })}`, { signal: controller.signal });
                 const data = await res.json();
-                if (!controller.signal.aborted) setResults(Array.isArray(data) ? data : []);
+                if (!controller.signal.aborted) { setResults(Array.isArray(data) ? data : []); setCursor(0); }
             } catch {
-                if (!controller.signal.aborted) setResults([]);
+                if (!controller.signal.aborted) { setResults([]); setCursor(-1); }
             } finally {
                 if (!controller.signal.aborted) setSearching(false);
             }
         }, 300);
         return () => clearTimeout(debounceRef.current);
     }, [query]);
+
+    // Keep the keyboard-highlighted row visible inside the scroll panel.
+    useEffect(() => {
+        if (cursor < 0) return;
+        const el = document.getElementById(`stock-opt-${cursor}`);
+        el?.scrollIntoView?.({ block: "nearest" }); // ?. — jsdom doesn't implement it
+    }, [cursor]);
 
     const replace = (row: WatchlistRow) =>
         setLists((prev) => prev.map((l) => (l.id === row.id ? row : l)));
@@ -459,6 +473,48 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
         })
         : rows;
 
+    /** The active list as CSV — symbol/name/source, the live quote columns,
+     *  then one column per agent verdict. */
+    const exportCsv = () => {
+        if (!active) return;
+        const cell = (v: unknown) => {
+            const s = String(v ?? "");
+            return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        };
+        const head = ["Symbol", "Name", "Source", "Last", "Chg%", ...agentColumns];
+        const body = sorted.map((r) => {
+            const q = quoteOf(r);
+            return [
+                r.symbol,
+                r.name || "",
+                r.source || "",
+                q?.last ?? "",
+                q?.pct ?? "",
+                ...agentColumns.map((a) => r.agents.find((x) => (x.agent || "Plugin") === a)?.verdict || ""),
+            ]
+                .map(cell)
+                .join(",");
+        });
+        const csv = [[head.map(cell).join(","), ...body].join("\r\n")];
+        const url = URL.createObjectURL(new Blob(csv, { type: "text/csv;charset=utf-8" }));
+        const a = document.createElement("a");
+        a.href = url;
+        const slug =
+            (active.name || "watchlist")
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/^-|-$/g, "") || "watchlist";
+        a.download = `${slug}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2_000);
+    };
+
+    // The nudge is for a fresh, empty list only — and not while the user is
+    // already naming a list or searching for a stock to add.
+    const showFirstHint = !loading && !loadError && !editor && !adding && !!active && rows.length === 0;
+
     return (
         <section aria-label="Watchlist" className="pb-12">
             {/* Page masthead — same shape as the Runs page's. */}
@@ -480,8 +536,10 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
                 </header>
             )}
 
-            {/* Header — list switcher left, add / open-full / options right. */}
-            <div className="flex items-center justify-between gap-3">
+            {/* Header — list switcher left, then the icon row (+ / open /
+                export / rename / delete), with the first-watchlist nudge
+                tucked in front of the + when the list is still empty. */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
                 {editor ? (
                     <div className="flex min-w-0 flex-1 items-center gap-1.5">
                         <input
@@ -538,15 +596,34 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
                                     <span className="shrink-0 font-light text-[11px] text-[var(--ink-tertiary)]">{l.items.length}</span>
                                 </DropdownMenuItem>
                             ))}
+                            <DropdownMenuItem onSelect={startCreate} className="gap-2.5">
+                                <span className="flex h-5 w-5 shrink-0 items-center justify-center" aria-hidden="true">
+                                    <Plus size={14} />
+                                </span>
+                                <span className="min-w-0 flex-1 truncate font-light">New watchlist</span>
+                            </DropdownMenuItem>
                         </DropdownMenuContent>
                     </DropdownMenu>
                 )}
 
-                <div className="flex shrink-0 items-center gap-0.5">
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-1 gap-y-2">
+                    {/* First-watchlist nudge — the arrow's head sits right
+                        against the + it is pointing at. */}
+                    {showFirstHint && (
+                        <span className="rel-hint mr-1.5 flex select-none items-center gap-1 whitespace-nowrap">
+                            <span className="font-app-body text-[13px] font-light text-[var(--ink-tertiary)]">
+                                create your first watchlist
+                            </span>
+                            <span
+                                aria-hidden="true"
+                                className="rel-hint-arrow block size-8 shrink-0 -rotate-[10deg] text-[var(--ink-primary)]"
+                            />
+                        </span>
+                    )}
                     <button
                         type="button" onClick={() => setAdding((v) => !v)}
                         aria-label="Add stock" title="Add stock" aria-expanded={adding}
-                        className={ICON_BTN}
+                        className={ICON_BTN_MUTED}
                     >
                         <Plus size={16} />
                     </button>
@@ -554,29 +631,32 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
                         <a
                             href="/watchlists" target="_blank" rel="noreferrer"
                             aria-label="Open full watchlist in a new tab" title="Open full watchlist"
-                            className={ICON_BTN}
+                            className={ICON_BTN_MUTED}
                         >
                             <ArrowUpRight size={16} />
                         </a>
                     )}
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <button type="button" aria-label="Watchlist options" title="Watchlist options" className={ICON_BTN}>
-                                <MoreHorizontal size={16} />
-                            </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className={`min-w-[180px] ${MENU_CLS}`}>
-                            <DropdownMenuItem onSelect={startCreate}>
-                                <Plus size={14} /> New watchlist
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onSelect={startRename} disabled={!active}>
-                                <Pencil size={14} /> Rename
-                            </DropdownMenuItem>
-                            <DropdownMenuItem variant="destructive" onSelect={() => setConfirmDelete(true)} disabled={!active}>
-                                <Trash2 size={14} /> Delete
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
+                    <button
+                        type="button" onClick={exportCsv} disabled={!active}
+                        aria-label="Export watchlist as CSV" title="Export watchlist as CSV"
+                        className={ICON_BTN_MUTED}
+                    >
+                        <Download size={16} />
+                    </button>
+                    <button
+                        type="button" onClick={startRename} disabled={!active}
+                        aria-label="Rename watchlist" title="Rename watchlist"
+                        className={ICON_BTN_MUTED}
+                    >
+                        <Pencil size={16} />
+                    </button>
+                    <button
+                        type="button" onClick={() => setConfirmDelete(true)} disabled={!active}
+                        aria-label="Delete watchlist" title="Delete watchlist"
+                        className={ICON_BTN_DANGER}
+                    >
+                        <Trash2 size={16} />
+                    </button>
                 </div>
             </div>
 
@@ -595,10 +675,26 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
                         onChange={(e) => { setQuery(e.target.value); }}
                         placeholder="Search stocks…" aria-label="Search stocks to add"
                         role="combobox" aria-expanded={query.trim() !== ""}
+                        aria-controls="watchlist-stock-listbox"
+                        aria-activedescendant={cursor >= 0 && results[cursor] ? `stock-opt-${cursor}` : undefined}
+                        aria-autocomplete="list"
+                        onKeyDown={(e) => {
+                            if (!results.length) return;
+                            if (e.key === "ArrowDown") {
+                                e.preventDefault(); setCursor((c) => Math.min(c + 1, results.length - 1));
+                            } else if (e.key === "ArrowUp") {
+                                e.preventDefault(); setCursor((c) => Math.max(c - 1, 0));
+                            } else if (e.key === "Enter") {
+                                const pick = results[Math.max(cursor, 0)];
+                                if (pick) { e.preventDefault(); addStock(pick); }
+                            } else if (e.key === "Escape") {
+                                setAdding(false); setQuery(""); setResults([]); setCursor(-1);
+                            }
+                        }}
                         className="h-9 w-full rounded-[6px] border border-[var(--hairline)] bg-[var(--surface-recessed)] pl-8 pr-2.5 font-[family-name:var(--font-body)] text-[13px] text-[var(--ink-primary)] outline-none focus:border-[var(--ink-tertiary)]"
                     />
                     {query.trim() !== "" && (
-                        <div role="listbox" aria-label="Stock results" className="listbox-panel absolute left-0 top-[calc(100%+6px)] z-50 max-h-[280px] w-full overflow-y-auto rounded-[6px] border border-[var(--hairline)] bg-[var(--surface-canvas)] py-1 shadow-[0_8px_24px_rgba(0,0,0,0.12)]">
+                        <div id="watchlist-stock-listbox" role="listbox" aria-label="Stock results" className="listbox-panel absolute left-0 top-[calc(100%+6px)] z-50 max-h-[280px] w-full overflow-y-auto rounded-[6px] border border-[var(--hairline)] bg-[var(--surface-canvas)] py-1 shadow-[0_8px_24px_rgba(0,0,0,0.12)]">
                             {searching && (
                                 <div className="px-3 py-2.5 font-[family-name:var(--font-body)] text-xs text-[var(--ink-tertiary)]">Searching…</div>
                             )}
@@ -607,12 +703,14 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
                                     Nothing matches “{query}”.
                                 </div>
                             )}
-                            {!searching && results.map((stock) => {
+                            {!searching && results.map((stock, i) => {
                                 const sym = stock.ticker || stock.SYMBOL || "";
                                 const india = String(stock.source || "").toLowerCase() === "nse";
                                 return (
                                     <DropdownItem
                                         key={`${stock.source}-${sym}`}
+                                        id={`stock-opt-${i}`}
+                                        active={i === cursor}
                                         label={stock.name || stock.NAME || sym}
                                         sub={
                                             <span className="flex items-center gap-1">
@@ -723,13 +821,7 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
                         </tbody>
                     </table>
                 </div>
-            ) : (
-                !loading && (
-                    <p className="mt-4 font-app-body text-[13px] text-[var(--ink-tertiary)]">
-                        No stocks in this watchlist yet — press + to add one.
-                    </p>
-                )
-            )}
+            ) : null}
 
             <ConfirmDialog
                 open={confirmDelete}

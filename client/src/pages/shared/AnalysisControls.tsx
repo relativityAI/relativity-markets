@@ -143,19 +143,25 @@ export function MenuDropdown({ value, placeholder, search, logo, disabled, child
                 }
                 onKeyDown={disabled ? undefined : onTriggerKeyDown}
                 whileTap={{ scale: 0.997 }}
-                className={`flex items-center gap-1.5 rounded-[6px] border-[0.5px] border-[color:var(--hairline)] bg-transparent px-2.5 transition-colors ${disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer hover:border-[color:var(--ink-tertiary)] focus-within:border-[color:var(--ink-tertiary)] focus-within:ring-1 focus-within:ring-console-accent/40"}`}
+                className={`flex h-10 items-center gap-1.5 rounded-[8px] border border-transparent bg-[var(--surface-recessed)] px-3.5 transition-colors ${disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer focus-within:ring-1 focus-within:ring-console-accent/40"}`}
                 style={{
-                    minHeight: "36px",
+                    minHeight: "40px",
                     outline: "none",
-                    background: "transparent",
                 }}
             >
                 {logo && <span style={{ display: "inline-flex", flexShrink: 0, marginRight: 2 }}>{logo}</span>}
                 {search ? (
                     <input
-                        value={open ? search.value : (value ?? "")}
+                        disabled={disabled}
+                        value={open || search.value ? search.value : (value ?? "")}
                         placeholder={open ? (search.placeholder ?? placeholder) : placeholder}
-                        onChange={(e) => search.onChange(e.target.value)}
+                        onChange={(e) => {
+                            search.onChange(e.target.value);
+                            // Typing must open the panel even if focus didn't
+                            // (e.g. refocus after a prior pick) — otherwise the
+                            // keystrokes hit a closed list and vanish.
+                            if (!disabled) setOpen(true);
+                        }}
                         aria-label={placeholder}
                         aria-expanded={open}
                         aria-haspopup="listbox"
@@ -236,7 +242,7 @@ export function MenuDropdown({ value, placeholder, search, logo, disabled, child
     );
 }
 
-export function DropdownItem({ label, sub, tag, selected, logo, onClick }: {
+export function DropdownItem({ label, sub, tag, selected, logo, onClick, id, active }: {
     label: string;
     sub?: ReactNode;
     /** Right-aligned trailing chip — rendered in the lighter ink (e.g. market name). */
@@ -244,12 +250,16 @@ export function DropdownItem({ label, sub, tag, selected, logo, onClick }: {
     selected?: boolean;
     logo?: ReactNode;
     onClick: () => void;
+    /** Combobox wiring: element id + keyboard-cursor tint (no checkmark). */
+    id?: string;
+    active?: boolean;
 }) {
     return (
         <motion.button
             type="button"
             role="option"
-            aria-selected={selected}
+            id={id}
+            aria-selected={selected ?? active}
             tabIndex={-1}
             whileTap={{ scale: 0.99 }}
             transition={{ type: "spring", bounce: 0, duration: 0.12 }}
@@ -263,7 +273,7 @@ export function DropdownItem({ label, sub, tag, selected, logo, onClick }: {
                 padding: "8px 10px",
                 border: "none",
                 borderRadius: "12px",
-                background: "transparent",
+                background: active ? "var(--surface-recessed)" : "transparent",
                 cursor: "pointer",
             }}
             /* No outline: "none" — the global :focus-visible ring shows; inset
