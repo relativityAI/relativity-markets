@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.11.0...relativity-markets-v0.12.0) (2026-11-22)
+
+
+### Features
+
+* **settings:** AI Providers table + custom OpenAI-compatible providers ([#200](https://github.com/relativityAI/relativity-markets/issues/200)) ([be3fcdb](https://github.com/relativityAI/relativity-markets/commit/be3fcdbe7b64bf1e157390806b17647c19d59641))
+
 ## [0.11.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.10.0...relativity-markets-v0.11.0) (2026-11-19)
 
 
