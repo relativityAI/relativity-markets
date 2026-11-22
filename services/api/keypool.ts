@@ -14,6 +14,7 @@ import { getModels } from "./models.js";
 import { flushApiUsage, type UsageRow } from "../db/repo.js";
 import { log } from "./logger.js";
 import { config, DEFAULT_DAILY_REQUESTS } from "./config.js";
+import { CUSTOM_KEY, customProviders } from "../harness/model.js";
 
 export interface KeyPoolConfig {
   /** provider -> server API keys (ordered; index = keyRef suffix). */
@@ -129,8 +130,11 @@ export class KeyPool {
   private providersFor(userKeys: Record<string, string | undefined>): string[] {
     const out = new Set<string>();
     for (const p of Object.keys(this.cfg.serverKeys)) if (this.cfg.serverKeys[p]?.length) out.add(p);
+    // Custom providers count as configured even with no key (local servers),
+    // so they must be added from the bundle rather than from a key entry.
+    for (const c of customProviders(userKeys)) out.add(c.id);
     for (const [p, v] of Object.entries(userKeys || {})) {
-      if (p !== "tavily" && v && !out.has(p)) out.add(p);
+      if (p !== "tavily" && p !== CUSTOM_KEY && v && !out.has(p)) out.add(p);
     }
     return [...out];
   }
@@ -141,6 +145,11 @@ export class KeyPool {
     const userKey = userKeys[provider];
     if (userKey) {
       return { apiKey: userKey, keyRef: "user" };
+    }
+    // A user-added endpoint with no credential (Ollama/vLLM) still routes —
+    // buildModel substitutes a placeholder, so there is nothing to pick here.
+    if (customProviders(userKeys).some((c) => c.id === provider)) {
+      return { apiKey: "", keyRef: "user" };
     }
     if (!this.cfg.serverKeys[provider]?.length) {
       throw new Error(`No API key for "${provider}". Add one in Settings, or pick a different model.`);
@@ -184,7 +193,9 @@ export class KeyPool {
   }
 
   // ── default model selection (quota + health + priority + rotation) ───────
-  private modelsFor(provider: string): string[] {
+  private modelsFor(provider: string, userKeys?: Record<string, string | undefined>): string[] {
+    const declared = customProviders(userKeys || {}).find((c) => c.id === provider);
+    if (declared) return declared.models.map((m) => (m.includes("/") ? m : `${provider}/${m}`));
     if (this.cfg.serverModels?.[provider]?.length) return this.cfg.serverModels[provider];
     if (this.cfg.modelsByProvider) return this.cfg.modelsByProvider(provider);
     return getModels()
@@ -207,6 +218,8 @@ export class KeyPool {
   /** True when the provider has a user key or a server key not in cooldown. */
   private hasHealthyKey(provider: string, userKeys: Record<string, string | undefined>): boolean {
     if (userKeys[provider]) return true;
+    // Keyless local endpoint: no credential to go stale.
+    if (customProviders(userKeys).some((c) => c.id === provider)) return true;
     const keys = this.cfg.serverKeys[provider] || [];
     if (!keys.length) return false;
     const st = this.state(provider);
@@ -242,7 +255,7 @@ export class KeyPool {
     const pool = healthy.length ? healthy : providers;
     const candidates: string[] = [];
     for (const p of pool) {
-      for (const m of this.modelsFor(p)) {
+      for (const m of this.modelsFor(p, userKeys)) {
         if (!candidates.includes(m)) candidates.push(m);
       }
     }

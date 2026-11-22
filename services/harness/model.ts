@@ -30,6 +30,39 @@ export interface LlmKeys {
   zai?: string;
   opencode?: string;
   tavily?: string;
+  /**
+   * JSON bundle of user-added OpenAI-compatible providers (see CustomProvider).
+   * Server-attached from prefs by fetchUserKeys — the keys record is the one
+   * object every model call already carries, so custom routing needs no extra
+   * parameter through the call graph. Never returned to the client: it reads
+   * the same list from prefs.custom_providers, which is not masked.
+   */
+  __custom?: string;
+}
+
+/**
+ * A provider the user added themselves: any endpoint speaking the OpenAI
+ * Chat Completions format (Ollama, vLLM, LM Studio, LiteLLM, a company
+ * gateway). `id` is the model-id prefix, so its models are `id/model-id`.
+ * The API key is optional — local servers usually need none.
+ */
+export interface CustomProvider {
+  id: string;
+  name: string;
+  baseURL: string;
+  models: string[];
+}
+
+export const CUSTOM_KEY = "__custom";
+
+/** Parse the custom-provider bundle off a keys record; [] when absent/malformed. */
+export function customProviders(keys: Record<string, string | undefined> | LlmKeys): CustomProvider[] {
+  try {
+    const list = JSON.parse((keys as Record<string, string | undefined>)?.[CUSTOM_KEY] || "[]");
+    return Array.isArray(list) ? list.filter((c) => c && typeof c.id === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 export function providerFor(modelId: string): string {
@@ -118,7 +151,12 @@ export function buildModel(modelId: string, keys: LlmKeys, apiKey?: string, temp
   const provider = providerFor(modelId);
   const name = modelNameFor(modelId);
   const key = apiKey || keys[provider as keyof LlmKeys] || ENV_KEYS[provider];
-  assertProviderKeyAvailable(provider, key);
+  // A user-added OpenAI-compatible endpoint wins over the fixed map — that is
+  // the whole point of "Add provider" in Settings. Local servers (Ollama,
+  // vLLM, LM Studio) legitimately have no key, so the hard key assert applies
+  // to built-in providers only.
+  const custom = customProviders(keys).find((c) => c.id === provider);
+  if (!custom) assertProviderKeyAvailable(provider, key);
   const opts = { model: name, temperature, ...(maxTokens ? { maxTokens } : {}) };
   switch (provider) {
     case "openai":
@@ -135,12 +173,14 @@ export function buildModel(modelId: string, keys: LlmKeys, apiKey?: string, temp
         ...(maxTokens ? { maxOutputTokens: maxTokens } : {}),
       });
     default: {
-      const gateway = GATEWAYS[provider];
+      const gateway = custom ? { baseURL: custom.baseURL } : GATEWAYS[provider];
       if (!gateway) throw new Error(`Unknown model provider: ${provider}`);
       return new ChatOpenAI({
         ...opts,
-        apiKey: key,
-        configuration: { baseURL: gateway.baseURL, apiKey: key },
+        // The OpenAI SDK rejects an empty apiKey by reading OPENAI_API_KEY
+        // from env (and throwing when that is unset too).
+        apiKey: key || (custom ? "not-required" : ""),
+        configuration: { baseURL: gateway.baseURL, apiKey: key || "" },
       });
     }
   }
