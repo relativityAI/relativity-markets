@@ -13,7 +13,9 @@
  * Alerts: after a fire, the rule remembers its run id; each tick checks that
  * run and, once it COMPLETED with a verdict, records an alert — but only when
  * the verdict differs from the rule's last alert (dedupe: no ping for an
- * unchanged verdict).
+ * unchanged verdict). A run that ERRORs records a "Failed" alert instead
+ * (deduped on the run id) — see alertRunFailure, which the run writer also
+ * calls directly so manual runs reach the bell too.
  *
  * The ticker runs in-process like the stale-run sweeper — nothing survives a
  * restart beyond `last_fired_date` (one catch-up fire on boot). ponytail:
@@ -30,6 +32,7 @@ import {
   getRunRow,
   type AlertRuleRow,
 } from "../db/repo.js";
+import { alertRunFailure } from "./alerts.js";
 import { log } from "./logger.js";
 import { startAnalysisRun } from "./runs.js";
 
@@ -175,7 +178,13 @@ export async function evaluateAlert(s: AlertRuleRow): Promise<void> {
   if (!s.last_run_id) return;
   const run = await getRunRow(s.user_id, s.last_run_id);
   if (!run) return; // run purged; the next fire overwrites last_run_id
-  if (run.status !== "COMPLETED") return; // running, failed, or paused — no verdict coming
+  // A dead run has no verdict coming, but it is still news — one "Failed"
+  // alert, so the bell counts it instead of silently dropping it.
+  if (run.status === "ERROR") {
+    await alertRunFailure(s.user_id, run.id, s.id);
+    return;
+  }
+  if (run.status !== "COMPLETED") return; // running or paused — no verdict coming
   const verdict = typeof (run.report as any)?.verdict === "string" ? ((run.report as any).verdict as string) : null;
   if (!verdict) return; // background grade hasn't landed yet
   if (lastAlertVerdict(s.id) === verdict) return; // unchanged — no new development

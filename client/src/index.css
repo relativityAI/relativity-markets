@@ -695,9 +695,11 @@ html.dark .sectoral-title {
   border: var(--hairline-w) solid var(--hairline);
   border-radius: var(--radius-box);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
-  animation: compat-menu-in 120ms ease-out;
+  animation: pop-down-in 120ms ease-out;
 }
-@keyframes compat-menu-in {
+/* Shared dropdown enter: fade + fall into place. The exit is a state flip in
+   the component (React unmounts the node, so CSS never sees it leave). */
+@keyframes pop-down-in {
   from { opacity: 0; transform: translateY(-4px); }
 }
 .compat-menu-item {

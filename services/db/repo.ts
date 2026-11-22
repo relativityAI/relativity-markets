@@ -384,6 +384,12 @@ export async function listAlertRows(userId: string, limit = 50): Promise<AlertRo
     .all(userId, limit) as unknown as AlertRow[];
 }
 
+/** Has this run already produced an alert? Failure alerts dedupe on it so a
+ *  re-check of the same dead run can't stack copies. */
+export function alertExistsForRun(runId: string): boolean {
+  return !!getSqlite().prepare("SELECT 1 FROM alerts WHERE run_id = ? LIMIT 1").get(runId);
+}
+
 /** The rule's most recent alert verdict — the dedupe key for "changed?" */
 export function lastAlertVerdict(ruleId: string): string | null {
   const r = getSqlite()

@@ -8,6 +8,7 @@ const repo = vi.hoisted(() => ({
   getRunRow: vi.fn(),
   lastAlertVerdict: vi.fn(),
   insertAlertRow: vi.fn(),
+  alertExistsForRun: vi.fn(() => false),
   listAllAlertRuleRows: vi.fn(async () => []),
   claimAlertRule: vi.fn(() => false),
   setAlertRuleRun: vi.fn(),
@@ -56,6 +57,7 @@ beforeEach(() => {
   repo.getRunRow.mockResolvedValue(null);
   repo.lastAlertVerdict.mockReturnValue(null);
   repo.insertAlertRow.mockResolvedValue({});
+  repo.alertExistsForRun.mockReturnValue(false);
 });
 
 describe("evaluateAlert", () => {
@@ -87,8 +89,19 @@ describe("evaluateAlert", () => {
     expect(repo.insertAlertRow).not.toHaveBeenCalled();
   });
 
-  it("never alerts on a failed run", async () => {
+  it("alerts once on a failed run — a dead run is news too", async () => {
     repo.getRunRow.mockResolvedValue(run("ERROR"));
+
+    await evaluateAlert(RULE);
+
+    expect(repo.insertAlertRow).toHaveBeenCalledWith(
+      expect.objectContaining({ rule_id: "r1", run_id: "run1", verdict: "Failed", symbol: "RELIANCE" }),
+    );
+  });
+
+  it("never stacks a second alert on the same dead run", async () => {
+    repo.getRunRow.mockResolvedValue(run("ERROR"));
+    repo.alertExistsForRun.mockReturnValue(true);
 
     await evaluateAlert(RULE);
 

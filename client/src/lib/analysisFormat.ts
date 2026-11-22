@@ -164,18 +164,35 @@ export const QUALITY_SIGNAL: Record<string, "positive" | "caution" | "negative">
 
 export type VerdictTone = "good" | "caution" | "bad" | "neutral";
 
-/** Chip colour for a verdict label — covers the harness five-band words and
-    verdictForScore's score-band words. */
+/** Chip colour for a verdict label — the harness five-band words, the
+    score-band words, the buy/sell vocabulary the watchlist and alerts use,
+    and "Failed" (what a dead run alerts with). Case-insensitive, so the
+    same word colours a badge wherever it appears. */
 export function verdictTone(label: string | null | undefined): VerdictTone {
   if (!label) return "neutral";
   const q = QUALITY_SIGNAL[label];
-  if (q === "positive") return "good";
-  if (q === "caution") return "caution";
-  if (q === "negative") return "bad";
-  if (label === "Outstanding" || label === "Strong") return "good";
-  if (label === "Fair" || label === "Underwhelming") return "caution";
-  if (label === "Subpar") return "bad";
+  if (q) return q === "positive" ? "good" : q === "caution" ? "caution" : "bad";
+  const v = label.trim().toLowerCase();
+  if (["outstanding", "strong", "shortlist", "buy", "excellent", "good"].includes(v)) return "good";
+  if (["fair", "underwhelming", "hold", "watch", "neutral"].includes(v)) return "caution";
+  if (["subpar", "pass", "error", "failed", "sell", "poor", "very poor"].includes(v)) return "bad";
   return "neutral";
+}
+
+/** Text-safe signal ink for a verdict word (badges, pills, tinted chips) —
+ *  the twins that hold 4.5:1 on canvas and on their own 14% tint. undefined
+ *  = no signal: render it neutral. */
+export function verdictInk(label: string | null | undefined): string | undefined {
+  switch (verdictTone(label)) {
+    case "good":
+      return "var(--signal-positive-text)";
+    case "caution":
+      return "var(--signal-caution-text)";
+    case "bad":
+      return "var(--signal-negative-text)";
+    default:
+      return undefined;
+  }
 }
 
 export interface RunVerdict {

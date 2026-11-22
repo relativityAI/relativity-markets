@@ -17,6 +17,7 @@ import type { TraceEvent } from "../harness/types.js";
 import type { TraceRowEvent } from "../harness/trace.js";
 import { TraceCollector } from "../harness/trace.js";
 import { insertRunRow, updateRunRow, getRunRow, failStaleRunRows } from "../db/repo.js";
+import { alertRunFailure } from "./alerts.js";
 import {
   getAgent,
   listAgents,
@@ -314,6 +315,8 @@ export async function runHarnessSymbol(
       log.warn("harness", `final run write failed for ${o.existingRunId}: ${e?.message || e}`);
     }
     if (!result.verdict && result.status !== "failed" && !paused) void gradeInBackground(result.document, modelId, llmKeys, o.existingRunId);
+    // A dead run is an alert even with no verdict to report (deduped per run).
+    if (payload.status === "ERROR") void alertRunFailure(userId, o.existingRunId);
     return { status: paused ? "paused" : result.status, document: result.document, errors: result.errors, verdict: result.verdict, runId: o.existingRunId };
   }
   const row: Record<string, any> = {
@@ -328,6 +331,7 @@ export async function runHarnessSymbol(
   } catch (e: any) {
     throw new Error(`run persist failed: ${e?.message || e}`);
   }
+  if (payload.status === "ERROR") void alertRunFailure(userId, runId);
   if (!result.verdict && result.status !== "failed" && !paused) void gradeInBackground(result.document, modelId, llmKeys, runId);
   return { status: paused ? "paused" : result.status, document: result.document, errors: result.errors, verdict: result.verdict, runId };
 }
@@ -408,6 +412,7 @@ export async function resumePausedRun(
     error: result.errors.length ? result.errors.join("\n") : null,
     updated_at: new Date().toISOString(),
   }).catch((e: any) => log.warn("harness", `resume persist failed for ${runId}: ${e?.message || e}`));
+  if (legacyStatus === "ERROR") void alertRunFailure(userId, runId);
   if (!result.verdict && result.status !== "failed") void gradeInBackground(result.document, modelId, llmKeys, runId);
   return { status: result.status, document: result.document, errors: result.errors, verdict: result.verdict, runId };
 }
@@ -468,6 +473,7 @@ export async function startAnalysisRun(o: StartAnalysisRunOpts): Promise<string>
   }).catch(async (e: any) => {
     console.error("background analysis run failed:", e);
     await updateRunRow(runId, { status: "ERROR", error: e?.message || "run failed" }).catch(() => {});
+    void alertRunFailure(o.userId, runId);
   });
   return runId;
 }
