@@ -28,63 +28,6 @@ type StockRow = {
   source?: string;
 };
 
-/** Bright 1-day intraday sparkline for a market index (^NSEI, ^NDX), served
- *  by the public /market/chart endpoint. Day change is measured against the
- *  feed's previous close (what the exchanges publish), not the session's
- *  first tick. Renders nothing when the feed is down — decoration must
- *  never block the nav. */
-function IndexSpark({ name, symbol }: { name: string; symbol: string }) {
-  const [data, setData] = useState<{ closes: number[]; changePct: number | null } | null>(null);
-  const [ok, setOk] = useState(true);
-
-  useEffect(() => {
-    let alive = true;
-    fetch(`${API_BASE}/market/chart/${encodeURIComponent(symbol)}?range=1d&interval=5m`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((d) => {
-        if (!alive) return;
-        const closes: number[] = d.closes || [];
-        const prevClose: number | null = d.previous_close ?? null;
-        const last = closes[closes.length - 1] ?? null;
-        if (closes.length < 2 || !prevClose || !last) { setOk(false); return; }
-        setData({ closes, changePct: ((last - prevClose) / prevClose) * 100 });
-      })
-      .catch(() => { if (alive) setOk(false); });
-    return () => { alive = false; };
-  }, [symbol]);
-
-  if (!ok || !data) return null;
-  const { closes, changePct } = data;
-  const min = Math.min(...closes);
-  const max = Math.max(...closes);
-  const span = max - min || 1;
-  const W = 200;
-  const H = 48;
-  const pts = closes
-    .map((c, i) => `${((i / (closes.length - 1)) * W).toFixed(1)},${(H - 4 - ((c - min) / span) * (H - 8)).toFixed(1)}`)
-    .join(" ");
-  const up = (changePct ?? 0) >= 0;
-  const color = up ? "#22C55E" : "#EF4444";
-  // Text twin: the bright hex is for the graphic (≥3:1 as a line), but at
-  // 12px the original was 2.18:1 as text.
-  const textColor = up ? "var(--signal-positive-text)" : "var(--signal-negative-text)";
-
-  return (
-    <div className="w-40">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="font-app-body text-[12px] font-normal text-[var(--ink-secondary)]">{name}</span>
-        <span className="font-app-tabular text-[12px] font-medium" style={{ color: textColor }}>
-          {changePct == null ? "" : `${changePct > 0 ? "+" : ""}${changePct.toFixed(2)}%`}
-        </span>
-      </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="mt-1.5 h-10 w-full" aria-hidden="true">
-        <polygon points={`0,${H} ${pts} ${W},${H}`} fill={color} opacity="0.12" />
-        <polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-      </svg>
-    </div>
-  );
-}
-
 export default function NavBar() {
   const { user, signOut } = useAuth();
   const { colorMode, toggleColorMode } = useColorMode();
@@ -333,8 +276,12 @@ export default function NavBar() {
   return (
     <nav className="bg-[var(--surface-canvas)]">
       <div className="max-w-[1200px] mx-auto">
-        {/* Level 1 — mast (wraps: search drops to its own row below md) */}
-        <div className="px-6 flex flex-wrap items-center justify-between pt-6 pb-2">
+        {/* Level 1 — mast (wraps: search drops to its own row below md).
+            lg+: a 1fr / auto / 1fr grid, so the search sits dead centre of the
+            navbar instead of centred in whatever space the two uneven side
+            groups (wide mast, narrow controls) leave over. Below lg the sides
+            are too unequal to share space without crowding, so it stays flex. */}
+        <div className="px-6 flex flex-wrap items-center justify-between pt-6 pb-2 lg:grid lg:grid-cols-[1fr_auto_1fr] lg:items-center">
         <div className="flex items-center gap-5">
           <Link
             to="/"
@@ -346,12 +293,15 @@ export default function NavBar() {
           <div className="flex items-center gap-3">
             <span className="hidden md:inline text-sm text-[var(--ink-tertiary)] font-light">Data sources</span>
             {/* Generous hit box (pad + negative margin keeps layout put): the fan-out moves chips
-                right, so hover must survive the chase. delay-150 on exit = grace before collapse. */}
+                right, so hover must survive the chase. delay-150 on exit = grace before collapse.
+                Hidden below sm: four logos plus their hover padding don't fit beside the brand on
+                a phone (they'd push the account controls onto their own line), and their labels
+                are hover-only anyway — no hover on touch. */}
             {/* role=group, not list/listitem: the chips are now real controls
                 (a link when there is one, a button when there isn't), and
                 listitem role would strip that semantics. */}
             <div
-              className="group flex items-center -mx-3 px-3 -my-2 py-2 pr-12 -mr-4"
+              className="group hidden items-center -mx-3 px-3 -my-2 py-2 pr-12 -mr-4 sm:flex"
               role="group"
               aria-label="Data sources"
             >
@@ -408,11 +358,6 @@ export default function NavBar() {
           </div>
         </div>
 
-        {/* Index tickers — moved here from the home hero */}
-        <div className="hidden xl:flex items-center gap-6">
-          <IndexSpark name="NIFTY 50" symbol="^NSEI" />
-          <IndexSpark name="NASDAQ 100" symbol="^NDX" />
-        </div>
 
         {/* Global search — stocks/agents/skills/runs; centered between the
             mast and the account controls on md+, own row on phones. */}
@@ -504,7 +449,10 @@ export default function NavBar() {
           )}
         </div>
 
-        <div className="order-2 flex items-center gap-5 md:order-none">
+        {/* Controls: `ml-auto` keeps them pinned right if they ever land on a
+            line of their own (narrow phone, big system font) — with
+            justify-between a lone item falls back to the left edge. */}
+        <div className="order-2 ml-auto flex items-center gap-5 md:order-none lg:justify-self-end">
           {user && <AlertBell />}
           <button
             aria-label="Toggle color mode"

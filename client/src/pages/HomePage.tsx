@@ -1,4 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type ComponentType, type DragEvent } from "react";
+import { useEffect, useRef, useState, type ReactNode, type ComponentType, type DragEvent } from "react";
+import { verdictInk } from "@/lib/analysisFormat";
+import sp500Logo from "@/assets/indices/s-and-p-500.svg";
+import nasdaq100Logo from "@/assets/indices/nasdaq-100.svg";
+import sensexLogo from "@/assets/indices/bse-sensex.svg";
+import { useColorMode } from "@/components/ui/color-mode";
 import { Link } from "react-router-dom";
 import { Clock, Play, ArrowRight, List, Plus, X, Search, Loader2, Pencil, Trash2, LayoutGrid, Table2 } from "lucide-react";
 import { AnalysisService, AgentService, API_BASE, WatchlistService, AlertService, type AlertRuleRow, type AlertRow, type WatchlistRow, type WatchlistItem } from "@/db";
@@ -43,16 +48,7 @@ function flag(source?: string | null): string {
     return String(source || "").toUpperCase() === "NSE" ? "🇮🇳" : "🇺🇸";
 }
 
-/** Verdict word → signal color (green strong, amber mid, red negative),
- *  matching verdictForScore's banding in lib/analysisFormat. */
-function verdictColor(verdict?: string | null): string | undefined {
-    if (!verdict) return undefined;
-    const v = verdict.toLowerCase();
-    if (["outstanding", "strong", "shortlist", "buy"].includes(v)) return "var(--signal-positive-text)";
-    if (["fair", "watch", "hold", "underwhelming", "neutral"].includes(v)) return "var(--signal-caution-text)";
-    if (["subpar", "pass", "error", "sell"].includes(v)) return "var(--signal-negative-text)";
-    return undefined;
-}
+
 
 type Spark = { pts: string; color: string; textColor: string; pct: number | null };
 
@@ -243,7 +239,7 @@ function RunCard({ run, onRemove }: { run: RunCardData; onRemove?: () => void })
                             {a.verdict && (
                                 <span
                                     className="shrink-0 font-app-body text-[12px] font-normal"
-                                    style={{ color: verdictColor(a.verdict) || "var(--ink-primary)" }}
+                                    style={{ color: verdictInk(a.verdict) || "var(--ink-primary)" }}
                                 >
                                     {a.verdict}
                                 </span>
@@ -735,7 +731,7 @@ function WatchlistSection({ runs }: { runs: any[] }) {
                                                     <td key={agent} className="whitespace-nowrap px-2.5 py-2 align-middle">
                                                         {hit ? (
                                                             <span className="flex items-center gap-2">
-                                                                <span className="font-app-body text-[13px] font-normal" style={{ color: verdictColor(hit.verdict) || "var(--ink-primary)" }}>
+                                                                <span className="font-app-body text-[13px] font-normal" style={{ color: verdictInk(hit.verdict) || "var(--ink-primary)" }}>
                                                                     {hit.verdict || "Run"}
                                                                 </span>
                                                                 <span className="font-app-body text-[11px] font-normal text-[var(--ink-tertiary)]">{hit.when}</span>
@@ -772,20 +768,152 @@ function WatchlistSection({ runs }: { runs: any[] }) {
     );
 }
 
-export default function HomePage() {
-    // Hero: cap the paragraph to the tagline's rendered width so both
-    // blocks share the same right edge at every viewport. The tagline is
-    // w-fit, so its border box IS its text width; a ResizeObserver tracks it.
-    const titleRef = useRef<HTMLHeadingElement>(null);
-    const [titleWidth, setTitleWidth] = useState<number | undefined>();
-    useLayoutEffect(() => {
-        const el = titleRef.current;
-        if (!el) return;
-        const ro = new ResizeObserver(() => setTitleWidth(el.getBoundingClientRect().width));
-        ro.observe(el);
-        return () => ro.disconnect();
+const HEATMAP_SOURCES = [
+    { id: "SPX500", label: "S&P 500", symbol: "^GSPC", logo: sp500Logo },
+    { id: "NASDAQ100", label: "Nasdaq 100", symbol: "^NDX", logo: nasdaq100Logo },
+    { id: "SENSEX", label: "Sensex", symbol: "^BSESN", logo: sensexLogo },
+] as const;
+
+const HEATMAP_KEY = "relativity.heatmapSource";
+
+/** Heatmap + index toggle. Replaces the hero text at the top of the rail. */
+function HeatmapPanel() {
+    const { colorMode } = useColorMode();
+    const [source, setSource] = useState<string>(() => {
+        const saved = localStorage.getItem(HEATMAP_KEY);
+        return HEATMAP_SOURCES.some((s) => s.id === saved) ? String(saved) : HEATMAP_SOURCES[0].id;
+    });
+    const [changes, setChanges] = useState<Record<string, number | null>>({});
+    const boxRef = useRef<HTMLDivElement>(null);
+    // The embed script is async: React must not detach it before it runs
+    // (StrictMode's double effect did exactly that → null parentNode crash).
+    const pendingRef = useRef<HTMLScriptElement | null>(null);
+
+    // Last choice survives a reload.
+    useEffect(() => { localStorage.setItem(HEATMAP_KEY, source); }, [source]);
+
+    // Day change per index: last intraday close vs the feed's previous close.
+    useEffect(() => {
+        let alive = true;
+        Promise.all(
+            HEATMAP_SOURCES.map((s) =>
+                fetch(`${API_BASE}/market/chart/${encodeURIComponent(s.symbol)}?range=1d&interval=5m`, { cache: "no-store" })
+                    .then((r) => (r.ok ? r.json() : null))
+                    .catch(() => null)
+                    .then((d: { closes?: number[]; previous_close?: number | null } | null) => {
+                        const last = d?.closes?.[d.closes.length - 1];
+                        const prev = d?.previous_close;
+                        return [s.id, typeof last === "number" && prev ? ((last - prev) / prev) * 100 : null] as const;
+                    }),
+            ),
+        ).then((rows) => { if (alive) setChanges(Object.fromEntries(rows)); });
+        return () => { alive = false; };
     }, []);
 
+    // The embed script reads its own text as config, and React never executes
+    // injected <script>s — so build it imperatively and re-inject whenever the
+    // source or the theme changes.
+    useEffect(() => {
+        const box = boxRef.current;
+        if (!box) return;
+        let dead = false;
+        const inject = () => {
+            if (dead) return;
+            box.replaceChildren();
+            const holder = document.createElement("div");
+            holder.className = "tradingview-widget-container__widget";
+            holder.style.height = "100%";
+            const script = document.createElement("script");
+            script.type = "text/javascript";
+            script.async = true;
+            script.src = "https://s3.tradingview.com/external-embedding/embed-widget-stock-heatmap.js";
+            script.textContent = JSON.stringify({
+                exchanges: [],
+                dataSource: source,
+                grouping: "sector",
+                blockSize: "market_cap_basic",
+                blockColor: "change",
+                locale: "en",
+                symbolUrl: "",
+                colorTheme: colorMode === "dark" ? "dark" : "light",
+                hasTopBar: false,
+                isDataSetEnabled: false,
+                isZoomEnabled: true,
+                hasSymbolTooltip: true,
+                isMonoSize: false,
+                width: "100%",
+                height: "100%",
+            });
+            pendingRef.current = script;
+            const settled = () => { if (pendingRef.current === script) pendingRef.current = null; };
+            script.addEventListener("load", settled, { once: true });
+            script.addEventListener("error", settled, { once: true });
+            box.append(holder, script);
+        };
+        // Swap only after the previous script has executed, else wait for it.
+        const pending = pendingRef.current;
+        if (pending) {
+            pending.addEventListener("load", inject, { once: true });
+            pending.addEventListener("error", inject, { once: true });
+        } else {
+            inject();
+        }
+        return () => { dead = true; };
+    }, [source, colorMode]);
+
+    return (
+        <section>
+            <h2 className={SECTION_TITLE}>Market heatmap</h2>
+            {/* No pill: the shadcn default (bg-muted / border / p-1) is
+                overridden so the buttons sit on the canvas, and the selected
+                chip uses the watchlist's own bg-console-surface. */}
+            <ToggleGroup
+                type="single"
+                value={source}
+                onValueChange={(v) => { if (v) setSource(v); }}
+                aria-label="Heatmap index"
+                className="mt-4 flex h-auto gap-1 border-0 bg-transparent p-0"
+            >
+                {HEATMAP_SOURCES.map((s) => {
+                    const ch = changes[s.id];
+                    return (
+                        <ToggleGroupItem
+                            key={s.id}
+                            value={s.id}
+                            aria-label={ch == null ? s.label : `${s.label}, day change ${ch >= 0 ? "plus" : "minus"} ${Math.abs(ch).toFixed(1)} percent`}
+                            className="h-8 min-w-0 flex-1 gap-1.5 rounded-[8px] border-0 px-1.5 font-app-body text-[12px] font-normal text-console-ink-3 hover:bg-console-surface/60 hover:text-console-ink data-[state=on]:bg-console-surface data-[state=on]:text-console-ink data-[state=on]:shadow-none"
+                        >
+                            {/* 26px = the two-line block (11px + 10px at
+                                leading-tight), so the circle's top and bottom
+                                sit on the label and the change. */}
+                            <img src={s.logo} alt="" aria-hidden="true" className="size-[26px] shrink-0 rounded-full" />
+                            <span className="flex min-w-0 flex-col items-start leading-tight">
+                                <span className="max-w-full truncate text-[11px]">{s.label}</span>
+                                <span
+                                    className="font-app-tabular text-[10px]"
+                                    style={{ color: ch == null ? undefined : ch >= 0 ? "var(--signal-positive-text)" : "var(--signal-negative-text)" }}
+                                >
+                                    {ch == null ? "—" : `${ch >= 0 ? "+" : "−"}${Math.abs(ch).toFixed(1)}%`}
+                                </span>
+                            </span>
+                        </ToggleGroupItem>
+                    );
+                })}
+            </ToggleGroup>
+            {/* Portrait on purpose: the widget's treemap packs sector groups
+                along the short edge, so a tall box keeps it to ~2 sectors
+                wide instead of 8 unreadable slivers. Height lives on the
+                WRAPPER — the embed script overwrites its own container with
+                inline height:100%, which would otherwise resolve to auto. */}
+            <div className="mt-3 h-[600px] w-full overflow-hidden rounded-xl border border-[var(--hairline)] bg-[var(--surface-canvas)]">
+                <div ref={boxRef} className="tradingview-widget-container h-full w-full" />
+            </div>
+        </section>
+    );
+}
+
+
+export default function HomePage() {
     const [alertRules, setAlertRules] = useState<AlertRuleRow[]>([]);
     const [alerts, setAlerts] = useState<AlertRow[]>([]);
     const [runs, setRuns] = useState<any[]>([]);
@@ -841,14 +969,7 @@ export default function HomePage() {
                     {/* ponytail: fixed left rail — 360px leaves the watchlist
                         600px+ from 1024 up; 440px from 1280. */}
                     <div className="order-1 flex w-full flex-col gap-12 pb-12 lg:w-[360px] lg:shrink-0 xl:w-[440px]">
-                        <div>
-                            <h1 ref={titleRef} className="w-fit max-w-full font-[family-name:var(--font-display)] text-[clamp(1.5rem,3vw,2rem)] leading-none font-normal tracking-[-0.02em] text-[var(--ink-primary)]">
-                                Agents watch the market, you watch the agents.
-                            </h1>
-                            <p style={{ maxWidth: titleWidth }} className="mt-3 text-sm font-[family-name:var(--font-body)] font-[200] text-[var(--ink-secondary)] leading-relaxed">
-                                Relativity agents evaluate stocks and markets against a specific investment thesis. Every agent's reasoning and verdict is supported by citations to official data sources.
-                            </p>
-                        </div>
+                        <HeatmapPanel />
 
                         {/* Alerts — verdicts that changed while you were away */}
                         <HomeSection
@@ -892,8 +1013,8 @@ export default function HomePage() {
                                                 <span
                                                     className="shrink-0 rounded-full px-2 py-0.5 font-app-body text-[11px] font-medium"
                                                     style={{
-                                                        color: verdictColor(a.verdict) || "var(--ink-secondary)",
-                                                        background: `color-mix(in srgb, ${verdictColor(a.verdict) || "var(--ink-secondary)"} 14%, transparent)`,
+                                                        color: verdictInk(a.verdict) || "var(--ink-secondary)",
+                                                        background: `color-mix(in srgb, ${verdictInk(a.verdict) || "var(--ink-secondary)"} 14%, transparent)`,
                                                     }}
                                                 >
                                                     {a.verdict}
@@ -917,7 +1038,7 @@ export default function HomePage() {
                                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
                                     {activeCards.map(({ schedule: s, agent, last }) => {
                                         const verdict = last ? (last.verdict || last.status || "") : "";
-                                        const vColor = verdictColor(verdict);
+                                        const vColor = verdictInk(verdict);
                                         return (
                                         <Link
                                             key={s.id}
@@ -1017,7 +1138,7 @@ export default function HomePage() {
                                                     {run.verdict && (
                                                         <span
                                                             className="font-app-body text-[11px] font-normal leading-tight"
-                                                            style={{ color: verdictColor(run.verdict) || "var(--ink-primary)" }}
+                                                            style={{ color: verdictInk(run.verdict) || "var(--ink-primary)" }}
                                                         >
                                                             {run.verdict}
                                                         </span>

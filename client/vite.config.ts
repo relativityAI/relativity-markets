@@ -14,10 +14,12 @@ export default defineConfig({
         host: true,  
         port: 5173,
         proxy: {
+            // No rewrite: Express strips /api itself (and flags apiPath so
+            // apiOnly routes like /analysis know it's an API call, not a
+            // browser navigation). Stripping here broke those in dev.
             "/api": {
                 target: process.env.VITE_RELATIVITY_API || "http://127.0.0.1:8501",
-                changeOrigin: true,
-                rewrite: (path) => path.replace(/^\/api/, "")
+                changeOrigin: true
             }
         }
     },

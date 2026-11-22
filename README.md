@@ -67,7 +67,7 @@ relativity
 Opens http://127.0.0.1:8501. Stop: `Ctrl+C`. Every run pulls the latest app image, so you always get the newest version — no `git pull` needed.
 
 - Windows: install via Git Bash. Works in cmd, PowerShell, Git Bash.
-- Closing the terminal leaves it running → stop with `docker compose down`
+- Closing the terminal (or Ctrl+C) stops the containers — nothing left running.
 - Dev mode: `npm install && npm run dev` → http://localhost:5173
 
 Pages:

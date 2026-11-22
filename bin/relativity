@@ -80,5 +80,9 @@ if [ -n "$running" ] && up; then
 fi
 
 echo "Starting Relativity: $URL  —  Ctrl+C stops it"
+# Close means close: closing the terminal (SIGHUP) or Ctrl+C must take the
+# stack down — otherwise the containers outlive the terminal and the app
+# stays reachable in the browser (restart: unless-stopped keeps them too).
+trap 'compose down' EXIT INT TERM HUP
 open_when_up &
 compose up
