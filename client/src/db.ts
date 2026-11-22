@@ -130,12 +130,22 @@ export interface PluginDetail extends PluginSummary {
     skills: SkillSummary[];
 }
 
-/** One configured MCP server for the New Run toggles. */
+/** One MCP server for the New Run toggles and the Settings MCP list. */
 export interface McpSource {
     name: string;
     label: string;
     webProvider: "searxng" | "tavily" | null;
     required: boolean;
+    /** Resolved url; blank when the config points at an unset env var. */
+    url: string;
+    /** Env var the url lives in ("" for literal and user-added urls). */
+    urlEnv: string;
+    /** Off in Settings → the run's toolbox skips it. */
+    enabled: boolean;
+    /** True when the user added it in Settings. */
+    custom: boolean;
+    /** Known tool names; empty for user-added servers (probed at run time). */
+    tools: string[];
 }
 
 export const PluginService = {
@@ -209,6 +219,11 @@ export function runPluginLabel(
         return names.join(", ");
     }
     return fallback || "";
+}
+
+/** The schedule calendars cache rules at mount — every write pokes them to refetch. */
+function notifyAlertRulesChanged() {
+    if (typeof window !== "undefined") window.dispatchEvent(new Event("alert-rules-changed"));
 }
 
 export const AnalysisService = {
@@ -285,6 +300,7 @@ export const AnalysisService = {
         timezone: string;
     }) {
         const response = await axios.post(`${API_BASE}/alert-rules`, config);
+        notifyAlertRulesChanged();
         return response.data as AlertRuleRow;
     },
 
@@ -293,13 +309,22 @@ export const AnalysisService = {
         return response.data as AlertRuleRow[];
     },
 
+    /** Rule occurrences (local date + UTC instant) inside a YYYY-MM-DD window —
+     *  what the schedule calendars render. */
+    async listOccurrences(from: string, to: string) {
+        const response = await axios.get(`${API_BASE}/alert-rules/occurrences`, { params: { from, to } });
+        return response.data as { rule_id: string; date: string; at: number }[];
+    },
+
     async setAlertRuleEnabled(id: string, enabled: boolean) {
         const response = await axios.patch(`${API_BASE}/alert-rules/${encodeURIComponent(id)}`, { enabled });
+        notifyAlertRulesChanged();
         return response.data as { ok: boolean; enabled: boolean };
     },
 
     async deleteAlertRule(id: string) {
         const response = await axios.delete(`${API_BASE}/alert-rules/${encodeURIComponent(id)}`);
+        notifyAlertRulesChanged();
         return response.data;
     },
 

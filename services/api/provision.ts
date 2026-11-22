@@ -16,11 +16,12 @@ export async function ensureUserSettings(userId: string): Promise<void> {
   }
 }
 
-/** Fetch decrypted user LLM keys + web-search preference. */
+/** Fetch decrypted user LLM keys + web-search preference (+ raw prefs, for
+ *  the MCP enable/disable and custom-server list). */
 export async function fetchUserKeys(
   userId: string,
-): Promise<{ llmKeys: Record<string, string>; webSearchProvider: "searxng" | "tavily" }> {
-  const fallback = { llmKeys: {}, webSearchProvider: "searxng" as const };
+): Promise<{ llmKeys: Record<string, string>; webSearchProvider: "searxng" | "tavily"; prefs: Record<string, string> }> {
+  const fallback = { llmKeys: {}, webSearchProvider: "searxng" as const, prefs: {} as Record<string, string> };
   try {
     const data = await getUserSettings(userId);
     if (!data) return fallback;
@@ -39,7 +40,7 @@ export async function fetchUserKeys(
     // Tavily mode needs its key — a missing/expired key silently degrades to
     // SearXNG so the run still has a web tool.
     const webSearchProvider: "searxng" | "tavily" = pref === "tavily" && llmKeys.tavily ? "tavily" : "searxng";
-    return { llmKeys, webSearchProvider };
+    return { llmKeys, webSearchProvider, prefs: data.prefs ?? {} };
   } catch (e: any) {
     log.error("[provision]", `fetchUserKeys failed for ${userId}: ${e?.message || e}`);
     return fallback;
