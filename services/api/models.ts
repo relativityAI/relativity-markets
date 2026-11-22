@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import YAML from "yaml";
 import { config } from "./config.js";
 import { log } from "./logger.js";
+import { CUSTOM_KEY, customProviders } from "../harness/model.js";
 
 export interface ModelEntry {
   id: string;
@@ -217,21 +218,30 @@ async function fetchProviderModels(
 export async function getAvailableModelsForUser(
   llmKeys: Record<string, string>,
 ): Promise<string[]> {
+  // User-added OpenAI-compatible providers: their declared model list, prefixed
+  // with the id so they route exactly like a built-in provider.
+  const custom = customProviders(llmKeys);
+
   const userProviders = Object.entries(llmKeys)
-    .filter(([k, v]) => k !== "tavily" && !!v)
+    .filter(([k, v]) => k !== "tavily" && k !== CUSTOM_KEY && !!v)
     .map(([k]) => k);
   const serverProviders = Object.keys(config.serverKeys).filter((p) => config.serverKeys[p]?.length);
-  const allProviders = [...new Set([...serverProviders, ...userProviders])];
+  const allProviders = [...new Set([...serverProviders, ...userProviders, ...custom.map((c) => c.id)])];
 
   // No keys anywhere — nothing is runnable. Every provider needs a key, so
   // don't expose models the user cannot call yet.
-  if (allProviders.length === 0) return [];
+  if (!allProviders.length) return [];
 
   // Provider models for a keyed provider: explicit PROVIDER_MODELS env list,
   // else the curated YAML entries for that provider (in priority order).
   const explicitModels: string[] = [];
   const curatedModels: string[] = [];
   for (const provider of allProviders) {
+    const declared = custom.find((c) => c.id === provider);
+    if (declared) {
+      explicitModels.push(...declared.models.map((m) => (m.includes("/") ? m : `${provider}/${m}`)));
+      continue;
+    }
     const envList = config.serverModels[provider];
     if (envList?.length) {
       explicitModels.push(...envList);

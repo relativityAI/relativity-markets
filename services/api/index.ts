@@ -28,7 +28,7 @@ import {
 } from "../db/repo.js";
 import { fetchUserKeys, ensureUserSettings } from "./provision.js";
 import { getSourceStatuses } from "./datasources.js";
-import { getModelIds, getAvailableModelsForUser } from "./models.js";
+import { getModels, getModelIds, getAvailableModelsForUser } from "./models.js";
 import { getAgentCategories, isValidAgentCategory } from "./categories.js";
 import { getSources, searchStocks } from "./discovery.js";
 import { tickerLogoUrl } from "./tickerLogos.js";
@@ -1051,6 +1051,19 @@ app.get("/analysis/:id/stream", requireAuth, async (req, res) => {
 // ---- reference data ----
 app.get("/sources", (_req, res) => {
   res.json(getSources());
+});
+
+// Curated catalog size per provider — the Settings "Models" column.
+// ponytail: curated models.yaml counts only; live-discovered models from a
+// provider's /v1/models aren't counted. Merge /models per keyed provider if
+// the column ever needs to track discovery.
+app.get("/models/catalog", (_req, res) => {
+  const counts: Record<string, number> = {};
+  for (const m of getModels()) {
+    const p = m.id.split("/")[0];
+    counts[p] = (counts[p] || 0) + 1;
+  }
+  res.json(counts);
 });
 
 app.get("/models", requireAuth, async (req, res) => {

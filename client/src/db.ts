@@ -420,6 +420,12 @@ export const SettingsService = {
     async deleteLLMKey(keyName: string) {
         const response = await axios.delete(`${API_BASE}/user/settings/llm-key/${encodeURIComponent(keyName)}`);
         return response.data;
+    },
+
+    /** Curated model count per provider — the Settings table's "Models" column. */
+    async getModelCatalog(): Promise<Record<string, number>> {
+        const response = await axios.get(`${API_BASE}/models/catalog`);
+        return response.data;
     }
 };
 
