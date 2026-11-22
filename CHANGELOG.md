@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.13.0...relativity-markets-v0.14.0) (2026-11-22)
+
+
+### Features
+
+* pulse calendars, keyboard watchlist, MCP settings, home CTA ([#206](https://github.com/relativityAI/relativity-markets/issues/206)) ([814d9cc](https://github.com/relativityAI/relativity-markets/commit/814d9cc40e1449567079d5bc7f1b6a5eba3ffb54))
+
 ## [0.13.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.12.1...relativity-markets-v0.13.0) (2026-11-22)
 
 
