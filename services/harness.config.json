@@ -2,7 +2,7 @@
   "_help": "Harness defaults, read by BOTH the CLI and the API server. Precedence: flags > HARNESS_* env (services/.env) > this file > built-ins. `tools` declares the agent's toolbox as MCP sources only; urls stay in env, the file holds the env var NAME (urlEnv). `keyFrom` binds a per-run credential (e.g. the user's Tavily key) into the Authorization header — the source is skipped when the run has no such key.",
   "engine": "v2",
   "model": "opencode/deepseek-v4.1-flash",
-  "skills": ["chartist-technical-analysis"],
+  "skills": ["chartist-playbook"],
   "source": "SEC",
   "tools": {
     "mcp": [

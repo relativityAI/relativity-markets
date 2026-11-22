@@ -7,6 +7,9 @@ export interface PluginAvatarProps {
     plugin: PluginSeedLike | string | null | undefined;
     /** Chip size in px. Default 24. */
     size?: number;
+    /** Sizing classes (e.g. "size-16 sm:size-20") — overrides `size` so the
+     *  chip can respond to the space its container has. */
+    className?: string;
     /**
      * Accessible label. Pass the plugin name when the chip stands alone;
      * omit when the name renders right beside it (the chip then becomes
@@ -19,7 +22,7 @@ export interface PluginAvatarProps {
  * A plugin's identity chip: a DiceBear Slice mark on the bare surface
  * (no background). Deterministic — same plugin, same chip, everywhere.
  */
-export default function PluginAvatar({ plugin, size = 24, label }: PluginAvatarProps) {
+export default function PluginAvatar({ plugin, size = 24, label, className }: PluginAvatarProps) {
     const seed = useMemo(() => pluginSeed(plugin), [plugin]);
     const svg = useMemo(() => pluginAvatarSvg(seed), [seed]);
 
@@ -30,9 +33,10 @@ export default function PluginAvatar({ plugin, size = 24, label }: PluginAvatarP
             alignItems="center"
             justifyContent="center"
             flexShrink={0}
-            w={`${size}px`}
-            h={`${size}px`}
+            w={className ? undefined : `${size}px`}
+            h={className ? undefined : `${size}px`}
             overflow="hidden"
+            className={className}
             role={label ? "img" : undefined}
             aria-label={label}
             aria-hidden={label ? undefined : true}

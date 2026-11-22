@@ -133,6 +133,26 @@ export function dateQualifies(frequency: string, start: string, date: string): b
   return d.getUTCDate() === s.getUTCDate();
 }
 
+/** Every qualifying occurrence whose local date falls in `[from, to]`
+ *  (YYYY-MM-DD, inclusive) — the calendar views expand a rule themselves
+ *  instead of re-implementing the recurrence rules client-side. */
+export function occurrencesBetween(
+  s: Pick<AlertRuleRow, "time" | "timezone" | "frequency" | "start_date" | "created_at">,
+  from: string,
+  to: string,
+): { date: string; at: number }[] {
+  const start = s.start_date || dateInTz(+new Date(s.created_at || 0) || Date.now(), s.timezone);
+  const out: { date: string; at: number }[] = [];
+  const last = +new Date(`${to}T00:00:00Z`);
+  for (let t = +new Date(`${from}T00:00:00Z`); t <= last; t += 86_400_000) {
+    const date = new Date(t).toISOString().slice(0, 10);
+    if (dateQualifies(s.frequency || "daily", start, date)) {
+      out.push({ date, at: occurrence(date, s.time, s.timezone) });
+    }
+  }
+  return out;
+}
+
 /** Most recent qualifying occurrence at or before `now`, or null when none of
  *  the candidates (walk-back capped at ~11 weeks, the monthly worst case) is
  *  on or after the start date. */

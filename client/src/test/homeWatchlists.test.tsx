@@ -34,6 +34,7 @@ vi.mock("@/db", () => ({
   AnalysisService: {
     listAlertRules: vi.fn(async () => []),
     listAnalyses: vi.fn(async () => []),
+    listOccurrences: vi.fn(async () => []),
   },
   AlertService: { listAlerts: vi.fn(async () => []), markRead: vi.fn(async () => {}), markAllRead: vi.fn(async () => {}) },
   PluginService: { list: vi.fn(async () => []) },
@@ -81,15 +82,11 @@ const openSwitcher = async () => {
   press(await screen.findByRole("button", { name: /switch watchlist/i }));
   return await screen.findByRole("menu");
 };
-const openOptions = async () => {
-  press(await screen.findByRole("button", { name: /watchlist options/i }));
-  return await screen.findByRole("menu");
-};
 
 describe("home watchlists", () => {
   it("keeps the watchlist as its own column beside the left rail", async () => {
     render(wrap(<HomePage />));
-    const rail = screen.getByRole("heading", { name: "Latest runs" }).closest("section")!.parentElement!;
+    const rail = screen.getByLabelText("Heatmap index").closest("section")!.parentElement!;
     expect(rail.className).toContain("flex-col");
 
     const watchlist = screen.getByRole("region", { name: "Watchlist" });
@@ -121,11 +118,12 @@ describe("home watchlists", () => {
     expect(screen.queryByRole("status", { name: /loading watchlists/i })).toBeNull();
   });
 
-  it("creates and renames lists from the options menu", async () => {
+  it("creates a list from the switcher and renames it with the pencil icon", async () => {
     render(wrap(<HomePage />));
     await screen.findByRole("button", { name: /switch watchlist/i });
 
-    fireEvent.click((await openOptions()).querySelector('[role="menuitem"]')!); // New watchlist
+    const menu = await openSwitcher();
+    fireEvent.click(within(menu as HTMLElement).getByRole("menuitem", { name: /new watchlist/i }));
     fireEvent.change(screen.getByLabelText("Watchlist name"), { target: { value: "Tech" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
@@ -133,8 +131,7 @@ describe("home watchlists", () => {
     expect(switcher.textContent).toContain("Tech");
     expect(WatchlistService.create).toHaveBeenCalledWith("Tech");
 
-    const menu = await openOptions();
-    fireEvent.click(within(menu as HTMLElement).getByRole("menuitem", { name: /rename/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /rename watchlist/i }));
     fireEvent.change(screen.getByLabelText("Watchlist name"), { target: { value: "Equities" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
@@ -159,12 +156,58 @@ describe("home watchlists", () => {
     );
   });
 
+  it("picks a search result with the keyboard (arrows + Enter)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/stocks/search")) {
+        return { ok: true, json: async () => [
+          { ticker: "AAPL", name: "Apple Inc.", source: "SEC" },
+          { ticker: "MSFT", name: "Microsoft Corp.", source: "SEC" },
+        ] };
+      }
+      return { ok: false, status: 503, json: async () => ({}) };
+    }));
+    render(wrap(<HomePage />));
+    await screen.findByRole("button", { name: /switch watchlist/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /add stock/i }));
+    const input = screen.getByLabelText("Search stocks to add");
+    fireEvent.change(input, { target: { value: "app" } });
+
+    const first = await screen.findByRole("option", { name: /Apple/i });
+    expect(first.getAttribute("aria-selected")).toBe("true"); // cursor starts on row 1
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(screen.getByRole("option", { name: /Microsoft/i }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(screen.getByRole("option", { name: /Apple/i }).getAttribute("aria-selected")).toBe("true");
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await panel().findByRole("rowheader", { name: /AAPL/ })).toBeTruthy();
+    // Enter added it without a single click; the picker closed behind it.
+    expect(screen.queryByLabelText("Search stocks to add")).toBeNull();
+  });
+
+  it("nudges a fresh, empty list toward the + and stops once a stock lands", async () => {
+    render(wrap(<HomePage />));
+    await screen.findByRole("button", { name: /switch watchlist/i });
+
+    expect(await screen.findByText("create your first watchlist")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /rename watchlist/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /export watchlist as csv/i })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /add stock/i }));
+    fireEvent.change(screen.getByLabelText("Search stocks to add"), { target: { value: "app" } });
+    fireEvent.click(await screen.findByRole("option", { name: /AAPL/i }));
+
+    await screen.findByRole("rowheader", { name: /AAPL/ });
+    expect(screen.queryByText("create your first watchlist")).toBeNull();
+  });
+
   it("confirms through the app's dialog before deleting a watchlist", async () => {
     render(wrap(<HomePage />));
     await screen.findByRole("button", { name: /switch watchlist/i });
 
-    const first = await openOptions();
-    fireEvent.click(within(first as HTMLElement).getByRole("menuitem", { name: /delete/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /delete watchlist/i }));
     expect(await screen.findByRole("dialog")).toBeTruthy();
     expect(screen.getByText(/will be permanently removed/i)).toBeTruthy();
 
@@ -172,8 +215,7 @@ describe("home watchlists", () => {
     expect(screen.getByRole("button", { name: /switch watchlist/i })).toBeTruthy();
     expect(WatchlistService.delete).not.toHaveBeenCalled();
 
-    const second = await openOptions();
-    fireEvent.click(within(second as HTMLElement).getByRole("menuitem", { name: /delete/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /delete watchlist/i }));
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
     await waitFor(() => expect(WatchlistService.delete).toHaveBeenCalled());
     await waitFor(() =>
@@ -232,11 +274,14 @@ describe("home watchlists", () => {
       items: [{ symbol: "AAPL", source: "SEC" }, { symbol: "MSFT", source: "SEC" }],
       created_at: "2026-01-01", updated_at: "2026-01-01",
     }];
-    vi.mocked(AnalysisService.listAnalyses).mockResolvedValueOnce([
+    // Two consumers of listAnalyses: the home rail and the week calendar —
+    // queue the runs twice so neither call drains the other's fixture.
+    const fixture = [
       { id: "r1", symbol: "AAPL", source: "SEC", share_name: "Apple Inc.", agent_name: "Chartist Analyst", verdict: "Strong", created_at: "2026-01-01T10:00:00Z" },
       { id: "r2", symbol: "AAPL", source: "SEC", share_name: "Apple Inc.", agent_name: "Risk Agent", verdict: "Fair", created_at: "2026-01-01T09:00:00Z" },
       { id: "r3", symbol: "MSFT", source: "SEC", share_name: "Microsoft", agent_name: "Chartist Analyst", verdict: "Sell", created_at: "2026-01-01T08:00:00Z" },
-    ] as any);
+    ] as any;
+    vi.mocked(AnalysisService.listAnalyses).mockResolvedValueOnce(fixture).mockResolvedValueOnce(fixture);
     render(wrap(<HomePage />));
 
     const table = await panel().findByRole("table");
@@ -276,14 +321,16 @@ describe("home watchlists", () => {
     expect(panel().getAllByRole("rowheader")[0].textContent).toContain("MSFT"); // flipped: Sell first
   });
 
-  it("puts the switcher left and add / open-full / options right", async () => {
+  it("puts the switcher left and the add / open / export / rename / delete icons right", async () => {
     render(wrap(<HomePage />));
     const region = await screen.findByRole("region", { name: "Watchlist" });
     const header = region.firstElementChild as HTMLElement;
 
     expect(within(header).getByRole("button", { name: /switch watchlist/i })).toBeTruthy();
     expect(within(header).getByRole("button", { name: /add stock/i })).toBeTruthy();
-    expect(within(header).getByRole("button", { name: /watchlist options/i })).toBeTruthy();
+    expect(within(header).getByRole("button", { name: /export watchlist as csv/i })).toBeTruthy();
+    expect(within(header).getByRole("button", { name: /rename watchlist/i })).toBeTruthy();
+    expect(within(header).getByRole("button", { name: /delete watchlist/i })).toBeTruthy();
 
     const full = within(header).getByRole("link", { name: /open full watchlist/i });
     expect(full.getAttribute("href")).toBe("/watchlists");

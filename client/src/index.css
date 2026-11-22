@@ -720,3 +720,89 @@ html.dark .sectoral-title {
 .listbox-panel [role="option"]:hover {
   background-color: var(--surface-recessed) !important;
 }
+
+/* FullCalendar (Pulse theme) in the house type: Anek Latin Light — the
+   theme ships its own weights (600/700) and a white canvas; neither is ours.
+   v7 has no .fc root class, so the calendar passes className="rel-cal". */
+.rel-cal,
+.rel-cal * {
+  font-family: var(--font-body);
+  font-weight: 300 !important;
+}
+
+/* FullCalendar paints the event box with --fc-event-color, which it writes
+   inline as var(--fc-pulse-event) — so neutralise the var it references, not
+   the property (an inline declaration beats an inherited !important). The
+   chip brings its own tinted fill, so the box colour is only a stray frame. */
+.rel-cal {
+  --fc-pulse-event: transparent;
+}
+
+/* The calendar sits on the app canvas in both themes, not FullCalendar's white. */
+:root,
+[data-color-scheme="light"] {
+  --fc-pulse-background: var(--surface-canvas) !important;
+}
+[data-color-scheme="dark"] {
+  --fc-pulse-background: var(--surface-canvas) !important;
+}
+
+/* First-watchlist nudge: the arrow + line shake every few seconds so a new
+   user's eye lands on the +. Reduced motion keeps the hint, drops the wobble. */
+@keyframes rel-hint-nudge {
+  0%, 30%, 100% { transform: translate3d(0, 0, 0); }
+  37% { transform: translate3d(-2px, 1px, 0) rotate(-3deg); }
+  44% { transform: translate3d(2px, -1px, 0) rotate(3deg); }
+  51% { transform: translate3d(-1px, 1px, 0) rotate(-2deg); }
+  58% { transform: translate3d(1px, 0, 0) rotate(1deg); }
+  65% { transform: translate3d(0, 0, 0); }
+}
+.rel-hint {
+  animation: rel-hint-nudge 1.6s ease-in-out infinite;
+  transform-origin: 70% 50%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rel-hint { animation: none; }
+}
+
+/* Home CTA: the play chip breathes a soft blue halo so the eye lands on it
+   the moment the page opens. Reduced motion keeps the chip, drops the halo. */
+@keyframes rel-cta-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--signal-live) 45%, transparent); }
+  50% { box-shadow: 0 0 0 14px color-mix(in srgb, var(--signal-live) 0%, transparent); }
+}
+.rel-run-cta .rel-cta-chip {
+  animation: rel-cta-breathe 2.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rel-run-cta .rel-cta-chip { animation: none; }
+}
+
+/* New Run title: each letter rides the hue cycle on its own delay, so a band
+   of colour travels across the word instead of the whole word pulsing in
+   lockstep. Every letter is fully opaque ink at the cycle edges. */
+@keyframes rel-letter-hue {
+  0%, 100% { color: var(--ink-primary); }
+  25% { color: color-mix(in srgb, var(--signal-live) 80%, var(--ink-primary)); }
+  50% { color: color-mix(in srgb, var(--signal-positive-text) 80%, var(--ink-primary)); }
+  75% { color: color-mix(in srgb, var(--signal-caution-text) 80%, var(--ink-primary)); }
+}
+.rel-run-title {
+  display: inline-block;
+}
+.rel-run-letter {
+  display: inline-block;
+  animation: rel-letter-hue 2.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rel-run-letter { animation: none; color: var(--ink-primary); }
+}
+
+/* The first-watchlist arrow (src/assets/rotated-right-arrow.svg) tinted with
+   the surrounding text colour — an <img> can't inherit currentColor, so the
+   shape is a mask over a currentColor fill. */
+.rel-hint-arrow {
+  background-color: currentColor;
+  -webkit-mask: url("./assets/rotated-right-arrow.svg") no-repeat center / contain;
+  mask: url("./assets/rotated-right-arrow.svg") no-repeat center / contain;
+}

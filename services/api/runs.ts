@@ -12,6 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { keyPool } from "./keypool.js";
 import { fetchUserKeys } from "./provision.js";
+import { runMcpEntries, defaultMcpEnabled } from "./mcp.js";
 import { log } from "./logger.js";
 import type { TraceEvent } from "../harness/types.js";
 import type { TraceRowEvent } from "../harness/trace.js";
@@ -184,13 +185,18 @@ export async function runHarnessSymbol(
     template,
     vars: { symbol, title: symbol, date: new Date().toISOString().slice(0, 10), source, agent: label },
   });
-  const { llmKeys, webSearchProvider } = await fetchUserKeys(userId);
+  const { llmKeys, webSearchProvider, prefs } = await fetchUserKeys(userId);
   let modelId = requestedModel || keyPool.getDefaultModel(llmKeys);
   const budget: Budget = clampBudget({ ...compiled.budget, ...o.budgetOverride });
   // API wall-clock backstop: hard stop at 180s.
   if (!budget.maxMs) budget.maxMs = 180_000;
   const { config: cliCfg } = loadRunFileConfig();
   const resolved = resolveRunConfig(process.env, cliCfg);
+  // Settings → MCP: the user's own servers join the toolbox, the ones they
+  // switched off drop out of the default allowlist.
+  const mcpEntries = runMcpEntries(resolved.tools?.mcp ?? [], prefs);
+  const toolsCfg: ToolSourcesConfig = { ...(resolved.tools ?? {}), mcp: mcpEntries };
+  const mcpEnabled = o.mcpEnabled ?? defaultMcpEnabled(mcpEntries, prefs);
 
   const runId = o.existingRunId ?? randomUUID();
 
@@ -250,12 +256,12 @@ export async function runHarnessSymbol(
           // row unreadable — run fresh
         }
       }
-      const { tools, close, skipped } = await buildRunTools((resolved.tools ?? {}) as ToolSourcesConfig, process.env, {
+      const { tools, close, skipped } = await buildRunTools(toolsCfg, process.env, {
         symbol,
         source,
         tavilyKey: llmKeys.tavily || undefined,
         webSearchProvider,
-        mcpEnabled: o.mcpEnabled,
+        mcpEnabled,
       });
       toolsSkipped = skipped;
       try {
@@ -385,19 +391,21 @@ export async function resumePausedRun(
   const label = String(row.agent_name ?? "") || pluginLabel(pluginIds) || "Run";
   const profile = compileProfile(pluginIds, label, row.skill_ids);
 
-  const { llmKeys, webSearchProvider } = await fetchUserKeys(userId);
+  const { llmKeys, webSearchProvider, prefs } = await fetchUserKeys(userId);
   const modelId = (row.model as string) || keyPool.getDefaultModel(llmKeys);
   const { apiKey } = keyPool.pickKey(modelId, llmKeys);
   const template = getSystemPrompt(systemPrompt || "");
   const compiled = compileAgent(userId, profile, { template });
   const { config: cliCfg } = loadRunFileConfig();
   const resolved = resolveRunConfig(process.env, cliCfg);
-  const { tools, close, skipped } = await buildRunTools((resolved.tools ?? {}) as ToolSourcesConfig, process.env, {
+  const mcpEntries = runMcpEntries(resolved.tools?.mcp ?? [], prefs);
+  const toolsCfg: ToolSourcesConfig = { ...(resolved.tools ?? {}), mcp: mcpEntries };
+  const { tools, close, skipped } = await buildRunTools(toolsCfg, process.env, {
     symbol,
     source,
     tavilyKey: llmKeys.tavily || undefined,
     webSearchProvider,
-    mcpEnabled: row.mcp_enabled ?? undefined,
+    mcpEnabled: row.mcp_enabled ?? defaultMcpEnabled(mcpEntries, prefs),
   });
   if (skipped.length) {
     log.warn("harness", `resume ${runId} continuing without: ${skipped.join(", ")}`);

@@ -27,6 +27,7 @@ import {
   getMeta,
 } from "../db/repo.js";
 import { fetchUserKeys, ensureUserSettings } from "./provision.js";
+import { disabledMcpNames, parseMcpPrefs, runMcpEntries } from "./mcp.js";
 import { getSourceStatuses } from "./datasources.js";
 import { getModels, getModelIds, getAvailableModelsForUser } from "./models.js";
 import { getAgentCategories } from "./categories.js";
@@ -73,7 +74,7 @@ import {
   type Verdict,
 } from "../harness/index.js";
 import { resumePausedRun, startAnalysisRun, startStaleRunSweeper } from "./runs.js";
-import { startAlertTicker, isValidTime, isValidTimeZone, isValidFrequency, todayInTz } from "./schedule.js";
+import { startAlertTicker, isValidTime, isValidTimeZone, isValidFrequency, todayInTz, occurrencesBetween } from "./schedule.js";
 import { extractText } from "./upload.js";
 import multer from "multer";
 import { requireAuth, type AuthedRequest } from "./auth.js";
@@ -444,19 +445,51 @@ app.put("/plugins/:id/files", requireAuth, async (req, res) => {
   }
 });
 
-/** Configured MCP servers for the New Run toggles (name + web-search flag). */
-app.get("/mcp-sources", (_req, res) => {
+/** MCP servers for the Settings page and the New Run toggles: the
+ *  preconfigured ones (harness config) plus the user's own, each with its
+ *  url, enabled flag and tool list. */
+app.get("/mcp-sources", requireAuth, async (req, res) => {
   try {
+    const userId = (req as AuthedRequest).user.id;
     const { config: fileCfg } = loadRunFileConfig();
     const resolved = resolveRunConfig(process.env, fileCfg);
-    res.json(
-      (resolved.tools?.mcp ?? []).map((entry) => ({
+    const configured = resolved.tools?.mcp ?? [];
+    const prefs = (await getUserSettings(userId))?.prefs ?? {};
+    const off = disabledMcpNames(prefs);
+    const catalog = getToolCatalog();
+    const configuredNames = new Set(configured.map((c) => c.name));
+
+    const rows = [
+      ...configured.map((entry) => ({
         name: entry.name,
         label: MCP_LABELS[entry.name] ?? entry.name,
         webProvider: entry.webProvider ?? null,
         required: entry.required ?? true,
+        url: entry.url ?? (entry.urlEnv ? process.env[entry.urlEnv] ?? "" : ""),
+        urlEnv: entry.urlEnv ?? "",
+        enabled: !off.has(entry.name),
+        custom: false,
+        // Known without connecting: the config's allow-list, else every
+        // catalog tool this server's name prefixes (yfinance_*).
+        tools: entry.allow?.length
+          ? entry.allow
+          : catalog.filter((t) => t.name.startsWith(`${entry.name}_`)).map((t) => t.name),
       })),
-    );
+      ...runMcpEntries(configured, prefs)
+        .filter((entry) => !configuredNames.has(entry.name))
+        .map((entry) => ({
+          name: entry.name,
+          label: entry.name,
+          webProvider: null,
+          required: false,
+          url: entry.url ?? "",
+          urlEnv: "",
+          enabled: !off.has(entry.name),
+          custom: true,
+          tools: [] as string[],
+        })),
+    ];
+    res.json(rows);
   } catch (e: any) {
     res.status(503).json({ error: e.message });
   }
@@ -784,6 +817,27 @@ app.get("/alert-rules", requireAuth, async (req, res) => {
     res.json(await listAlertRuleRows(userId));
   } catch (e: any) {
     res.status(503).json({ error: e?.message || "Could not list alerts" });
+  }
+});
+
+// Occurrences of every enabled rule inside a date window, for the calendars.
+app.get("/alert-rules/occurrences", requireAuth, async (req, res) => {
+  try {
+    const from = String(req.query.from || "");
+    const to = String(req.query.to || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      return res.status(400).json({ error: "from and to must be YYYY-MM-DD" });
+    }
+    // One month of grid, padded a day either side — anything wider is a client bug.
+    if (+new Date(`${to}T00:00:00Z`) - +new Date(`${from}T00:00:00Z`) > 400 * 86_400_000) {
+      return res.status(400).json({ error: "window too large" });
+    }
+    const userId = (req as AuthedRequest).user.id;
+    const rules = (await listAlertRuleRows(userId)).filter((r) => r.enabled);
+    res.json(rules.flatMap((r) => occurrencesBetween(r, from, to).map((o) => ({ rule_id: r.id, ...o }))));
+  } catch (e: any) {
+    console.error("GET /alert-rules/occurrences ERROR:", e);
+    res.status(503).json({ error: e?.message || "Could not list occurrences" });
   }
 });
 

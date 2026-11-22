@@ -1,8 +1,8 @@
 import { Flex, Text, Spinner, Box } from "@/compat/ui";
-import { useEffect, useState, useCallback, useRef, type ReactNode, type CSSProperties } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode, type CSSProperties } from "react";
 import { MdCheck, MdClose } from "react-icons/md";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { AnalysisService, API_BASE, PluginService, listCategories, type AlertRuleRow, type McpSource, type PluginSummary, type SkillSummary } from "@/db";
+import { AnalysisService, API_BASE, PluginService, listCategories, runPluginLabel, type AlertRuleRow, type McpSource, type PluginSummary, type SkillSummary } from "@/db";
 import { formatSeconds } from "@/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { type RunStep, runProgressPct } from "./shared/RunStatus";
@@ -12,9 +12,8 @@ import { motion, AnimatePresence } from "motion/react";
 import { dur, ease } from "@/lib/motion";
 import { FlagLogo, TickerLogo } from "@/lib/sourceLogos";
 import PluginAvatar from "@/components/shared/PluginAvatar";
-import PluginPicker from "@/components/plugins/PluginPicker";
 import { ModelLogo } from "@/lib/modelLogos";
-import { Play, CalendarDays, Check, Clock } from "lucide-react";
+import { Play, CalendarDays, Check, Clock, ChevronDown, Pause, Square, X } from "lucide-react";
 import { toaster } from "@/compat/ui";
 import {
     MenuDropdown,
@@ -26,6 +25,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import ScheduleCalendar from "@/components/ScheduleCalendar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { DateTimePicker, type DateTimeValue, toDateKey } from "./shared/DateTimePicker";
 
@@ -33,56 +33,268 @@ const MAX_POLL_RETRIES = 600;
 
 type StatusType = "EMPTY" | "PENDING" | "COMPLETED" | "ERROR";
 
-const microLabel = {
-    fontSize: "11px",
-    fontFamily: "var(--font-body)",
-    fontWeight: 400,
-    color: "var(--ink-tertiary)",
-};
-
 type RunMode = "once" | "scheduled";
 type Frequency = "daily" | "weekly" | "biweekly" | "monthly";
 const FREQ_LABEL: Record<string, string> = { daily: "Daily", weekly: "Weekly", biweekly: "Biweekly", monthly: "Monthly" };
+/** The badge phrase: how the schedule actually reads — "Every Sunday at 9:00 AM",
+ *  "Every month on the 22nd at 9:00 AM"… never claims "every day" it doesn't do. */
+function schedulePhrase(s: { frequency: string; time: string; start_date?: string | null }): string {
+    const at = `at ${humanTime(s.time)}`;
+    // start_date pins the weekday (weekly) / day-of-month (monthly) the rule runs on.
+    const start = s.start_date ? new Date(`${s.start_date}T00:00:00Z`) : null;
+    const day = start ? WEEKDAYS[start.getUTCDay()] : null;
+    const dom = start ? start.getUTCDate() : NaN;
+    switch (s.frequency) {
+        case "daily":
+            return `Every day ${at}`;
+        case "weekly":
+            return day ? `Every ${day} ${at}` : `Every week ${at}`;
+        case "biweekly":
+            return day ? `Every 2 weeks on ${day} ${at}` : `Every 2 weeks ${at}`;
+        case "monthly":
+            return Number.isNaN(dom) ? `Every month ${at}` : `Every month on the ${ordinal(dom)} ${at}`;
+        case "weekdays":
+            return `Weekdays ${at}`;
+        case "weekends":
+            return `Weekends ${at}`;
+        case "once":
+            return start ? `Once on ${start.toISOString().slice(0, 10)} ${at}` : `Once ${at}`;
+        default:
+            // Unknown frequency: say it as-is rather than lie with "every day".
+            return `${s.frequency.charAt(0).toUpperCase()}${s.frequency.slice(1)} ${at}`;
+    }
+}
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+function ordinal(n: number): string {
+    const s = ["th", "st", "nd", "rd"];
+    const v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
 
-/** Field input styled like the workspace popup boxes (hairline, h-9). */
+/** "09:00" → "9:00 AM" (the badge reads like a person would say it). */
+function humanTime(hhmm: string): string {
+    const [h, m] = hhmm.split(":").map(Number);
+    if (Number.isNaN(h)) return hhmm;
+    return `${h % 12 || 12}:${String(m || 0).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
+}
+
+function elapsed(from?: string | null): string {
+    const start = from ? +new Date(from) : NaN;
+    if (Number.isNaN(start)) return "";
+    const s = Math.max(0, Math.floor((Date.now() - start) / 1000));
+    if (s < 60) return `${s}s`;
+    return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+/** The rows /api/analysis returns for the "running right now" cards. */
+interface ActiveRunRow {
+    id: string;
+    status?: string | null;
+    symbol?: string;
+    share_name?: string;
+    plugin_ids?: string[] | null;
+    agent_name?: string;
+    started_at?: string | null;
+    created_at?: string;
+}
+
+/** Field input in the filled-box style: recessed surface, no hairline, 40px tall. */
 const FIELD_INPUT =
-    "h-9 rounded-[6px] border-[0.5px] border-[color:var(--hairline)] bg-transparent px-2.5 text-sm shadow-none placeholder:text-console-ink-4 focus-visible:ring-1 focus-visible:ring-console-accent/40 dark:bg-transparent";
+    "h-10 w-full min-w-0 rounded-[8px] border border-transparent bg-[var(--surface-recessed)] px-3.5 text-sm text-console-ink shadow-none placeholder:text-console-ink-4 focus-visible:border-[color:var(--hairline)] focus-visible:ring-1 focus-visible:ring-console-accent/40 dark:bg-[var(--surface-recessed)]";
 const SELECT_CLS =
-    "h-9 w-full max-w-64 cursor-pointer rounded-[6px] border-[0.5px] border-[color:var(--hairline)] bg-transparent px-2 text-sm text-console-ink shadow-none outline-none focus-visible:ring-1 focus-visible:ring-console-accent/40 dark:bg-transparent [&>option]:bg-[var(--surface-recessed)] [&>option]:text-console-ink";
+    "h-10 w-full cursor-pointer rounded-[8px] border border-transparent bg-[var(--surface-recessed)] px-3.5 text-sm text-console-ink shadow-none outline-none focus-visible:ring-1 focus-visible:ring-console-accent/40 dark:bg-[var(--surface-recessed)] [&>option]:bg-[var(--surface-recessed)] [&>option]:text-console-ink";
+
+/** Field label sitting above its control (label → filled box). */
+function FieldLabel({ children }: { children: ReactNode }) {
+    return <div className="mb-1.5 font-app-body text-[12px] font-normal text-[var(--ink-tertiary)]">{children}</div>;
+}
 
 /** Form section: the My-agents heading (light title) over whitespace-separated
- *  rows — no rules, no fills. */
-function FormSection({ title, children }: { title: string; children: ReactNode }) {
+ *  rows — no rules, no fills. `collapsible` turns the heading into a disclosure. */
+function FormSection({ title, children, collapsible = false }: { title?: string; children: ReactNode; collapsible?: boolean }) {
+    const [open, setOpen] = useState(true);
     return (
         <Box pt={6}>
             <div className="px-4">
-                <h2 className="font-app-body text-[20px] leading-none font-light tracking-tight text-console-ink">
-                    {title}
-                </h2>
+                {collapsible ? (
+                    <h2 className="m-0">
+                        <button
+                            type="button"
+                            onClick={() => setOpen((o) => !o)}
+                            aria-expanded={open}
+                            className="flex w-full cursor-pointer items-center gap-1.5 text-left font-app-body text-[20px] leading-none font-light tracking-tight text-console-ink"
+                        >
+                            <ChevronDown
+                                className={cn("size-4 shrink-0 transition-transform", open ? "" : "-rotate-90")}
+                                aria-hidden
+                            />
+                            {title}
+                        </button>
+                    </h2>
+                ) : (
+                    <h2 className="font-app-body text-[20px] leading-none font-light tracking-tight text-console-ink">
+                        {title}
+                    </h2>
+                )}
             </div>
-            <Box mt={3}>{children}</Box>
+            {open && <Box mt={3}>{children}</Box>}
         </Box>
     );
 }
 
-/** One label | field row — the label column aligns the fields; spacing does the rest. */
-function FormRow({ label, children }: { label: string; children: ReactNode }) {
+/** One field block: label above, control(s) below — spacing does the rest. */
+function FormRow({ label, children }: { label?: ReactNode; children: ReactNode }) {
     return (
-        <Flex direction={{ base: "column", md: "row" }}>
-            <Box
-                w={{ base: "full", md: "176px" }}
-                flexShrink={0}
-                px={4}
-                py={{ base: 1.5, md: 3 }}
-                display="flex"
-                alignItems="center"
-            >
-                <Text {...microLabel}>{label}</Text>
-            </Box>
-            <Flex direction="column" gap={1.5} justify="center" flex={1} minW={0} px={3} py={{ base: 1, md: 2 }}>
+        <Box px={4} py={1.5}>
+            {label && <FieldLabel>{label}</FieldLabel>}
+            <Flex direction="column" gap={2}>
                 {children}
             </Flex>
-        </Flex>
+        </Box>
+    );
+}
+
+/** Skill picker: search-only results — the dropdown opens on focus/typing and
+ *  closes when you click elsewhere. Circular checkboxes; picks render as
+ *  avatar badges under the box. */
+function SkillPicker({
+    skills,
+    loading,
+    error,
+    onRetry,
+    selected,
+    onToggle,
+}: {
+    skills: { skill: SkillSummary; plugin: PluginSummary }[];
+    loading: boolean;
+    error: boolean;
+    onRetry: () => void;
+    selected: Set<string>;
+    onToggle: (id: string) => void;
+}) {
+    const [query, setQuery] = useState("");
+    const [open, setOpen] = useState(false);
+    const rootRef = useRef<HTMLDivElement>(null);
+    // Click anywhere outside → the dropdown drops.
+    useEffect(() => {
+        if (!open) return;
+        const onDown = (e: MouseEvent) => {
+            if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+        };
+        document.addEventListener("mousedown", onDown);
+        return () => document.removeEventListener("mousedown", onDown);
+    }, [open]);
+    const lower = query.trim().toLowerCase();
+    const visible = lower
+        ? skills.filter(({ skill, plugin }) =>
+              `${skill.id} ${skill.name} ${skill.description} ${plugin.display_name}`.toLowerCase().includes(lower),
+          )
+        : [];
+
+    if (error) {
+        return (
+            <div className="flex flex-col items-start gap-2">
+                <p className="font-app-body text-[12px] text-[var(--signal-negative)]">Couldn&apos;t load plugins.</p>
+                <button
+                    type="button"
+                    onClick={onRetry}
+                    className="rounded-[6px] border border-[color:var(--hairline)] px-3 py-1 font-app-body text-[12px] text-console-ink hover:text-console-ink focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-console-accent/40"
+                >
+                    Retry
+                </button>
+            </div>
+        );
+    }
+
+    return (
+        <div data-testid="skill-picker" ref={rootRef}>
+            <div className="pb-2">
+                <Input
+                    value={query}
+                    onChange={(e) => {
+                        setQuery(e.target.value);
+                        setOpen(true);
+                    }}
+                    onFocus={() => setOpen(true)}
+                    placeholder="Search skills…"
+                    aria-label="Search skills"
+                    className={FIELD_INPUT}
+                />
+                {!lower && (
+                    <p className="mt-2 font-app-body text-[12px] font-light text-console-ink-3">
+                        {loading ? "Loading skills…" : "Type to search every plugin's skills."}
+                    </p>
+                )}
+                {lower && open && (
+                    <div className="mt-2 max-h-[300px] divide-y divide-[color:var(--hairline)] overflow-y-auto overflow-x-hidden rounded-[10px] border border-[color:var(--hairline)]">
+                        {visible.length === 0 && (
+                            <p className="px-2 py-3 font-app-body text-[12px] font-light text-console-ink-3">
+                                Nothing matches “{query}”.
+                            </p>
+                        )}
+                        {visible.map(({ skill, plugin }) => {
+                            const on = selected.has(skill.id);
+                            return (
+                                <label
+                                    key={skill.id}
+                                    className={cn(
+                                        "flex w-full cursor-pointer items-center gap-3 px-2 py-2 transition-colors hover:bg-[color-mix(in_srgb,var(--ink-primary)_4%,transparent)]",
+                                        on && "bg-[color-mix(in_srgb,var(--signal-positive)_8%,transparent)]",
+                                    )}
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={on}
+                                        onChange={() => onToggle(skill.id)}
+                                        data-testid={`skill-check-${skill.id}`}
+                                        aria-label={`Skill ${skill.id}`}
+                                        className="size-4 shrink-0 appearance-none rounded-full border border-[color:var(--hairline)] bg-[var(--surface-recessed)] transition-colors checked:border-[var(--signal-positive)] checked:bg-[var(--signal-positive)]"
+                                    />
+                                    <span className="min-w-0 flex-1 truncate font-app-mono text-[12.5px] text-console-ink">
+                                        {skill.id}
+                                    </span>
+                                    {/* The owning plugin, as a badge on the row's right edge. */}
+                                    <span className="flex max-w-[45%] shrink-0 items-center gap-1.5 rounded-full bg-[var(--surface-recessed)] py-1 pl-1 pr-2.5">
+                                        <PluginAvatar plugin={plugin.id} size={24} />
+                                        <span className="truncate font-app-body text-[11px] text-console-ink-2">{plugin.display_name}</span>
+                                    </span>
+                                </label>
+                            );
+                        })}
+                    </div>
+                )}
+                {/* The picks, as avatar badges — where "N selected" used to sit. */}
+                {selected.size > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                        {[...selected].map((id) => {
+                            const owner = skills.find((x) => x.skill.id === id);
+                            return (
+                                <span
+                                    key={id}
+                                    className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-[var(--surface-recessed)] py-1 pr-1.5 pl-1"
+                                >
+                                    {owner && <PluginAvatar plugin={owner.plugin.id} size={18} />}
+                                    <span className="truncate font-app-mono text-[11.5px] text-console-ink">{id}</span>
+                                    <button
+                                        type="button"
+                                        aria-label={`Remove skill ${id}`}
+                                        onClick={() => onToggle(id)}
+                                        className="rounded-full p-0.5 text-console-ink-3 transition hover:text-console-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/40"
+                                    >
+                                        <X className="size-3" aria-hidden />
+                                    </button>
+                                </span>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+            {!loading && selected.size === 0 && (
+                <p role="alert" className="font-app-body text-[12px] text-[var(--signal-negative)]">
+                    Pick at least one skill for this run.
+                </p>
+            )}
+        </div>
     );
 }
 
@@ -206,7 +418,7 @@ function RunFooter({
                         </ResumingButton>
                     ) : (
                         <PrimaryButton onClick={onRun} disabled={!canRun} style={runAction}>
-                            {scheduled ? <><CalendarDays size={16} /> Create alert</> : <><Play size={16} /> Run analysis</>}
+                            {scheduled ? <><CalendarDays size={16} /> Schedule agent</> : <><Play size={16} /> Run analysis</>}
                         </PrimaryButton>
                     ))}
                 {status === "PENDING" && (
@@ -327,17 +539,31 @@ export default function Analysis() {
     const [modelError, setModelError] = useState<string | null>(null);
     const [maxSteps, setMaxSteps] = useState("");
     const [maxTokens, setMaxTokens] = useState("");
-    // Available plugins — the run selects one or more; ALL of their skills load.
+    // Available plugins — the skill picker searches every plugin's skills.
     const [plugins, setPlugins] = useState<PluginSummary[]>([]);
-    const [pluginIds, setPluginIds] = useState<string[]>([]);
     // A failed fetch must not look like "no plugins yet".
     const [pluginsError, setPluginsError] = useState(false);
     // …and neither must the empty state, before the first fetch lands.
     const [pluginsLoading, setPluginsLoading] = useState(true);
-    // Skills inside the selected plugins — all on by default; unchecking
-    // narrows the run to a chosen subset (one or many).
+    // Skills of every plugin, keyed by plugin id — fetched once the list lands.
     const [pluginSkills, setPluginSkills] = useState<Record<string, SkillSummary[]>>({});
-    const [deselectedSkills, setDeselectedSkills] = useState<Set<string>>(new Set());
+    // The run's skills, picked directly — the owning plugins follow the skills.
+    const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
+
+    // skill id → owning plugin: the picker shows it, the run payload derives from it.
+    const skillOwner = useMemo(() => {
+        const map = new Map<string, PluginSummary>();
+        for (const p of plugins) for (const s of pluginSkills[p.id] ?? []) map.set(s.id, p);
+        return map;
+    }, [plugins, pluginSkills]);
+    const allSkills = useMemo(
+        () => plugins.flatMap((p) => (pluginSkills[p.id] ?? []).map((skill) => ({ skill, plugin: p }))),
+        [plugins, pluginSkills],
+    );
+    const pluginIds = useMemo(
+        () => [...new Set([...selectedSkills].map((id) => skillOwner.get(id)?.id).filter((id): id is string => !!id))],
+        [selectedSkills, skillOwner],
+    );
     // Per-run MCP toggles; default = every configured server enabled.
     const [mcpSources, setMcpSources] = useState<McpSource[]>([]);
     const [mcpEnabled, setMcpEnabled] = useState<string[]>([]);
@@ -365,46 +591,47 @@ export default function Analysis() {
         PluginService.mcpSources()
             .then((list) => {
                 setMcpSources(list);
-                setMcpEnabled(list.map((m) => m.name));
+                // Settings → MCP decides the default; the toggles still change it per run.
+                setMcpEnabled(list.filter((m) => m.enabled).map((m) => m.name));
             })
             .catch(() => {});
     }, [loadPlugins]);
 
-    const togglePlugin = useCallback(
-        (id: string) => setPluginIds((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id])),
-        [],
-    );
-
-    // Load each selected plugin's skill list (cached per id; failures cached
-    // as empty so a down API can't retry-loop the effect).
+    // Load every plugin's skill list (cached per id; failures cached as empty
+    // so a down API can't retry-loop the effect).
     useEffect(() => {
-        for (const id of pluginIds) {
-            if (pluginSkills[id]) continue;
-            PluginService.read(id)
-                .then((d) => setPluginSkills((prev) => ({ ...prev, [id]: d.skills ?? [] })))
-                .catch(() => setPluginSkills((prev) => ({ ...prev, [id]: [] })));
+        for (const p of plugins) {
+            if (pluginSkills[p.id]) continue;
+            PluginService.read(p.id)
+                .then((d) => setPluginSkills((prev) => ({ ...prev, [p.id]: d.skills ?? [] })))
+                .catch(() => setPluginSkills((prev) => ({ ...prev, [p.id]: [] })));
         }
-    }, [pluginIds, pluginSkills]);
+    }, [plugins, pluginSkills]);
 
     const toggleSkill = useCallback((id: string) => {
-        setDeselectedSkills((prev) => {
+        setSelectedSkills((prev) => {
             const next = new Set(prev);
             if (next.has(id)) next.delete(id);
             else next.add(id);
             return next;
         });
     }, []);
-    const selectAllSkills = useCallback(() => setDeselectedSkills(new Set()), []);
     const toggleMcp = useCallback(
         (name: string) => setMcpEnabled((prev) => (prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name])),
         [],
     );
 
-    // ?plugin=id preselects — the directory card's “+” shortcut.
+    // ?plugin=id preselects — the directory card's “+” shortcut: every skill
+    // of that plugin, once its list has landed.
+    const presetApplied = useRef(false);
     useEffect(() => {
         const preset = searchParams.get("plugin");
-        if (preset) setPluginIds((prev) => (prev.includes(preset) ? prev : [...prev, preset]));
-    }, [searchParams]);
+        if (!preset || presetApplied.current) return;
+        const skills = pluginSkills[preset];
+        if (!skills) return;
+        presetApplied.current = true;
+        setSelectedSkills((prev) => new Set([...prev, ...skills.map((s) => s.id)]));
+    }, [searchParams, pluginSkills]);
 
     const handleCategoryChange = (next: string) => {
         setCategory(next);
@@ -473,16 +700,50 @@ export default function Analysis() {
     const [runMode, setRunMode] = useState<RunMode>(() => (searchParams.get("mode") === "alert" ? "scheduled" : "once"));
     const [frequency, setFrequency] = useState<Frequency>("daily");
     const [scheduleAt, setScheduleAt] = useState<DateTimeValue>(() => ({ date: toDateKey(new Date()), time: "09:00" }));
-    const [alertRules, setAlertRules] = useState<AlertRuleRow[]>([]);
-    const [ruleToDelete, setRuleToDelete] = useState<AlertRuleRow | null>(null);
 
+    // ── Scheduled Agents: the alert rules (with CRUD) + what's running now ──
+    const [alertRules, setAlertRules] = useState<AlertRuleRow[]>([]);
+    const [ruleToStop, setRuleToStop] = useState<AlertRuleRow | null>(null);
     const loadAlertRules = useCallback(() => {
-        AnalysisService.listAlertRules().then(setAlertRules).catch(() => {});
+        AnalysisService.listAlertRules().then((r) => { if (Array.isArray(r)) setAlertRules(r); }).catch(() => {});
     }, []);
 
     useEffect(() => {
         loadAlertRules();
+        // Every create/delete/enable pokes this event — the list never goes stale.
+        window.addEventListener("alert-rules-changed", loadAlertRules);
+        return () => window.removeEventListener("alert-rules-changed", loadAlertRules);
     }, [loadAlertRules]);
+
+    const toggleRule = async (rule: AlertRuleRow) => {
+        try {
+            await AnalysisService.setAlertRuleEnabled(rule.id, !rule.enabled);
+        } catch {
+            toaster.create({ title: "Couldn't update the alert", type: "error" });
+        }
+    };
+
+    // Active runs — poll fast while something runs, lazily otherwise.
+    const [activeRuns, setActiveRuns] = useState<ActiveRunRow[]>([]);
+    useEffect(() => {
+        let alive = true;
+        let timer: ReturnType<typeof setTimeout>;
+        const tick = async () => {
+            try {
+                const rows = await AnalysisService.listAnalyses();
+                if (!alive) return;
+                const active = (Array.isArray(rows) ? rows : []).filter(
+                    (r: ActiveRunRow) => (r.status || "").toUpperCase() === "RUNNING",
+                );
+                setActiveRuns(active);
+                timer = setTimeout(tick, active.length ? 5000 : 30_000);
+            } catch {
+                if (alive) timer = setTimeout(tick, 15_000);
+            }
+        };
+        void tick();
+        return () => { alive = false; clearTimeout(timer); };
+    }, []);
 
     const runAnalysis = async () => {
         if (starting || status !== "EMPTY") return;
@@ -549,7 +810,6 @@ export default function Analysis() {
                 description: `${config.shareName || config.share} · from ${scheduleAt.date} at ${scheduleAt.time} (${timezone})`,
                 type: "success",
             });
-            loadAlertRules();
         } catch (error) {
             console.error("Alert error:", error);
             toaster.create({
@@ -651,23 +911,15 @@ export default function Analysis() {
     }, [status, correlationId, navigate]);
 
     const isConfigComplete = config.share !== "" && !!model.trim();
-    // Equity only, for now: industry/commodities runs say "not supported yet".
+    // Which MCP server offers web search — the run warns when none is on.
     const webSearchEnabled = mcpSources.some((m) => m.webProvider && mcpEnabled.includes(m.name));
-    const skillsByPlugin = pluginIds.flatMap((id) => {
-        const plugin = plugins.find((x) => x.id === id);
-        return plugin ? [{ plugin, skills: pluginSkills[id] ?? [] }] : [];
-    });
-    const availableSkillIds = skillsByPlugin.flatMap((g) => g.skills.map((s) => s.id));
-    const selectedSkillIds = availableSkillIds.filter((id) => !deselectedSkills.has(id));
-    const skillsLoading = pluginIds.some((id) => pluginSkills[id] === undefined);
-    // A plugin with no skills can't gate on a choice that doesn't exist —
-    // the run just goes bare (routes still mount for the plugin).
+    const selectedSkillIds = [...selectedSkills];
+    const skillsLoading = plugins.some((p) => pluginSkills[p.id] === undefined);
     const canRunAnalysis =
         category === "equity" &&
         isConfigComplete &&
-        pluginIds.length > 0 &&
+        selectedSkillIds.length > 0 &&
         !skillsLoading &&
-        (selectedSkillIds.length > 0 || availableSkillIds.length === 0) &&
         (runMode === "once" || (!!scheduleAt.date && !!scheduleAt.time));
     // One line naming what's still missing while the run button is disabled.
     const runHint = canRunAnalysis
@@ -680,13 +932,9 @@ export default function Analysis() {
                     ? "Pick a company first"
                     : !model.trim()
                         ? "Choose a model"
-                        : !pluginIds.length
-                            ? "Choose a plugin"
-                            : skillsLoading
-                                ? "Loading skills…"
-                                : availableSkillIds.length === 0
-                                    ? ""
-                                    : "Choose at least one skill";
+                        : skillsLoading
+                            ? "Loading skills…"
+                            : "Choose at least one skill";
     const statusLine = config.share
         ? `${config.share} · ${config.source} · ${runMode === "scheduled" ? `${FREQ_LABEL[frequency]} from ${scheduleAt.date} at ${scheduleAt.time}` : "Single run"}`
         : "";
@@ -716,7 +964,10 @@ export default function Analysis() {
                     </Flex>
                 </Box>
             )}
-            <Box py={{ base: 4, md: 6 }} maxW="960px" mx="auto">
+            <Box py={{ base: 4, md: 6 }}>
+                {/* Two columns: the form, and this month's schedule beside it. */}
+                <div className="flex flex-col gap-8 lg:flex-row lg:items-start">
+                <div className="min-w-0 flex-1">
                 <AnimatePresence initial={false}>
                     {status === "ERROR" && runError && (
                         <Box
@@ -739,15 +990,20 @@ export default function Analysis() {
                 {/* One flat form: title, quiet sections, action bar — spacing only, no rules. */}
                 <Box>
                     <div className="px-4 pt-2 pb-1">
-                        <h1 className="font-app-body text-[30px] leading-none font-light tracking-tight text-console-ink">
-                            New Run
+                        <h1 className="rel-run-title font-app-body text-[30px] leading-none font-light tracking-tight">
+                            {"New Run".split("").map((ch, i) => (
+                                <span
+                                    key={i}
+                                    className="rel-run-letter"
+                                    style={{ animationDelay: `${i * 0.1}s` }}
+                                >
+                                    {ch === " " ? "\u00A0" : ch}
+                                </span>
+                            ))}
                         </h1>
-                        <p className="mt-1.5 font-app-body text-[12px] font-normal text-console-ink-3">
-                            Run one analysis now, or set an alert that checks on a schedule.
-                        </p>
                     </div>
 
-                    <FormSection title="Run settings">
+                    <FormSection>
                         <FormRow label="Mode">
                             <div className="flex flex-wrap gap-2">
                                 {(["once", "scheduled"] as const).map((m) => (
@@ -763,27 +1019,33 @@ export default function Analysis() {
                             </div>
                         </FormRow>
                         {runMode === "scheduled" && (
-                            <>
-                                <FormRow label="Checks">
-                                    <div className="flex flex-wrap gap-2">
+                            <FormRow label="Schedule">
+                                {/* Frequency + first check side by side, like the modal's two-up schedule. */}
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    <select
+                                        value={frequency}
+                                        onChange={(e) => setFrequency(e.target.value as Frequency)}
+                                        aria-label="Checks"
+                                        data-testid="run-frequency"
+                                        className={SELECT_CLS}
+                                    >
                                         {(["daily", "weekly", "biweekly", "monthly"] as const).map((f) => (
-                                            <ModeButton key={f} selected={frequency === f} onClick={() => setFrequency(f)}>
-                                                {FREQ_LABEL[f]}
-                                            </ModeButton>
+                                            <option key={f} value={f}>{FREQ_LABEL[f]}</option>
                                         ))}
-                                    </div>
-                                </FormRow>
-                                <FormRow label="First check">
+                                    </select>
                                     <DateTimePicker value={scheduleAt} onChange={setScheduleAt} />
-                                </FormRow>
-                            </>
+                                </div>
+                            </FormRow>
                         )}
                     </FormSection>
 
-                    <FormSection title="Company">
-                        {/* Category — the class this run analyzes; gates what follows. */}
-                        <FormRow label="Category">
-                            <select
+                    <FormSection>
+                        {/* Category gates the ticker: only equity has a stock search. */}
+                        <FormRow>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <div>
+                                    <FieldLabel>Category</FieldLabel>
+                                    <select
                                 value={category}
                                 onChange={(e) => handleCategoryChange(e.target.value)}
                                 aria-label="Agent category filter"
@@ -795,14 +1057,14 @@ export default function Analysis() {
                                     <option key={c} value={c}>{c}</option>
                                 ))}
                             </select>
-                        </FormRow>
-                        {/* Equity only, for now: the stock search lives here. */}
-                        {category === "equity" && (
-                            <FormRow label="Ticker">
-                                <div className="flex flex-col gap-2.5">
+                                </div>
+                                {/* Same cell shape as Category: label + control, no extra gap. */}
+                                <div>
+                                    <FieldLabel>Ticker</FieldLabel>
                                     <MenuDropdown
                                         value={null}
-                                        placeholder={config.share ? "Change company…" : "Search company or symbol…"}
+                                        disabled={category !== "equity"}
+                                        placeholder={category !== "equity" ? "Pick a category first" : config.share ? "Change company…" : "Search company or symbol…"}
                                         search={{
                                             value: stockQuery,
                                             onChange: setStockQuery,
@@ -861,7 +1123,7 @@ export default function Analysis() {
                                     </MenuDropdown>
                                     {/* The picked company — plain line under the picker. */}
                                     {config.share && (
-                                        <div className="flex items-center gap-3 px-1 py-1">
+                                        <div className="mt-2.5 flex items-center gap-3 px-1 py-1">
                                             <TickerLogo symbol={config.share} size={40} />
                                             <div className="min-w-0">
                                                 <div className="truncate font-app-body text-[15px] font-light leading-tight text-[var(--ink-primary)]">
@@ -882,121 +1144,39 @@ export default function Analysis() {
                                         </div>
                                     )}
                                 </div>
-                            </FormRow>
-                        )}
-                        {category && category !== "equity" && (
-                            <FormRow label="Ticker">
-                                <Text fontSize="12px" fontWeight={400} fontFamily="var(--font-body)" color="var(--ink-tertiary)">
-                                    Not supported yet — only equity runs are available for now.
-                                </Text>
-                            </FormRow>
-                        )}
-</FormSection>
-
-                    <FormSection title="Plugins">
-                        {/* Plugins — Claude/ChatGPT-style picker: toggle one or
-                            more; every selected plugin's skills load. */}
-                        <FormRow label="Plugins">
-                            <PluginPicker
-                                plugins={plugins}
-                                selected={pluginIds}
-                                onToggle={togglePlugin}
-                                loading={pluginsLoading}
-                                error={pluginsError}
-                                onRetry={loadPlugins}
-                            />
-                            {/* The chosen plugins' skills — every skill on by
-                                default; uncheck to narrow the run. */}
-                            {pluginIds.length > 0 && (
-                                <div
-                                    className="mt-1 overflow-hidden rounded-[8px] border border-[color:var(--hairline)]"
-                                    data-testid="skill-picker"
-                                >
-                                    <div className="flex items-center justify-between border-b border-[color:var(--hairline)] px-3 py-2">
-                                        <span className="font-app-body text-[11px] font-semibold tracking-[0.14em] text-console-ink-3 uppercase">
-                                            Skills
-                                        </span>
-                                        <span className="flex items-center gap-3">
-                                            <span className="font-app-body text-[11px] text-console-ink-3" role="status">
-                                                {skillsLoading
-                                                    ? "Loading…"
-                                                    : `${selectedSkillIds.length} of ${availableSkillIds.length} selected`}
-                                            </span>
-                                            {!skillsLoading && availableSkillIds.length > 1 && (
-                                                <button
-                                                    type="button"
-                                                    onClick={selectAllSkills}
-                                                    className="font-app-body text-[11px] text-[var(--gh-blue)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/40"
-                                                >
-                                                    All
-                                                </button>
-                                            )}
-                                        </span>
-                                    </div>
-                                    {skillsLoading ? (
-                                        <p className="px-3 py-3 font-app-body text-[12px] text-console-ink-3">
-                                            Loading skills…
-                                        </p>
-                                    ) : (
-                                        skillsByPlugin.map(({ plugin, skills }) => (
-                                            <div
-                                                key={plugin.id}
-                                                className="divide-y divide-[color:var(--hairline)]"
-                                            >
-                                                {skillsByPlugin.length > 1 && (
-                                                    <div className="flex items-center gap-2 bg-[color-mix(in_srgb,var(--ink-primary)_4%,transparent)] px-3 py-1.5">
-                                                        <PluginAvatar plugin={plugin.id} size={16} />
-                                                        <span className="truncate font-app-body text-[12px] text-console-ink-2">
-                                                            {plugin.display_name}
-                                                        </span>
-                                                    </div>
-                                                )}
-                                                {skills.length === 0 && (
-                                                    <p className="px-3 py-2 font-app-body text-[12px] text-console-ink-3">
-                                                        No skills in this plugin.
-                                                    </p>
-                                                )}
-                                                {skills.map((sk) => {
-                                                    const on = !deselectedSkills.has(sk.id);
-                                                    return (
-                                                        <label
-                                                            key={sk.id}
-                                                            className="flex w-full cursor-pointer items-center gap-3 px-3 py-2 transition-colors hover:bg-[color-mix(in_srgb,var(--ink-primary)_4%,transparent)] focus-within:bg-[color-mix(in_srgb,var(--ink-primary)_4%,transparent)]"
-                                                        >
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={on}
-                                                                onChange={() => toggleSkill(sk.id)}
-                                                                aria-label={`Skill ${sk.id}`}
-                                                                data-testid={`skill-check-${sk.id}`}
-                                                                className="size-4 shrink-0 accent-[var(--signal-positive)]"
-                                                            />
-                                                            <span className="w-[34%] max-w-[200px] shrink-0 truncate font-app-mono text-[12.5px] text-console-ink">
-                                                                {sk.id}
-                                                            </span>
-                                                            <span className="min-w-0 flex-1 truncate font-app-body text-[12.5px] font-light text-console-ink-3">
-                                                                {sk.description}
-                                                            </span>
-                                                        </label>
-                                                    );
-                                                })}
-                                            </div>
-                                        ))
-                                    )}
-                                    {!skillsLoading && availableSkillIds.length > 0 && selectedSkillIds.length === 0 && (
-                                        <p
-                                            role="alert"
-                                            className="border-t border-[color:var(--hairline)] px-3 py-2 font-app-body text-[12px] text-[var(--signal-negative)]"
-                                        >
-                                            Pick at least one skill for this run.
-                                        </p>
-                                    )}
-                                </div>
-                            )}
+                            </div>
                         </FormRow>
                     </FormSection>
 
-                    <FormSection title="Model & limits">
+                    <FormSection>
+                        {/* Skills — one searchable list across every plugin; the
+                            owning plugin rides along on the right of each row. */}
+                        <FormRow
+                            label={
+                                // The live pick count rides next to the label.
+                                <span className="flex items-center gap-2">
+                                    Skills
+                                    <span
+                                        aria-label={`${selectedSkills.size} skills selected`}
+                                        className="inline-flex size-[18px] items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--gh-blue)_14%,transparent)] font-app-body text-[10px] font-light text-[var(--gh-blue)]"
+                                    >
+                                        {selectedSkills.size}
+                                    </span>
+                                </span>
+                            }
+                        >
+                            <SkillPicker
+                                skills={allSkills}
+                                loading={pluginsLoading || skillsLoading}
+                                error={pluginsError}
+                                onRetry={loadPlugins}
+                                selected={selectedSkills}
+                                onToggle={toggleSkill}
+                            />
+                        </FormRow>
+                    </FormSection>
+
+                    <FormSection title="Model options" collapsible>
                         <FormRow label="Model">
                             <div className="flex items-center gap-3">
                             <div className="min-w-0 flex-1" data-testid="run-model">
@@ -1034,36 +1214,43 @@ export default function Analysis() {
                             )}
                         </FormRow>
 
-                        <FormRow label="Max steps">
-                            <Input
-                                type="number"
-                                min={1}
-                                value={maxSteps}
-                                onChange={(e) => setMaxSteps(e.target.value)}
-                                placeholder="20"
-                                aria-label="Max steps"
-                                data-testid="run-max-steps"
-                                className={FIELD_INPUT}
-                            />
-                        </FormRow>
-
-                        <FormRow label="Max tokens">
-                            <Input
-                                type="number"
-                                min={1000}
-                                value={maxTokens}
-                                onChange={(e) => setMaxTokens(e.target.value)}
-                                placeholder="200000"
-                                aria-label="Max tokens"
-                                data-testid="run-max-tokens"
-                                className={FIELD_INPUT}
-                            />
+                        <FormRow>
+                            {/* The two limits are peers — one line, two boxes. */}
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <div>
+                                    <FieldLabel>Max steps</FieldLabel>
+                                    <Input
+                                        type="number"
+                                        min={1}
+                                        value={maxSteps}
+                                        onChange={(e) => setMaxSteps(e.target.value)}
+                                        placeholder="20"
+                                        aria-label="Max steps"
+                                        data-testid="run-max-steps"
+                                        className={FIELD_INPUT}
+                                    />
+                                </div>
+                                <div>
+                                    <FieldLabel>Max tokens</FieldLabel>
+                                    <Input
+                                        type="number"
+                                        min={1000}
+                                        value={maxTokens}
+                                        onChange={(e) => setMaxTokens(e.target.value)}
+                                        placeholder="200000"
+                                        aria-label="Max tokens"
+                                        data-testid="run-max-tokens"
+                                        className={FIELD_INPUT}
+                                    />
+                                </div>
+                            </div>
                         </FormRow>
                     </FormSection>
 
                     <FormSection title="MCP tools">
                         <FormRow label="Servers">
-                            <div className="flex flex-col gap-2.5">
+                            {/* Same shape, side by side; the warning spans both. */}
+                            <div className="grid gap-2 sm:grid-cols-2">
                                 {mcpSources.length === 0 && (
                                     <Text fontSize="12px" fontWeight={400} fontFamily="var(--font-body)" color="var(--ink-tertiary)">
                                         No MCP servers configured.
@@ -1097,7 +1284,7 @@ export default function Analysis() {
                                             <span className="min-w-0">
                                                 <span className="font-app-body text-[13px] text-console-ink">{m.label}</span>
                                                 {m.webProvider && (
-                                                    <span className="ml-2 rounded-[4px] border border-[color:var(--hairline)] px-1.5 py-0.5 font-app-mono text-[10px] tracking-wide text-console-ink-3 uppercase">
+                                                    <span className="ml-2 inline-flex items-center rounded-full bg-[color-mix(in_srgb,var(--gh-blue)_14%,transparent)] px-2 py-0.5 font-app-body text-[10px] font-light tracking-wide text-[var(--gh-blue)] uppercase">
                                                         web search
                                                     </span>
                                                 )}
@@ -1106,7 +1293,7 @@ export default function Analysis() {
                                     );
                                 })}
                                 {!webSearchEnabled && mcpSources.length > 0 && (
-                                    <Alert variant="destructive" className="mt-1">
+                                    <Alert variant="destructive" className="mt-1 sm:col-span-2">
                                         <AlertTitle>No web search enabled</AlertTitle>
                                         <AlertDescription>
                                             Neither web-search MCP (SearXNG or Tavily) is selected — the run can start, but it won&apos;t be able to search the web.
@@ -1136,72 +1323,6 @@ export default function Analysis() {
                         correlationId={correlationId}
                     />
                 </Box>
-
-                {status === "EMPTY" && alertRules.length > 0 && (
-                    <Box mt={5}>
-                        <Text {...microLabel} mb={2}>Your alerts</Text>
-                        {alertRules.map((s) => (
-                            <Flex key={s.id} align="center" gap={2.5} py={1.5}>
-                                <TickerLogo symbol={s.symbol} size={16} />
-                                <Text
-                                    fontSize="13px"
-                                    fontWeight={400}
-                                    fontFamily="var(--font-body)"
-                                    color="var(--ink-primary)"
-                                    minW={0}
-                                    overflow="hidden"
-                                    textOverflow="ellipsis"
-                                    whiteSpace="nowrap"
-                                >
-                                    {s.share_name || s.symbol}
-                                </Text>
-                                <Text fontSize="12px" fontWeight={300} fontFamily="var(--font-body)" color="var(--ink-tertiary)" ml="auto" whiteSpace="nowrap">
-                                    {FREQ_LABEL[s.frequency] || "Daily"} at {s.time} · {s.timezone}
-                                </Text>
-                                <Box
-                                    as="button"
-                                    aria-label={`Delete alert for ${s.share_name || s.symbol}`}
-                                    onClick={() => setRuleToDelete(s)}
-                                    display="flex"
-                                    flexShrink={0}
-                                    border="none"
-                                    background="transparent"
-                                    color="var(--ink-tertiary)"
-                                    cursor="pointer"
-                                    _hover={{ color: "var(--signal-negative)" }}
-                                >
-                                    <MdClose size={14} />
-                                </Box>
-                            </Flex>
-                        ))}
-                    </Box>
-                )}
-
-                <ConfirmDialog
-                    open={!!ruleToDelete}
-                    title="Delete this alert?"
-                    message={`The ${FREQ_LABEL[ruleToDelete?.frequency ?? "daily"]} check for ${ruleToDelete?.share_name || ruleToDelete?.symbol || ""} will stop. This can't be undone.`}
-                    confirmLabel="Delete"
-                    onCancel={() => setRuleToDelete(null)}
-                    onConfirm={async () => {
-                        const target = ruleToDelete;
-                        setRuleToDelete(null);
-                        if (!target) return;
-                        try {
-                            await AnalysisService.deleteAlertRule(target.id);
-                            loadAlertRules();
-                        } catch (error) {
-                            toaster.create({
-                                title: "Couldn't delete the alert",
-                                description:
-                                    (error as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-                                    (error as Error)?.message ||
-                                    "The alert could not be deleted.",
-                                type: "error",
-                            });
-                        }
-                    }}
-                />
 
                 <AnimatePresence mode="wait" initial={false}>
                     {status === "PENDING" && correlationId && (
@@ -1258,6 +1379,121 @@ export default function Analysis() {
                         <Text fontSize="13px" fontFamily="var(--font-body)">Loading analysis data…</Text>
                     </Flex>
                 )}
+                </div>
+
+                {/* ── Scheduled Agents: running + scheduled cards — CRUD for
+                    schedules lives here now (the workspace's old rail). ── */}
+                <aside className="w-full lg:w-[560px] lg:shrink-0">
+                    <h2 className="font-app-body text-[30px] leading-none font-light tracking-tight text-console-ink">
+                        Scheduled Agents
+                    </h2>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        {activeRuns.map((r) => (
+                            <Link
+                                key={r.id}
+                                to={`/runs/${encodeURIComponent(r.id)}`}
+                                className="group rounded-xl border border-[color:var(--hairline)] p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--ink-primary)_4%,transparent)] focus-visible:outline-none focus-visible:[outline-offset:-2px]"
+                            >
+                                <div className="flex items-center gap-2.5">
+                                    <TickerLogo symbol={r.symbol || ""} size={26} />
+                                    <p className="min-w-0 flex-1 truncate font-app-body text-[15px] leading-tight font-light text-console-ink">
+                                        {r.share_name || r.symbol}
+                                    </p>
+                                </div>
+                                <p className="mt-1 flex items-center gap-1.5 truncate font-app-body text-[12.5px] font-light text-console-ink-3">
+                                    <PluginAvatar plugin={r.plugin_ids?.[0] || r.agent_name || "run"} size={16} />
+                                    <span className="truncate">{runPluginLabel(r.plugin_ids, plugins, r.agent_name) || "Run"}</span>
+                                </p>
+                                <span className="mt-2.5 inline-flex max-w-full items-center gap-1.5 rounded-full bg-[color-mix(in_srgb,var(--gh-blue)_14%,transparent)] px-2.5 py-1 font-app-body text-[11.5px] font-light text-[var(--gh-blue)]">
+                                    <Clock size={12} aria-hidden className="shrink-0" />
+                                    <span className="truncate">Running · {elapsed(r.started_at || r.created_at)}</span>
+                                </span>
+                            </Link>
+                        ))}
+
+                        {alertRules.map((s) => {
+                            const label = runPluginLabel(s.plugin_ids, plugins, null) || "Scheduled run";
+                            const paused = !s.enabled;
+                            return (
+                                <div
+                                    key={s.id}
+                                    className={cn(
+                                        "rounded-xl border border-[color:var(--hairline)] p-4",
+                                        paused && "opacity-60",
+                                    )}
+                                >
+                                    <div className="flex items-start gap-2.5">
+                                        <TickerLogo symbol={s.symbol} size={26} />
+                                        <p className="min-w-0 flex-1 truncate font-app-body text-[15px] leading-tight font-light text-console-ink">
+                                            {s.share_name || s.symbol}
+                                        </p>
+                                        <span className="ml-auto flex shrink-0 gap-1">
+                                            <button
+                                                type="button"
+                                                aria-label={`${paused ? "Resume" : "Pause"} schedule for ${s.share_name || s.symbol}`}
+                                                onClick={() => void toggleRule(s)}
+                                                className="rounded-[6px] p-1.5 text-[var(--gh-blue)] transition hover:bg-[color-mix(in_srgb,var(--gh-blue)_12%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/40"
+                                            >
+                                                {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                aria-label={`Stop schedule for ${s.share_name || s.symbol}`}
+                                                onClick={() => setRuleToStop(s)}
+                                                className="rounded-[6px] p-1.5 text-[var(--signal-negative)] transition hover:bg-[color-mix(in_srgb,var(--signal-negative)_12%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/40"
+                                            >
+                                                <Square className="size-3.5" />
+                                            </button>
+                                        </span>
+                                    </div>
+                                    <p className="mt-1 flex items-center gap-1.5 truncate font-app-body text-[12.5px] font-light text-console-ink-3">
+                                        <PluginAvatar plugin={s.plugin_ids?.[0] || label} size={16} />
+                                        <span className="truncate">
+                                            {label}{paused && <span className="text-console-ink-4"> · Paused</span>}
+                                        </span>
+                                    </p>
+                                    <span className="mt-2.5 inline-flex max-w-full items-center gap-1.5 rounded-full bg-[color-mix(in_srgb,var(--signal-positive)_14%,transparent)] px-2.5 py-1 font-app-body text-[11.5px] font-light text-[var(--signal-positive)]">
+                                        <Clock size={12} aria-hidden className="shrink-0" />
+                                        <span className="truncate">
+                                            {schedulePhrase(s)}
+                                        </span>
+                                    </span>
+                                </div>
+                            );
+                        })}
+
+                        {activeRuns.length === 0 && alertRules.length === 0 && (
+                            <p className="col-span-full rounded-xl border border-dashed border-[color:var(--hairline)] px-4 py-6 text-center font-app-body text-[13px] font-light text-console-ink-3">
+                                Nothing scheduled yet — set the mode to Alert and create one from the form.
+                            </p>
+                        )}
+                    </div>
+
+                    <ConfirmDialog
+                        open={!!ruleToStop}
+                        title="Stop this schedule?"
+                        message={`The ${FREQ_LABEL[ruleToStop?.frequency ?? "daily"].toLowerCase()} check for ${ruleToStop?.share_name || ruleToStop?.symbol || ""} will stop. This can't be undone.`}
+                        confirmLabel="Stop"
+                        onCancel={() => setRuleToStop(null)}
+                        onConfirm={() => {
+                            const target = ruleToStop;
+                            setRuleToStop(null);
+                            if (!target) return;
+                            AnalysisService.deleteAlertRule(target.id)
+                                .catch(() => toaster.create({ title: "Couldn't delete the schedule", type: "error" }));
+                        }}
+                    />
+
+                    {/* Month schedule — the same calendar as the home rail, one
+                        level of detail up. */}
+                    <h2 className="mt-10 font-app-body text-[30px] leading-none font-light tracking-tight text-console-ink">
+                        This month
+                    </h2>
+                    <div className="mt-4">
+                        <ScheduleCalendar view="month" />
+                    </div>
+                </aside>
+                </div>
             </Box>
         </Box>
     );

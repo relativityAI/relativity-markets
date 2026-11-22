@@ -1,11 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
-import { Menu, Flex, Text, Box } from "@/compat/ui";
-import { Search, LogOut, Moon, Sun, Bolt, Check, TriangleAlert, SquareArrowRightEnter } from "lucide-react";
+import { Search, Moon, Sun, Check, TriangleAlert, ArrowRight, Settings as SettingsIcon } from "lucide-react";
 import { useAuth } from "@/auth/useAuth";
-import { LOCAL_AUTH } from "@/auth/AuthContext";
 import { useColorMode } from "@/components/ui/color-mode";
-import UserAvatar from "@/components/shared/UserAvatar";
 import AlertBell from "@/components/AlertBell";
 import { AnalysisService, API_BASE, PluginService, SettingsService, type PluginSummary } from "@/db";
 import { FlagLogo, TickerLogo } from "@/lib/sourceLogos";
@@ -29,10 +26,9 @@ type StockRow = {
 };
 
 export default function NavBar() {
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
   const { colorMode, toggleColorMode } = useColorMode();
   const navigate = useNavigate();
-  const email = user?.email ?? "";
   const [sources, setSources] = useState<Record<string, SourceStatus>>({});
 
   const dataSources = useMemo<{ id: string; name: string; img: string }[]>(
@@ -161,6 +157,27 @@ export default function NavBar() {
     }, 300);
     return () => clearTimeout(debounceRef.current);
   }, [query]);
+
+  // Level-2 "latest runs" cluster: the three most recent run symbols and an
+  // arrow — no details. Same fetch the ⌘K search catalog uses, cached there.
+  const [latestRuns, setLatestRuns] = useState<{ id: string; symbol: string }[]>([]);
+  useEffect(() => {
+    AnalysisService.listAnalyses()
+      .then((rows) => {
+        const list: { id?: string; analysis_id?: string; symbol?: string; created_at?: string }[] = Array.isArray(rows)
+          ? rows
+          : [];
+        catalogRef.current.runs = list;
+        setLatestRuns(
+          [...list]
+            .sort((a, b) => +new Date(b.created_at || 0) - +new Date(a.created_at || 0))
+            .filter((r) => r.symbol)
+            .slice(0, 3)
+            .map((r) => ({ id: String(r.id || r.analysis_id || ""), symbol: String(r.symbol) })),
+        );
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -460,52 +477,16 @@ export default function NavBar() {
             {colorMode === "dark" ? <Moon size={18} /> : <Sun size={18} />}
           </button>
 
-          {/* Account avatar — dropdown holds Log in when signed out */}
-          <Menu.Root positioning={{ placement: "bottom-end" }}>
-            <Menu.Trigger asChild>
-              <Box cursor="pointer" title={email || "Account"}>
-                <UserAvatar seed={email} size={30} />
-              </Box>
-            </Menu.Trigger>
-            <Menu.Positioner>
-              <Menu.Content minWidth="220px">
-                {user ? (
-                  <>
-                    {!LOCAL_AUTH && (
-                      <Flex direction="column" gap={0} px={3} py={2.5} w="full" minW={0}>
-                        <Text textStyle="xs" color="fg.muted">Signed in as</Text>
-                        <Text fontSize="sm" color="fg" w="full" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
-                          {email}
-                        </Text>
-                      </Flex>
-                    )}
-                    {!LOCAL_AUTH && <Menu.Separator />}
-                    <Menu.Item value="settings" onClick={() => navigate("/settings")}>
-                      <Bolt size={15} />
-                      <Text fontSize="sm">Settings</Text>
-                    </Menu.Item>
-                    {!LOCAL_AUTH && (
-                      <Menu.Item value="signout" onClick={() => signOut()}>
-                        <LogOut size={15} />
-                        <Text fontSize="sm">Sign out</Text>
-                      </Menu.Item>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <Menu.Item value="login" onClick={() => navigate("/login")}>
-                      <SquareArrowRightEnter size={15} />
-                      <Text fontSize="sm">Log in</Text>
-                    </Menu.Item>
-                    <Menu.Item value="settings" onClick={() => navigate("/settings")}>
-                      <Bolt size={15} />
-                      <Text fontSize="sm">Settings</Text>
-                    </Menu.Item>
-                  </>
-                )}
-              </Menu.Content>
-            </Menu.Positioner>
-          </Menu.Root>
+          {/* Settings — the account menu went away with the avatar; one icon, one destination. */}
+          <button
+            type="button"
+            aria-label="Settings"
+            title="Settings"
+            onClick={() => navigate("/settings")}
+            className="cursor-pointer text-[var(--ink-tertiary)] transition-opacity hover:opacity-60"
+          >
+            <SettingsIcon size={18} />
+          </button>
 
         </div>
       </div>
@@ -558,6 +539,29 @@ export default function NavBar() {
               </NavLink>
             ))}
           </div>
+
+          {/* Latest runs — three stock logos plus a separate arrow circle,
+              one link to the past-runs page. Hidden below md: it needs
+              ~180px and level 2 already scrolls on phones. */}
+          {latestRuns.length > 0 && (
+            <Link to="/runs" className="ml-auto hidden shrink-0 cursor-pointer items-center gap-2 pl-6 md:flex">
+              <span className="text-[11px] font-normal text-[var(--ink-tertiary)]">Latest runs</span>
+              <span className="flex items-center">
+                {latestRuns.map((r, i) => (
+                  <span
+                    key={r.id || i}
+                    className={`inline-flex rounded-full ${i > 0 ? "-ml-2" : ""}`}
+                    style={{ boxShadow: "0 0 0 2px var(--surface-canvas)" }}
+                  >
+                    <TickerLogo symbol={r.symbol} size={22} />
+                  </span>
+                ))}
+              </span>
+              <span className="ml-1.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-[var(--surface-raised)]">
+                <ArrowRight size={14} aria-hidden="true" />
+              </span>
+            </Link>
+          )}
         </div>
       </div>
 

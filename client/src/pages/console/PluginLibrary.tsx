@@ -1,15 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowRight, BadgeCheck, ChevronRight, Clock, Pause, Play, Plus, Search, Square, Upload, Link2 } from "lucide-react";
-import {
-    AnalysisService,
-    PluginService,
-    runPluginLabel,
-    type AlertRuleRow,
-    type PluginSummary,
-} from "@/db";
+import { ArrowRight, BadgeCheck, ChevronRight, Plus, Search, Upload, Link2 } from "lucide-react";
+import { PluginService, type PluginSummary } from "@/db";
 import PluginAvatar from "@/components/shared/PluginAvatar";
-import ConfirmDialog from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -25,30 +18,17 @@ import { cn } from "@/lib/utils";
 /**
  * Workspace — the Plugins directory (Claude's layout): title, search + filter
  * chips + Add ▾, "Your plugins" as flat rows, "Relativity plugins" as a
- * two-column card grid, then Active runs and Alerts on the right rail.
+ * two-column card grid. Active runs and scheduled agents live on the New Run
+ * page now (the "Scheduled Agents" section).
  *
  * Your plugins = custom/imported (editable on their page); Relativity
  * plugins = shipped, verified, read-only. Every run is powered by one or
  * more — the run form picks them, this page manages them.
  */
 
-const SECTION_LIST = "max-h-[26rem] overflow-x-hidden overflow-y-auto pr-1 md:h-auto";
 const FIELD_INPUT =
     "h-9 rounded-[6px] border-[0.5px] border-[color:var(--hairline)] bg-transparent px-2.5 text-sm shadow-none placeholder:text-console-ink-4 focus-visible:ring-1 focus-visible:ring-console-accent/40 dark:bg-transparent";
 const CHIP_CLS = "cursor-pointer rounded-full px-3 py-1 font-app-body text-[13px] font-light transition-colors";
-
-interface RunSummary {
-    id: string;
-    status?: string | null;
-    symbol?: string;
-    share_name?: string;
-    plugin_ids?: string[] | null;
-    agent_name?: string;
-    started_at?: string | null;
-    created_at?: string;
-}
-
-const FREQ: Record<string, string> = { daily: "Daily", weekly: "Weekly", biweekly: "Biweekly", monthly: "Monthly" };
 
 type Filter = "all" | "relativity" | "custom";
 const FILTERS: { value: Filter; label: string }[] = [
@@ -82,8 +62,8 @@ function PluginNameLine({ plugin, size = "md" }: { plugin: PluginSummary; size?:
         <span className="flex min-w-0 items-center gap-1.5">
             <span
                 className={cn(
-                    "truncate font-app-body font-normal text-console-ink",
-                    size === "lg" ? "text-[17px] leading-tight" : "text-[16px] leading-tight",
+                    "truncate font-normal text-console-ink",
+                    size === "lg" ? "text-[20px] leading-tight" : "text-[16px] leading-tight",
                 )}
             >
                 {plugin.display_name}
@@ -91,14 +71,6 @@ function PluginNameLine({ plugin, size = "md" }: { plugin: PluginSummary; size?:
             {!!plugin.verified && <BadgeCheck className="size-4 shrink-0 text-[var(--gh-blue)]" aria-label="Verified" />}
         </span>
     );
-}
-
-function elapsed(from?: string | null): string {
-    const start = from ? +new Date(from) : NaN;
-    if (Number.isNaN(start)) return "";
-    const s = Math.max(0, Math.floor((Date.now() - start) / 1000));
-    if (s < 60) return `${s}s`;
-    return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
 export default function PluginLibrary() {
@@ -113,10 +85,6 @@ export default function PluginLibrary() {
     const [importUrl, setImportUrl] = useState("");
     const [importing, setImporting] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const [activeRuns, setActiveRuns] = useState<RunSummary[]>([]);
-    const [alertRules, setAlertRules] = useState<AlertRuleRow[]>([]);
-    const [stopTarget, setStopTarget] = useState<AlertRuleRow | null>(null);
-    const pollRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
     const loadPlugins = useCallback(() => {
         setLoading(true);
@@ -130,46 +98,9 @@ export default function PluginLibrary() {
             .finally(() => setLoading(false));
     }, []);
 
-    const loadAlertRules = useCallback(() => {
-        AnalysisService.listAlertRules().then(setAlertRules).catch(() => {});
-    }, []);
-
     useEffect(() => {
         loadPlugins();
-        loadAlertRules();
-    }, [loadPlugins, loadAlertRules]);
-
-    // Active runs — poll fast while something runs, lazily otherwise.
-    useEffect(() => {
-        let alive = true;
-        const tick = async () => {
-            try {
-                const rows = await AnalysisService.listAnalyses();
-                if (!alive) return;
-                const active = (Array.isArray(rows) ? rows : []).filter(
-                    (r: RunSummary) => (r.status || "").toUpperCase() === "RUNNING",
-                );
-                setActiveRuns(active);
-                pollRef.current = setTimeout(tick, active.length ? 5000 : 30_000);
-            } catch {
-                if (alive) pollRef.current = setTimeout(tick, 15_000);
-            }
-        };
-        void tick();
-        return () => {
-            alive = false;
-            if (pollRef.current) clearTimeout(pollRef.current);
-        };
-    }, []);
-
-    const toggleRule = async (rule: AlertRuleRow) => {
-        try {
-            await AnalysisService.setAlertRuleEnabled(rule.id, !rule.enabled);
-            loadAlertRules();
-        } catch {
-            toaster.create({ title: "Couldn't update the alert", type: "error" });
-        }
-    };
+    }, [loadPlugins]);
 
     const runImport = async () => {
         const url = importUrl.trim();
@@ -304,7 +235,10 @@ export default function PluginLibrary() {
                             <ChevronRight aria-hidden className="size-3 rotate-90" />
                         </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="min-w-[210px]">
+                    <DropdownMenuContent
+                        align="end"
+                        className="min-w-[210px] rounded-[8px] [&_[data-slot=dropdown-menu-item]]:rounded-[6px]"
+                    >
                         <DropdownMenuItem className="text-[14px]" onSelect={() => setUrlOpen(true)}>
                             <Link2 className="mr-2 size-4" /> Import from GitHub URL…
                         </DropdownMenuItem>
@@ -351,9 +285,9 @@ export default function PluginLibrary() {
                 </DialogContent>
             </Dialog>
 
-            <div className="mt-8 grid gap-x-14 gap-y-10 lg:grid-cols-3">
+            <div className="mt-8">
                 {/* ── Directory ── */}
-                <div className="min-w-0 lg:col-span-2">
+                <div className="min-w-0">
                     {loading ? (
                         <div className="space-y-4">
                             {Array.from({ length: 3 }).map((_, i) => (
@@ -367,10 +301,63 @@ export default function PluginLibrary() {
                         </div>
                     ) : (
                         <>
-                            {showYours && (
+                            {showRelativity && (
                                 <section>
                                     <div className="flex items-baseline justify-between gap-4">
-                                        <h2 className="font-app-body text-[17px] font-medium text-console-ink">Your plugins</h2>
+                                        <h2 className="font-app-body text-[17px] font-light text-console-ink">Relativity plugins</h2>
+                                        <span className="font-app-body text-[13px] font-light text-console-ink-3">
+                                            Shipped, verified, read-only
+                                        </span>
+                                    </div>
+                                    {relativity.length === 0 ? (
+                                        <p className="mt-3 py-6 text-center font-app-body text-sm text-console-ink-3">
+                                            {lower ? "No Relativity plugins match that search." : "No built-in plugins found."}
+                                        </p>
+                                    ) : (
+                                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                            {relativity.map((p) => (
+                                                <div
+                                                    key={p.id}
+                                                    className="group relative rounded-xl border border-[color:var(--hairline)] transition-colors hover:bg-[color-mix(in_srgb,var(--ink-primary)_5%,transparent)]"
+                                                >
+                                                    <Link
+                                                        to={`/plugins/${encodeURIComponent(p.id)}`}
+                                                        className="flex min-w-0 items-start gap-3.5 p-4 focus-visible:outline-none focus-visible:[outline-offset:-2px]"
+                                                    >
+                                                        <PluginAvatar plugin={p.id} className="size-16 sm:size-20 xl:size-24" />
+                                                        <span className="min-w-0 flex-1">
+                                                            <span className="font-[family-name:var(--font-display)]">
+                                                                <PluginNameLine plugin={p} size="lg" />
+                                                            </span>
+                                                            {/* Fades out where the copy runs past the card instead of a hard clamp line. */}
+                                                            <span className="mt-1 block max-h-[3.2em] overflow-hidden font-[family-name:var(--font-body)] text-[13px] font-light leading-snug text-console-ink-2 [mask-image:linear-gradient(to_bottom,#000_62%,transparent)]">
+                                                                {p.description}
+                                                            </span>
+                                                            <span className="mt-1.5 block">
+                                                                <SourceLine plugin={p} />
+                                                            </span>
+                                                        </span>
+                                                    </Link>
+                                                    {/* The screenshot's “+” — use in a new run, preselected. */}
+                                                    <button
+                                                        type="button"
+                                                        aria-label={`Start a run with ${p.display_name}`}
+                                                        onClick={() => navigate(`/new-run?plugin=${encodeURIComponent(p.id)}`)}
+                                                        className="absolute top-3 right-3 hidden size-8 items-center justify-center rounded-[8px] border border-[color:var(--hairline)] bg-[var(--surface-panel)] text-console-ink transition hover:border-console-ink-3 group-hover:flex focus-visible:flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/40 sm:flex sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
+                                                    >
+                                                        <Plus className="size-4" />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </section>
+                            )}
+
+                            {showYours && (
+                                <section className={cn(showRelativity && "mt-9")}>
+                                    <div className="flex items-baseline justify-between gap-4">
+                                        <h2 className="font-app-body text-[17px] font-light text-console-ink">Your plugins</h2>
                                         {yours.length > 5 && (
                                             <button
                                                 type="button"
@@ -405,175 +392,10 @@ export default function PluginLibrary() {
                                     </div>
                                 </section>
                             )}
-
-                            {showRelativity && (
-                                <section className={cn(showYours && "mt-9")}>
-                                    <div className="flex items-baseline justify-between gap-4">
-                                        <h2 className="font-app-body text-[17px] font-medium text-console-ink">Relativity plugins</h2>
-                                        <span className="font-app-body text-[13px] font-light text-console-ink-3">
-                                            Shipped, verified, read-only
-                                        </span>
-                                    </div>
-                                    {relativity.length === 0 ? (
-                                        <p className="mt-3 py-6 text-center font-app-body text-sm text-console-ink-3">
-                                            {lower ? "No Relativity plugins match that search." : "No built-in plugins found."}
-                                        </p>
-                                    ) : (
-                                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                                            {relativity.map((p) => (
-                                                <div
-                                                    key={p.id}
-                                                    className="group relative rounded-xl border border-[color:var(--hairline)] transition-colors hover:bg-[color-mix(in_srgb,var(--ink-primary)_5%,transparent)]"
-                                                >
-                                                    <Link
-                                                        to={`/plugins/${encodeURIComponent(p.id)}`}
-                                                        className="flex min-w-0 items-start gap-3.5 p-4 focus-visible:outline-none focus-visible:[outline-offset:-2px]"
-                                                    >
-                                                        <PluginAvatar plugin={p.id} size={40} />
-                                                        <span className="min-w-0 flex-1">
-                                                            <PluginNameLine plugin={p} />
-                                                            <span className="mt-1 block line-clamp-2 font-app-body text-[13px] font-light leading-snug text-console-ink-2">
-                                                                {p.description}
-                                                            </span>
-                                                            <span className="mt-1.5 block">
-                                                                <SourceLine plugin={p} />
-                                                            </span>
-                                                        </span>
-                                                    </Link>
-                                                    {/* The screenshot's “+” — use in a new run, preselected. */}
-                                                    <button
-                                                        type="button"
-                                                        aria-label={`Start a run with ${p.display_name}`}
-                                                        onClick={() => navigate(`/new-run?plugin=${encodeURIComponent(p.id)}`)}
-                                                        className="absolute top-3 right-3 hidden size-8 items-center justify-center rounded-[8px] border border-[color:var(--hairline)] bg-[var(--surface-panel)] text-console-ink transition hover:border-console-ink-3 group-hover:flex focus-visible:flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/40 sm:flex sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
-                                                    >
-                                                        <Plus className="size-4" />
-                                                    </button>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </section>
-                            )}
                         </>
                     )}
                 </div>
-
-                {/* ── Right rail: active runs + alerts ── */}
-                <div className="flex min-w-0 flex-col gap-10">
-                    <section>
-                        <h2 className="font-app-body text-[17px] font-medium text-console-ink">Active runs</h2>
-                        <p className="mt-1 font-app-body text-[13px] font-light text-console-ink-3">
-                            Analyses running right now.
-                        </p>
-                        <div className="mt-2">
-                            {activeRuns.length === 0 ? (
-                                <p className="py-6 text-center font-app-body text-sm text-console-ink-3">
-                                    Nothing running. <Link to="/new-run" className="text-[var(--accent-primary)] underline underline-offset-2">Start a run</Link>
-                                </p>
-                            ) : (
-                                activeRuns.map((r) => (
-                                    <Link
-                                        key={r.id}
-                                        to={`/runs/${encodeURIComponent(r.id)}`}
-                                        className="flex w-full min-w-0 items-center gap-3 border-b border-[color:var(--hairline)] px-1 py-3 last:border-b-0 hover:bg-[color-mix(in_srgb,var(--ink-primary)_4%,transparent)] focus-visible:outline-none focus-visible:[outline-offset:-2px]"
-                                    >
-                                        <PluginAvatar plugin={r.plugin_ids?.[0] || r.agent_name || "run"} size={36} />
-                                        <span className="min-w-0 flex-1">
-                                            <span className="block truncate font-app-body text-[15px] leading-tight text-console-ink">
-                                                {r.share_name || r.symbol}
-                                            </span>
-                                            <span className="mt-0.5 block truncate font-app-body text-[13px] font-light text-console-ink-3">
-                                                {runPluginLabel(r.plugin_ids, plugins, r.agent_name) || "Run"}
-                                            </span>
-                                        </span>
-                                        <span className="flex shrink-0 items-center gap-1.5 font-app-body text-[12px] text-console-ink-3">
-                                            <Clock size={12} aria-hidden />
-                                            {elapsed(r.started_at || r.created_at)}
-                                        </span>
-                                    </Link>
-                                ))
-                            )}
-                        </div>
-                    </section>
-
-                    <section>
-                        <div className="flex items-baseline justify-between gap-3">
-                            <h2 className="font-app-body text-[17px] font-medium text-console-ink">Alerts</h2>
-                            <button
-                                type="button"
-                                onClick={() => navigate("/new-run?mode=alert")}
-                                className="flex shrink-0 items-center gap-1 font-app-body text-[13px] text-console-ink-2 hover:text-console-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/40 focus-visible:ring-offset-2"
-                            >
-                                <Plus className="size-3.5" aria-hidden /> New alert
-                            </button>
-                        </div>
-                        <p className="mt-1 font-app-body text-[13px] font-light text-console-ink-3">
-                            A plugin checks a symbol on a schedule. When its verdict changes, you get an alert.
-                        </p>
-                        <div className={cn("mt-2", SECTION_LIST)}>
-                            {alertRules.length === 0 ? (
-                                <p className="flex h-full items-center justify-center py-6 text-center font-app-body text-sm text-console-ink-3">
-                                    No alerts yet.
-                                </p>
-                            ) : (
-                                <div className="h-full">
-                                    {alertRules.map((s) => {
-                                        const label = runPluginLabel(s.plugin_ids, plugins, null) || "Scheduled run";
-                                        const paused = !s.enabled;
-                                        return (
-                                            <div key={s.id} className={cn("-mx-1 flex w-full items-center gap-3 border-b border-[color:var(--hairline)] px-1 py-3 last:border-b-0", paused && "opacity-60")}>
-                                                <PluginAvatar plugin={s.plugin_ids?.[0] || label} size={36} />
-                                                <div className="min-w-0 flex-1">
-                                                    <p className="truncate font-app-body text-[15px] leading-tight text-console-ink">
-                                                        {label}
-                                                    </p>
-                                                    <p className="mt-0.5 truncate font-app-body text-[13px] font-light text-console-ink-3">
-                                                        {FREQ[s.frequency] || "Daily"} {s.time} ({s.timezone}) · {s.share_name || s.symbol}
-                                                        {paused && <span className="text-console-ink-4"> · Paused</span>}
-                                                    </p>
-                                                </div>
-                                                <button
-                                                    type="button"
-                                                    aria-label={`${paused ? "Resume" : "Pause"} alert for ${s.share_name || s.symbol}`}
-                                                    onClick={() => void toggleRule(s)}
-                                                    className="rounded-[6px] border border-[color:var(--hairline)] p-1.5 text-console-ink-3 transition hover:text-console-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/40"
-                                                >
-                                                    {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    aria-label={`Stop alert for ${s.share_name || s.symbol}`}
-                                                    onClick={() => setStopTarget(s)}
-                                                    className="rounded-[6px] border border-[color:var(--hairline)] p-1.5 text-console-ink-3 transition hover:border-console-negative/50 hover:text-console-negative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/40"
-                                                >
-                                                    <Square className="size-3.5" />
-                                                </button>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                        </div>
-                    </section>
-                </div>
             </div>
-
-            <ConfirmDialog
-                open={!!stopTarget}
-                title="Stop this alert?"
-                message={`The ${FREQ[stopTarget?.frequency ?? "daily"].toLowerCase()} check for ${stopTarget?.share_name || stopTarget?.symbol || ""} will stop. This can't be undone.`}
-                confirmLabel="Stop"
-                onCancel={() => setStopTarget(null)}
-                onConfirm={() => {
-                    const target = stopTarget;
-                    setStopTarget(null);
-                    if (!target) return;
-                    AnalysisService.deleteAlertRule(target.id)
-                        .then(loadAlertRules)
-                        .catch(() => toaster.create({ title: "Couldn't delete the alert", type: "error" }));
-                }}
-            />
         </div>
     );
 }

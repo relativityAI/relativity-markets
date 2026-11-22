@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import {
-    Flex, Text, Box, VStack
+    Flex, Text, Box
 } from "@/compat/ui";
 import {
     Check, Eye, EyeOff, X, Trash2, Plus, Pencil, ExternalLink,
@@ -17,8 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { toaster } from "@/components/ui/toaster";
 import { SettingsService } from "@/db";
-import { useAuth } from "@/auth/useAuth";
-import UserAvatar from "@/components/shared/UserAvatar";
+import { McpPanel } from "./McpPanel";
 import { ModelLogo } from "@/lib/modelLogos";
 import { motion } from "motion/react";
 import { dur, ease } from "@/lib/motion";
@@ -144,7 +143,7 @@ function KeyDialog({ open, onOpenChange, value, label, connected, onSave, onRemo
                 <DialogTitle className="flex items-center gap-2.5 font-app-body text-[14px] font-normal text-console-ink">
                     <ModelLogo model={value} size={22} />
                     <span className="truncate">{label}</span>
-                    <span className="ml-auto text-[11px] font-medium text-console-ink-3">
+                    <span className="ml-auto text-[11px] font-light text-console-ink-3">
                         {connected ? "Key stored" : "No key"}
                     </span>
                 </DialogTitle>
@@ -166,7 +165,7 @@ function KeyDialog({ open, onOpenChange, value, label, connected, onSave, onRemo
                 ) : (
                     <div className="flex flex-col gap-3">
                         <div className="flex flex-col gap-1.5">
-                            <span className="font-app-body text-[11px] font-medium tracking-[0.08em] text-console-ink-3 uppercase">
+                            <span className="font-app-body text-[11px] font-light tracking-[0.08em] text-console-ink-3 uppercase">
                                 API key
                             </span>
                             <div className="relative">
@@ -678,17 +677,14 @@ function ModelProvidersPanel({
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: dur.base, ease }}
-            className="p-5 md:p-6"
+            className="py-5 md:py-6"
         >
-            {/* Card header — title + subtitle + Add provider */}
-            <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
-                <div className="min-w-0">
+            {/* Card header - title + subtitle + Add provider */}
+            <div className="flex items-start justify-between gap-x-4">
+                <div className="min-w-0 flex-1">
                     <h2 className="font-app-body text-[26px] leading-[1.1] font-light tracking-[-0.02em] text-[var(--ink-primary)] md:text-[30px]">
                         AI Providers
                     </h2>
-                    <p className="mt-1 text-[13.5px] text-[var(--ink-tertiary)]">
-                        Set the API keys that unlock each AI provider.
-                    </p>
                 </div>
                 <button
                     type="button"
@@ -699,20 +695,8 @@ function ModelProvidersPanel({
                 </button>
             </div>
 
-            {/* Section intro */}
-            <div className="mt-6">
-                <h3 className="font-app-body text-[17px] leading-[1.2] font-light tracking-[-0.01em] text-[var(--ink-primary)]">
-                    Connected AI sources
-                </h3>
-                <p className="mt-1.5 max-w-[64ch] text-[13.5px] leading-relaxed text-[var(--ink-tertiary)]">
-                    Keys here become available as model choices when starting an analysis.
-                </p>
-            </div>
-
-            <div className="mt-4 mb-3 h-px bg-[var(--hairline)]" />
-
             {/* Toolbar — search, status filter, view toggles */}
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="mt-4 flex flex-wrap items-center gap-2">
                 <div className="relative">
                     <Search
                         aria-hidden
@@ -963,22 +947,6 @@ function ModelProvidersPanel({
     );
 }
 
-function SectionCard({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
-    return (
-        <Box
-            as={motion.div}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: dur.base, ease }}
-            p={{ base: 4, md: 5 }}
-        >
-            <Text fontSize="13.5px" color="var(--ink-primary)">{title}</Text>
-            {subtitle && <Text fontSize="12px" color="var(--ink-tertiary)" mt={0.5}>{subtitle}</Text>}
-            <Box mt={4}>{children}</Box>
-        </Box>
-    );
-}
-
 function GridSkeleton() {
     return (
         <Box display="grid" gridTemplateColumns={{ base: "1fr", sm: "repeat(2, 1fr)", xl: "repeat(3, 1fr)" }} gap={5}>
@@ -1013,7 +981,6 @@ function GroupHeader({ title, purpose }: { title: string; purpose: string }) {
 }
 
 export default function Settings() {
-    const { user } = useAuth();
     const [savedKeys, setSavedKeys] = useState<Record<string, string>>({});
     const [prefs, setPrefs] = useState<Record<string, string>>({});
     const [catalog, setCatalog] = useState<Record<string, number>>({});
@@ -1044,6 +1011,17 @@ export default function Settings() {
     useEffect(() => {
         loadSettings();
     }, []);
+
+    /** Merge-write one prefs patch; rethrows so a caller can skip its refetch. */
+    const savePrefs = async (patch: Record<string, string>) => {
+        try {
+            await SettingsService.updateSettings({ prefs: patch });
+            setPrefs((prev) => ({ ...prev, ...patch }));
+        } catch (e) {
+            toaster.create({ title: `Failed to save: ${(e as Error).message}`, type: "error" });
+            throw e;
+        }
+    };
 
     const handleSaveKey = async (provider: string, key: string) => {
         try {
@@ -1138,20 +1116,16 @@ export default function Settings() {
         }
     };
 
-    const email = user?.email ?? "";
-    const displayName =
-        (user?.user_metadata?.name as string | undefined) ??
-        (user?.user_metadata?.full_name as string | undefined) ??
-        email.split("@")[0] ??
-        "User";
-
     const connectedCount = Object.keys(savedKeys).length;
 
     return (
         <Box bg="var(--surface-canvas)" minH="100%">
-            <Flex direction="column" gap={6} w="full" px={{ base: 4, md: 8 }} py={6}>
+            {/* No horizontal padding of its own: the route wrapper's 1.5rem is
+                the navbar's px-6, so the content column lands on the same
+                edges as the nav (every other page does the same). */}
+            <Flex direction="column" gap={6} w="full" py={6}>
                 {/* Header — flat masthead, same title/subtitle treatment as the Runs and New Run pages */}
-                <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 px-0.5">
+                <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
                     <h1 className="font-app-body min-w-0 text-[26px] leading-[1.1] font-light tracking-[-0.02em] text-[var(--ink-primary)] md:text-[30px]">
                         Settings
                     </h1>
@@ -1160,38 +1134,9 @@ export default function Settings() {
                     </Text>
                 </header>
 
-                {/* Two-column: account rail on the left, keys on the right */}
-                <Box display="grid" gridTemplateColumns={{ base: "1fr", lg: "minmax(280px, 340px) 1fr" }} gap={6} alignItems="start">
-                    {/* LEFT RAIL */}
-                    <VStack gap={6} align="stretch">
-                        <SectionCard title="Account">
-                            <Flex align="center" gap={4}>
-                                <Box border="1px solid var(--hairline)" borderRadius="2px" overflow="hidden" flexShrink={0}>
-                                    <UserAvatar seed={email || displayName} size={{ base: 52, md: 60 }} />
-                                </Box>
-                                <Box minW={0}>
-                                    <Text fontSize="15px" color="var(--ink-primary)" noOfLines={1}>
-                                        {displayName}
-                                    </Text>
-                                    <Text fontSize="12.5px" color="var(--ink-tertiary)" noOfLines={1}>{email}</Text>
-                                </Box>
-                            </Flex>
-                            <Text fontSize="12px" color="var(--ink-tertiary)" mt={4}>
-                                Local-first: all your data lives on this machine.
-                            </Text>
-                        </SectionCard>
-                    </VStack>
-
-                    {/* RIGHT MAIN — AI providers */}
-                    <Box
-                        as={motion.div}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: dur.base, ease }}
-                        display="flex"
-                        flexDirection="column"
-                        gap={6}
-                    >
+                {/* One column at full layout width: the MCP section (which took
+                    the account rail's place) sits above the keys. */}
+                <Box display="flex" flexDirection="column" gap={6}>
                         {loading ? (
                             <GridSkeleton />
                         ) : (
@@ -1204,72 +1149,81 @@ export default function Settings() {
                                         <button
                                             type="button"
                                             onClick={loadSettings}
-                                            className="font-app-body ml-auto cursor-pointer text-[13px] font-medium text-[var(--ink-primary)] underline underline-offset-2 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--ink-primary)]"
+                                            className="font-app-body ml-auto cursor-pointer text-[13px] font-light text-[var(--ink-primary)] underline underline-offset-2 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--ink-primary)]"
                                         >
                                             Retry
                                         </button>
                                     </div>
                                 )}
-                                <ModelProvidersPanel
-                                    savedKeys={savedKeys}
-                                    prefs={prefs}
-                                    catalog={catalog}
-                                    onSave={handleSaveKey}
-                                    onRemove={handleRemoveKey}
-                                    onSaveCustom={handleSaveCustom}
-                                    onDeleteCustom={handleDeleteCustom}
-                                />
-
-                                <Box>
-                                    <GroupHeader
-                                        title="Web Search"
-                                        purpose="Powers the optional web-search step during analysis."
-                                    />
-                                    <Box display="flex" flexDirection="column" gap={1}>
-                                        <ProviderCard
-                                            value="tavily"
-                                            label="Tavily"
-                                            url="https://app.tavily.com"
-                                            savedKey={savedKeys.tavily}
-                                            onSave={handleSaveKey}
-                                            onRemove={handleRemoveKey}
-                                        />
-                                    </Box>
-                                    {!!savedKeys.tavily && (
-                                        <Box mt={4}>
-                                            <Text fontSize="12px" color="var(--ink-tertiary)" mb={2}>
-                                                Default web search — SearXNG is self-hosted and free; Tavily uses the key above.
-                                            </Text>
-                                            <Flex gap={1} p={1} bg="var(--surface-recessed)" borderRadius="2px" w="fit-content">
-                                                {(["searxng", "tavily"] as const).map((v) => {
-                                                    const active = webProvider === v;
-                                                    return (
-                                                        <Flex
-                                                            key={v}
-                                                            as="button"
-                                                            type="button"
-                                                            onClick={() => handleWebProvider(v)}
-                                                            aria-pressed={active}
-                                                            px={4}
-                                                            py={1.5}
-                                                            borderRadius="2px"
-                                                            cursor="pointer"
-                                                            bg={active ? "var(--surface-panel)" : "transparent"}
-                                                            boxShadow={active ? "0 1px 2px rgba(0,0,0,0.08)" : "none"}
-                                                        >
-                                                            <Text fontSize="12.5px" color={active ? "var(--accent-primary)" : "var(--ink-tertiary)"}>
-                                                                {v === "searxng" ? "SearXNG" : "Tavily"}
-                                                            </Text>
-                                                        </Flex>
-                                                    );
-                                                })}
-                                            </Flex>
+                                {/* Side by side with the key table on desktop: the
+                                    MCP column is fixed-width so the provider
+                                    table keeps its full width. */}
+                                <div className="grid grid-cols-1 items-start gap-6 min-[992px]:grid-cols-2 [&>*]:min-w-0">
+                                    <div className="flex min-w-0 flex-col gap-6">
+                                        <McpPanel prefs={prefs} savePrefs={savePrefs} />
+                                        <Box>
+                                            <GroupHeader
+                                                title="Web Search"
+                                                purpose="Powers the optional web-search step during analysis."
+                                            />
+                                            <Box display="flex" flexDirection="column" gap={1}>
+                                                <ProviderCard
+                                                    value="tavily"
+                                                    label="Tavily"
+                                                    url="https://app.tavily.com"
+                                                    savedKey={savedKeys.tavily}
+                                                    onSave={handleSaveKey}
+                                                    onRemove={handleRemoveKey}
+                                                />
+                                            </Box>
+                                            {!!savedKeys.tavily && (
+                                                <Box mt={4}>
+                                                    <Text fontSize="12px" color="var(--ink-tertiary)" mb={2}>
+                                                        Default web search — SearXNG is self-hosted and free; Tavily uses the key above.
+                                                    </Text>
+                                                    <Flex gap={1} p={1} bg="var(--surface-recessed)" borderRadius="2px" w="fit-content">
+                                                        {(["searxng", "tavily"] as const).map((v) => {
+                                                            const active = webProvider === v;
+                                                            return (
+                                                                <Flex
+                                                                    key={v}
+                                                                    as="button"
+                                                                    type="button"
+                                                                    onClick={() => handleWebProvider(v)}
+                                                                    aria-pressed={active}
+                                                                    px={4}
+                                                                    py={1.5}
+                                                                    borderRadius="2px"
+                                                                    cursor="pointer"
+                                                                    bg={active ? "var(--surface-panel)" : "transparent"}
+                                                                    boxShadow={active ? "0 1px 2px rgba(0,0,0,0.08)" : "none"}
+                                                                >
+                                                                    <Text fontSize="12.5px" color={active ? "var(--accent-primary)" : "var(--ink-tertiary)"}>
+                                                                        {v === "searxng" ? "SearXNG" : "Tavily"}
+                                                                    </Text>
+                                                                </Flex>
+                                                            );
+                                                        })}
+                                                    </Flex>
+                                                </Box>
+                                            )}
                                         </Box>
-                                    )}
-                                </Box>
+                                    </div>
+
+                                    <ModelProvidersPanel
+                                        savedKeys={savedKeys}
+                                        prefs={prefs}
+                                        catalog={catalog}
+                                        onSave={handleSaveKey}
+                                        onRemove={handleRemoveKey}
+                                        onSaveCustom={handleSaveCustom}
+                                        onDeleteCustom={handleDeleteCustom}
+                                    />
+                                </div>
+
+
                             </>
                         )}
-                    </Box>
                 </Box>
             </Flex>
         </Box>
