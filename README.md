@@ -4,11 +4,11 @@
   <img src="assets/header.svg" alt="Relativity — Agents watch the market, you watch the agents." width="100%">
 </p>
 
-<h3 align="center">Create custom Agents to analyze, track, monitor the stock market</h3>
+<h3 align="center">An agent-first stock market research and monitoring platform</h3>
 
 <div align="center">
 
-  [![Tweet](https://img.shields.io/twitter/url/https/shields.io.svg?style=social)](https://twitter.com/intent/tweet?text=%F0%9F%93%A2%20Create%20custom%20Agents%20to%20analyze%2C%20track%2C%20monitor%20the%20stock%20market&url=https://github.com/relativityAI/relativity-markets)
+  [![Tweet](https://img.shields.io/twitter/url/https/shields.io.svg?style=social)](https://twitter.com/intent/tweet?text=%F0%9F%93%A2%20An%20agent-first%20stock%20market%20research%20and%20monitoring%20platform&url=https://github.com/relativityAI/relativity-markets)
   [![Status](https://img.shields.io/badge/status-active-success.svg)]()
   [![GitHub Issues](https://img.shields.io/github/issues/relativityAI/relativity-markets.svg)](https://github.com/relativityAI/relativity-markets/issues)
   [![GitHub Pull Requests](https://img.shields.io/github/issues-pr/relativityAI/relativity-markets.svg)](https://github.com/relativityAI/relativity-markets/pulls)
@@ -20,30 +20,49 @@
   Built by <a href="https://github.com/avishkarArjan/"><img src="https://github.com/avishkarArjan.png" alt="avishkarArjan" width="28" style="border-radius: 50%"></a>
 </div>
 
-## Screenshots
+## App screenshots
 
 <p align="center">
-  <img src="assets/homepage.png" alt="Relativity homepage — market heatmap, watchlist and this week's scheduled runs" width="100%">
+  <img src="assets/homepage.png" alt="Relativity home — market heatmap, watchlist and this week's scheduled runs" width="100%">
 </p>
+<p align="center"><sub>Home — market heatmap, watchlist and this week's scheduled runs</sub></p>
+
+## Agent Report Screenshots
 
 <table align="center">
   <tr>
-    <td align="center" width="33%"><img src="assets/past_runs.png" alt="Past runs list"></td>
-    <td align="center" width="33%"><img src="assets/workspace.png" alt="Workspace — plugins, active runs and alerts"></td>
-    <td align="center" width="33%"><img src="assets/new_run_page.png" alt="New run page — schedule an agent analysis"></td>
+    <td align="center" width="50%">
+      <img src="assets/agent_report/agent_report_1.png" alt="Agent report — MAXHEALTH verdict, thesis and price chart">
+      <br><sub>Verdict and thesis — MAXHEALTH scored "Good"</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/agent_report/agent_report_2.png" alt="Agent report — distance above the 200-day average and catalyst checklist">
+      <br><sub>Charts and checklists — distance above the 200-day average, catalyst checklist</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/agent_report/agent_report_3.png" alt="Agent report — PVRINOX verdict with price against its moving averages">
+      <br><sub>PVRINOX scored "Poor" — price against its 50- and 200-day averages</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/agent_report/agent_report_4.png" alt="Agent report — relative strength table and entry plan">
+      <br><sub>Relative strength vs peers and the index, plus the entry plan</sub>
+    </td>
   </tr>
 </table>
 
 ## Table of Contents
 
-1. [Screenshots](#screenshots)
-2. [Prerequisites](#prerequisites)
-3. [Install](#install)
-4. [Usage](#usage)
-5. [Cleanup](#cleanup)
-6. [Architecture](#architecture)
-7. [Top contributors:](#top-contributors)
-8. [License](#license)
+1. [App screenshots](#app-screenshots)
+2. [Agent Report Screenshots](#agent-report-screenshots)
+3. [Prerequisites](#prerequisites)
+4. [Install](#install)
+5. [Usage](#usage)
+6. [Cleanup](#cleanup)
+7. [Architecture](#architecture)
+8. [Top contributors:](#top-contributors)
+9. [License](#license)
 
 
 
@@ -86,6 +105,28 @@ Pages:
 - **`/plugins/:id`** — plugin detail (overview + files)
 - **`/my-workspace`** — plugins, active runs, alerts
 - **`/settings`** — API keys (encrypted)
+
+### Screenshots of the pages
+
+<table align="center">
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/past_runs.png" alt="Runs page — insights panel, verdicts and filters">
+      <br><sub><code>/runs</code> — insights, verdicts, sort and group filters</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/workspace.png" alt="Plugin library — shipped and custom plugins">
+      <br><sub>Plugin library — shipped, verified plugins and your own</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/new_run_page.png" alt="New run page — schedule form and scheduled agents calendar">
+      <br><sub><code>/new-run</code> — schedule a run, with scheduled agents on the calendar</sub>
+    </td>
+    <td align="center"></td>
+  </tr>
+</table>
 
 CLI (from `services/`, needs `npm run searxng` + `OPENCODE_API_KEY`):
 
