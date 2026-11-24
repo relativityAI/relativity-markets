@@ -124,7 +124,8 @@ docker compose down        # stop
 
 Notes:
 
-- Windows PowerShell: use `curl.exe` instead of `curl`
+- Windows PowerShell: use `curl.exe` instead of `curl` (PowerShell aliases `curl` to `Invoke-WebRequest`, which rejects these flags)
+- Windows cmd: drop `-p` from `mkdir` (it creates a folder literally named `-p`)
 - Option 2: data lands in `services/data` next to the compose file
 
 ## Usage
