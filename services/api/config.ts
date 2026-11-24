@@ -113,8 +113,6 @@ export const config = {
     email: "default@localhost",
     name: "Default User",
   },
-  // Legacy cloud path (docker compose `postgres`) — kept, unused in local mode.
-  databaseUrl: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/relativity",
   // Supabase (auth only — JWT verification via JWKS; data lives in Postgres)
   supabaseProjectUrl: process.env.SUPABASE_PROJECT_URL || "",
   supabaseUrl: process.env.SUPABASE_URL || "",

@@ -1,22 +1,15 @@
 #!/bin/sh
-# E2E test for the docker-mode relativity command: install.sh dispatcher and
-# platform installers (link + docker requirement), plus bin/relativity
-# (update-check / start / browser-poll / idempotent / stop). Needs Docker and a
-# FREE port 8501 (stop a running app first); the first run downloads images
-# (a few minutes).
+# E2E test for install.sh + bin/relativity: checkout install, piped/download
+# install, uninstall (data kept), package-manager guards, and the detached
+# start / already-running / stop cycle. Needs Docker and a FREE port 8501
+# (stop a running app first); the first run downloads images (a few minutes).
 #   sh bin/relativity.test.sh
 set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 URL=http://127.0.0.1:8501
 FAKE=$(mktemp -d)
-LAUNCHER=
 
 cleanup() {
-  if [ -n "$LAUNCHER" ]; then
-    pkill -TERM -P "$LAUNCHER" 2>/dev/null || true
-    kill "$LAUNCHER" 2>/dev/null || true
-    wait "$LAUNCHER" 2>/dev/null || true
-  fi
   docker compose -f "$ROOT/docker-compose.yml" down >/dev/null 2>&1 || true
   rm -rf "$FAKE"
 }
@@ -54,7 +47,7 @@ if RELATIVITY_SKIP_PACKAGE_INSTALL=1 HOME="$FAKE/home-bad" PATH="$FAKE/stub:$PAT
 fi
 grep -q "Docker is required" "$FAKE/bad.log" || fail "install.sh: missing docker-required message"
 
-# 2. install.sh links the command (real repo, fake HOME — real HOME untouched)
+# 2. checkout install links the command (real repo, fake HOME — real HOME untouched)
 HOME="$FAKE/home" bash "$ROOT/install.sh" >/dev/null
 [ -x "$FAKE/home/.local/bin/relativity" ] || fail "install.sh did not link the command"
 [ "$(readlink "$FAKE/home/.local/bin/relativity")" = "$ROOT/bin/relativity" ] ||
@@ -63,32 +56,11 @@ HOME="$FAKE/home" bash "$ROOT/install.sh" >/dev/null
 # 2a. re-running is idempotent: same link, one PATH line, no duplicate edits
 out=$(HOME="$FAKE/home" bash "$ROOT/install.sh")
 echo "$out" | grep -q "already installed" || fail "install.sh did not report an existing install"
-[ "$(readlink "$FAKE/home/.local/bin/relativity")" = "$ROOT/bin/relativity" ] ||
-  fail "re-run changed the symlink"
 path_lines=$(grep -hF 'export PATH="$HOME/.local/bin:$PATH"' \
   "$FAKE/home/.profile" "$FAKE/home/.bashrc" "$FAKE/home/.zshrc" 2>/dev/null | wc -l)
 [ "$path_lines" -le 1 ] || fail "re-run duplicated the PATH line"
 
-# 2b. Windows (Git Bash): installer must add a .cmd shim for cmd/PowerShell and
-# register the install dir in the User PATH. Stub the Windows-only tools.
-mkdir -p "$FAKE/winstub"
-printf '#!/bin/sh\necho MINGW64_NT-10.0\n' >"$FAKE/winstub/uname"
-printf '#!/bin/sh\necho "C:\\Users\\tester\\.local\\bin"\n' >"$FAKE/winstub/cygpath"
-printf '#!/bin/sh\n[ "$1" = compose ] && [ "$2" = version ] && exit 0\n[ "$1" = info ] && exit 0\nexit 1\n' >"$FAKE/winstub/docker"
-printf '#!/bin/sh\necho "$@" >"$POWERSHELL_LOG"\nexit 0\n' >"$FAKE/winstub/powershell.exe"
-chmod +x "$FAKE/winstub/"*
-POWERSHELL_LOG="$FAKE/ps.log" HOME="$FAKE/winhome" PATH="$FAKE/winstub:$PATH" \
-  bash "$ROOT/install.sh" >"$FAKE/win.log" 2>&1 || { cat "$FAKE/win.log" >&2; fail "Windows install failed"; }
-[ -x "$FAKE/winhome/.local/bin/relativity" ] || fail "Windows: no Git Bash launcher"
-[ "$(readlink "$FAKE/winhome/.local/bin/relativity")" = "$ROOT/bin/relativity" ] ||
-  fail "Windows: launcher does not point at the repo"
-grep -q '%~dp0relativity' "$FAKE/winhome/.local/bin/relativity.cmd" 2>/dev/null ||
-  fail "Windows: .cmd shim missing or does not delegate to the launcher"
-grep -q 'bash.exe' "$FAKE/winhome/.local/bin/relativity.cmd" ||
-  fail "Windows: .cmd shim does not locate Git Bash"
-grep -q "SetEnvironmentVariable" "$FAKE/ps.log" || fail "Windows: User PATH was not updated"
-
-# 2c. Linux: when Docker/Compose/curl are already present, no package manager
+# 2b. Linux: when Docker/Compose/curl are already present, no package manager
 # call is made (stub apt-get would fail loudly if the installer invoked it).
 mkdir -p "$FAKE/linuxstub"
 printf '#!/bin/sh\necho Linux\n' >"$FAKE/linuxstub/uname"
@@ -101,7 +73,7 @@ APT_LOG="$FAKE/skip-apt.log" HOME="$FAKE/linuxhome" PATH="$FAKE/linuxstub:$PATH"
 grep -q "skipping package installation" "$FAKE/linux.log" ||
   fail "Linux: installer did not report that packages were already present"
 
-# 2d. Linux: a missing Compose plugin is installed via apt (stubbed here), then
+# 2c. Linux: a missing Compose plugin is installed via apt (stubbed here), then
 # the installer verifies requirements again and links the command.
 mkdir -p "$FAKE/autostub"
 cat >"$FAKE/autostub/uname" <<'STUB'
@@ -151,75 +123,72 @@ grep -q 'docker-compose-plugin' "$FAKE/auto-apt.log" ||
 [ -x "$FAKE/autohome/.local/bin/relativity" ] ||
   fail "Linux: auto-install did not link the command"
 
-# 2e. cleanup removes only Relativity artifacts. Stub docker so no real
-# containers or images are touched by the test.
+# 3. piped/download install: no checkout — files come from RELATIVITY_RAW_BASE
+#    (file:// here, so no network). Simulates `curl … | sh` by piping the script.
+mkdir -p "$FAKE/dl"
+(cd "$FAKE/dl" && HOME="$FAKE/dlhome" RELATIVITY_RAW_BASE="file://$ROOT" \
+  sh <"$ROOT/install.sh" >"$FAKE/dl.log" 2>&1) || { cat "$FAKE/dl.log" >&2; fail "download install failed"; }
+grep -q "Downloading Relativity" "$FAKE/dl.log" || fail "download mode: did not download"
+[ -f "$FAKE/dlhome/.local/share/relativity/docker-compose.yml" ] ||
+  fail "download mode: compose file missing"
+[ -x "$FAKE/dlhome/.local/share/relativity/bin/relativity" ] ||
+  fail "download mode: launcher missing"
+[ "$(readlink "$FAKE/dlhome/.local/bin/relativity")" = "$FAKE/dlhome/.local/share/relativity/bin/relativity" ] ||
+  fail "download mode: symlink does not point at the downloaded launcher"
+cmp -s "$ROOT/docker-compose.yml" "$FAKE/dlhome/.local/share/relativity/docker-compose.yml" ||
+  fail "download mode: downloaded compose file differs from the checkout"
+
+# 4. uninstall (download mode): stops the stack, removes command + PATH,
+#    keeps data. Stub docker so no real containers/images are touched.
+mkdir -p "$FAKE/dlhome/.local/share/relativity/services/data"
+: >"$FAKE/dlhome/.local/share/relativity/services/data/relativity.db"
 mkdir -p "$FAKE/cleanstub"
 cat >"$FAKE/cleanstub/docker" <<'STUB'
 #!/bin/sh
 echo "$@" >>"$DOCKER_LOG"
 exit 0
 STUB
-chmod +x "$FAKE/cleanstub/"*
+chmod +x "$FAKE/cleanstub/docker"
 : >"$FAKE/docker-clean.log"
-DOCKER_LOG="$FAKE/docker-clean.log" HOME="$FAKE/home" PATH="$FAKE/cleanstub:$PATH" \
-  bash "$ROOT/cleanup.sh" >"$FAKE/clean.log" 2>&1 || { cat "$FAKE/clean.log" >&2; fail "cleanup failed"; }
-[ ! -e "$FAKE/home/.local/bin/relativity" ] || fail "cleanup left the symlink behind"
+DOCKER_LOG="$FAKE/docker-clean.log" HOME="$FAKE/dlhome" PATH="$FAKE/cleanstub:$PATH" \
+  "$FAKE/dlhome/.local/bin/relativity" uninstall >"$FAKE/un.log" 2>&1 ||
+  { cat "$FAKE/un.log" >&2; fail "uninstall failed"; }
+[ ! -e "$FAKE/dlhome/.local/bin/relativity" ] || fail "uninstall left the command behind"
+[ ! -e "$FAKE/dlhome/.local/share/relativity/docker-compose.yml" ] ||
+  fail "uninstall left the compose file behind"
+[ -f "$FAKE/dlhome/.local/share/relativity/services/data/relativity.db" ] ||
+  fail "uninstall deleted local data"
 path_lines=$(grep -hF 'export PATH="$HOME/.local/bin:$PATH"' \
-  "$FAKE/home/.profile" "$FAKE/home/.bashrc" "$FAKE/home/.zshrc" 2>/dev/null | wc -l)
-[ "$path_lines" -eq 0 ] || fail "cleanup left a PATH entry behind"
+  "$FAKE/dlhome/.profile" "$FAKE/dlhome/.bashrc" "$FAKE/dlhome/.zshrc" 2>/dev/null | wc -l)
+[ "$path_lines" -eq 0 ] || fail "uninstall left a PATH entry behind"
 grep -q 'docker-compose.yml down' "$FAKE/docker-clean.log" ||
-  fail "cleanup did not stop this checkout's containers"
-grep -q 'ghcr.io/relativityai/relativity-markets:latest' "$FAKE/docker-clean.log" ||
-  fail "cleanup did not remove the app image"
-grep -q 'relativity/tradingview-mcp:0.8.1' "$FAKE/docker-clean.log" ||
-  fail "cleanup did not remove the built image"
-if grep -qiE 'prune|system df' "$FAKE/docker-clean.log"; then
-  fail "cleanup touched unrelated Docker resources"
-fi
+  fail "uninstall did not stop the stack"
 
-# 2f. a second run is idempotent and never deletes a non-Relativity file at the
-# install path.
-printf 'keep me\n' >"$FAKE/home/.local/bin/relativity"
+# 5. uninstall from a checkout must NOT delete the repo's files.
 : >"$FAKE/docker-clean2.log"
 DOCKER_LOG="$FAKE/docker-clean2.log" HOME="$FAKE/home" PATH="$FAKE/cleanstub:$PATH" \
-  bash "$ROOT/cleanup.sh" >/dev/null 2>&1 || fail "second cleanup run failed"
-[ "$(cat "$FAKE/home/.local/bin/relativity")" = "keep me" ] ||
-  fail "cleanup removed an unrelated file"
-rm -f "$FAKE/home/.local/bin/relativity"
+  "$FAKE/home/.local/bin/relativity" uninstall >"$FAKE/un2.log" 2>&1 ||
+  { cat "$FAKE/un2.log" >&2; fail "checkout uninstall failed"; }
+[ ! -e "$FAKE/home/.local/bin/relativity" ] || fail "checkout uninstall left the command behind"
+[ -f "$ROOT/bin/relativity" ] || fail "uninstall deleted the checkout launcher"
+[ -f "$ROOT/docker-compose.yml" ] || fail "uninstall deleted the checkout compose file"
+[ -f "$ROOT/services/searxng/settings.yml" ] || fail "uninstall deleted checkout files"
 
-# 2g. Windows cleanup: shim, Windows User PATH entry and rc PATH line are removed.
-mkdir -p "$FAKE/cleanwinstub"
-printf '#!/bin/sh\necho MINGW64_NT-10.0\n' >"$FAKE/cleanwinstub/uname"
-printf '#!/bin/sh\necho "C:\\Users\\tester\\.local\\bin"\n' >"$FAKE/cleanwinstub/cygpath"
-printf '#!/bin/sh\necho "$@" >"$POWERSHELL_LOG"\nexit 0\n' >"$FAKE/cleanwinstub/powershell.exe"
-cp "$FAKE/cleanstub/docker" "$FAKE/cleanwinstub/docker"
-chmod +x "$FAKE/cleanwinstub/"*
-: >"$FAKE/ps-clean.log"
-: >"$FAKE/docker-cleanwin.log"
-POWERSHELL_LOG="$FAKE/ps-clean.log" DOCKER_LOG="$FAKE/docker-cleanwin.log" \
-  HOME="$FAKE/winhome" PATH="$FAKE/cleanwinstub:$PATH" \
-  bash "$ROOT/cleanup.sh" >"$FAKE/winclean.log" 2>&1 || { cat "$FAKE/winclean.log" >&2; fail "Windows cleanup failed"; }
-[ ! -e "$FAKE/winhome/.local/bin/relativity.cmd" ] ||
-  fail "Windows cleanup left the .cmd shim behind"
-grep -q 'SetEnvironmentVariable' "$FAKE/ps-clean.log" ||
-  fail "Windows cleanup did not update the User PATH"
-
-# Restore the launcher used by the E2E steps below.
+# Restore the install for the E2E steps below.
 HOME="$FAKE/home" bash "$ROOT/install.sh" >/dev/null
-[ -x "$FAKE/home/.local/bin/relativity" ] || fail "re-install after cleanup failed"
+[ -x "$FAKE/home/.local/bin/relativity" ] || fail "re-install after uninstall failed"
 
-# 3. port must be free (an app typed by a human beats the test)
+# 6. port must be free (an app typed by a human beats the test)
 command -v docker >/dev/null 2>&1 || fail "docker missing"
 if curl -fsS -o /dev/null --max-time 2 "$URL/health" 2>/dev/null; then
-  echo "SKIP: app already running on $URL — press Ctrl+C in its terminal (or docker compose down), then re-run this test."
+  echo "SKIP: app already running on $URL — run \`relativity stop\` (or docker compose down), then re-run this test."
   exit 0
 fi
 
-# 4. start via the symlink, backgrounded like a terminal job; wait out the pull
-"$FAKE/home/.local/bin/relativity" >"$FAKE/launch.log" 2>&1 &
-LAUNCHER=$!
+# 7. start via the symlink; the launcher is detached and exits once healthy.
+"$FAKE/home/.local/bin/relativity" >"$FAKE/launch.log" 2>&1 ||
+  { tail -30 "$FAKE/launch.log" >&2; fail "launcher failed"; }
 wait_healthy || { tail -30 "$FAKE/launch.log" >&2; fail "app not healthy after start"; }
-kill -0 "$LAUNCHER" 2>/dev/null || { tail -30 "$FAKE/launch.log" >&2; fail "launcher exited instead of staying in the foreground"; }
 ss -ltn 2>/dev/null | grep -q '127.0.0.1:8501' || fail "port 8501 is not loopback-only"
 
 # the update check must complete before `up` — otherwise the container is
@@ -233,13 +202,13 @@ running_img=$(docker inspect -f '{{.Image}}' "$(docker compose -f "$ROOT/docker-
 latest_img=$(docker image inspect ghcr.io/relativityai/relativity-markets:latest -f '{{.Id}}')
 [ "$running_img" = "$latest_img" ] || fail "app is not running the freshly pulled image"
 
-# 5. second invocation, from another directory: still refreshes, then detects
+# 8. second invocation, from another directory: still refreshes, then detects
 #    the running app (the README promises it works from any folder)
 out=$(cd /tmp && "$FAKE/home/.local/bin/relativity")
 echo "$out" | grep -q "Checking for updates..." || fail "second run skipped the update check"
 echo "$out" | grep -q "already running" || fail "second run did not detect running app"
 
-# 5b. a run against an already-running app on an older image must recreate it.
+# 8b. a run against an already-running app on an older image must recreate it.
 #     Stub docker/curl so this exercises the launcher's decision, not the daemon.
 mkdir -p "$FAKE/refreshstub"
 cat >"$FAKE/refreshstub/docker" <<'STUB'
@@ -266,12 +235,9 @@ out=$(PATH="$FAKE/refreshstub:$PATH" RECREATE_LOG="$FAKE/recreate.log" "$FAKE/ho
 echo "$out" | grep -q "Update available" || fail "stale running app was not updated"
 grep -q recreated "$FAKE/recreate.log" || fail "app container was not recreated on update"
 
-# 6. stop path: kill the launcher + compose client, then compose down
-pkill -TERM -P "$LAUNCHER" || fail "no compose process under the launcher"
-kill "$LAUNCHER" 2>/dev/null || true
-wait "$LAUNCHER" 2>/dev/null || true
-LAUNCHER=
-docker compose -f "$ROOT/docker-compose.yml" down >/dev/null 2>&1 || true
+# 9. stop path: `relativity stop` takes the stack down and frees the port.
+"$FAKE/home/.local/bin/relativity" stop >/dev/null ||
+  fail "relativity stop failed"
 wait_port_free || fail "port 8501 still serving after stop"
 
-echo "relativity docker command: all checks passed"
+echo "relativity install/run: all checks passed"

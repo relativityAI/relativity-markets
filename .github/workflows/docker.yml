@@ -43,3 +43,25 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # SearXNG with this project's settings baked in (JSON API enabled,
+      # engines widened) — published so `docker compose up` needs no checkout.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/searxng/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/relativityai/relativity-searxng:latest
+          cache-from: type=gha,scope=searxng
+          cache-to: type=gha,mode=max,scope=searxng
+
+      # TradingView MCP — published so compose never has to build it locally.
+      - uses: docker/build-push-action@v6
+        with:
+          context: docker/tradingview-mcp
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/relativityai/tradingview-mcp:0.8.1
+          cache-from: type=gha,scope=tvmcp
+          cache-to: type=gha,mode=max,scope=tvmcp

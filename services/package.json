@@ -13,7 +13,6 @@
     "export-legacy-store": "tsx scripts/export-legacy-store.ts",
     "smoke:mcp": "tsx scripts/mcp-smoke.ts",
     "searxng": "docker compose -f ../docker-compose.yml up -d searxng",
-    "db:up": "docker compose -f ../docker-compose.yml up -d postgres",
     "db:reset": "rm -f data/relativity.db data/relativity.db-wal data/relativity.db-shm"
   },
   "dependencies": {
@@ -45,7 +44,6 @@
     "p-limit": "^7.3.3",
     "pdf-parse": "^1.1.1",
     "pdfmake": "^0.2.12",
-    "pg": "^8.23.1",
     "picocolors": "^1.1.1",
     "string-width": "^4.2.3",
     "yahoo-finance2": "^4.0.6",
@@ -59,7 +57,6 @@
     "@types/multer": "^2.2.0",
     "@types/node": "^24.0.0",
     "@types/pdfmake": "^0.3.3",
-    "@types/pg": "^8.23.1",
     "@types/react": "^18.3.31",
     "tsx": "^4.19.0",
     "typescript": "~5.9.3",

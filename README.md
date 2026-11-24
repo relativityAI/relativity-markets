@@ -54,37 +54,78 @@
 
 ## Table of Contents
 
-1. [App screenshots](#app-screenshots)
-2. [Agent Report Screenshots](#agent-report-screenshots)
-3. [Prerequisites](#prerequisites)
-4. [Install](#install)
-5. [Usage](#usage)
-6. [Cleanup](#cleanup)
-7. [Architecture](#architecture)
-8. [Top contributors:](#top-contributors)
-9. [License](#license)
+1. [Prerequisites](#prerequisites)
+2. [Install](#install)
+3. [Usage](#usage)
+4. [Cleanup](#cleanup)
+5. [Architecture](#architecture)
+6. [License](#license)
 
 
 
 ## Prerequisites
 
-- **Git** — required
-- **Docker** — required (app + web search run on it). On Linux, `install.sh` installs Docker, Compose and `curl` via the system package manager if they are missing (sudo required). Set `RELATIVITY_SKIP_PACKAGE_INSTALL=1` to opt out.
-- **Windows:** [Git Bash](https://git-scm.com/download/win)
+- **Docker** — required
+  - Linux: the installer can install it for you (sudo required)
+  - Opt out with `RELATIVITY_SKIP_PACKAGE_INSTALL=1`
+- **Git** — only for development or plain-Docker option 1
 
 ## Install
 
+No clone, no Git — one line per platform:
+
 ```bash
-git clone https://github.com/relativityAI/relativity-markets.git && cd relativity-markets && bash install.sh
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/relativityAI/relativity-markets/main/install.sh | sh
 ```
 
-`install.sh` is the single entry point: it detects the platform and delegates to `scripts/install-linux.sh` (Linux/macOS) or `scripts/install-windows.sh` (Windows/Git Bash). Shared logic lives in `scripts/install-common.sh`.
+```powershell
+# Windows (PowerShell — no Git Bash needed)
+irm https://raw.githubusercontent.com/relativityAI/relativity-markets/main/install.ps1 | iex
+```
 
-Re-running `install.sh` is safe — it skips packages and PATH setup that are already in place.
+What the installer does:
+
+- Checks Docker is running (Linux: installs missing packages for you)
+- Downloads the stack to `~/.local/share/relativity` (Windows: `%LOCALAPPDATA%\relativity`)
+- Puts the `relativity` command on your PATH
+- Safe to re-run — skips whatever is already in place
+- From a checkout: `bash install.sh` (Windows: `powershell -File install.ps1`)
 
 **First visit**
 
-No sign-up. Local user created automatically. Open **Settings** → paste LLM API keys (OpenAI, Gemini, Anthropic, ...). Encrypted, stored locally in `services/data/relativity.db`.
+- No sign-up — a local user is created automatically
+- Open **Settings** → paste your LLM API keys (OpenAI, Gemini, Anthropic, ...)
+- Keys are encrypted and stored locally in `services/data/relativity.db`
+
+### Run it with plain Docker (no installer)
+
+**Option 1 — with a clone** (full repo, best if you want to read or change the code):
+
+```bash
+git clone https://github.com/relativityAI/relativity-markets.git
+cd relativity-markets
+
+mkdir -p services/data     # pre-create it, or Docker makes it root-owned
+docker compose up -d       # → http://127.0.0.1:8501
+docker compose down        # stop
+```
+
+**Option 2 — without cloning** (just the app, one file, no Git):
+
+```bash
+mkdir -p my-relativity && cd my-relativity
+mkdir -p services/data     # same reason: Docker would create it root-owned
+
+curl -fsSL https://raw.githubusercontent.com/relativityAI/relativity-markets/main/docker-compose.yml -o docker-compose.yml
+docker compose up -d       # → http://127.0.0.1:8501
+docker compose down        # stop
+```
+
+Notes:
+
+- Windows PowerShell: use `curl.exe` instead of `curl`
+- Option 2: data lands in `services/data` next to the compose file
 
 ## Usage
 
@@ -92,11 +133,13 @@ No sign-up. Local user created automatically. Open **Settings** → paste LLM AP
 relativity
 ```
 
-Opens http://127.0.0.1:8501. Stop: `Ctrl+C`. Every run pulls the latest app image, so you always get the newest version — no `git pull` needed.
-
-- Windows: install via Git Bash. Works in cmd, PowerShell, Git Bash.
-- Closing the terminal (or Ctrl+C) stops the containers — nothing left running.
+- Opens http://127.0.0.1:8501
+- Runs in the background — stop with `relativity stop`
+- Pulls the newest app image every run — no `git pull` needed
+- Works in cmd, PowerShell, Git Bash and any Unix shell
 - Dev mode: `npm install && npm run dev` → http://localhost:5173
+
+> **Used the raw Docker options in Install?** The `relativity` command does not exist there. Start with `docker compose up -d`, stop with `docker compose down`.
 
 Pages:
 
@@ -137,10 +180,21 @@ npm run cli -- --symbol AAPL --model opencode/deepseek-v4.1-flash --max-steps 20
 ## Cleanup
 
 ```bash
-bash cleanup.sh
+relativity uninstall
 ```
 
-Like `install.sh`, this is a single entry point that delegates to `scripts/cleanup-linux.sh` or `scripts/cleanup-windows.sh`. It removes only the `relativity` command, the PATH entries the installer added, this checkout's Docker containers, and the two images this project owns. Local data (`services/data`), system packages, Docker volumes, third-party images and other projects are left untouched.
+- Stops the stack, removes the `relativity` command and the installer's PATH entries
+- Deletes the downloaded files — **keeps your data** (`services/data`)
+- From a checkout: only stops the stack and removes the command
+- Never touches system packages, volumes, third-party images or other projects
+
+Reclaim disk space:
+
+```bash
+docker rmi ghcr.io/relativityai/relativity-markets ghcr.io/relativityai/relativity-searxng ghcr.io/relativityai/tradingview-mcp
+```
+
+**Raw Docker users:** `docker compose down` stops it; delete your folder to remove it.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

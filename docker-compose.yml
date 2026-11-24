@@ -1,6 +1,6 @@
 # One prebuilt image: web app + API on :8501. SearXNG (web search) is included
 # and runs automatically. Langfuse (agent tracing) is opt-in:
-# `docker compose --profile langfuse up -d`. Postgres is the legacy cloud path.
+# `docker compose --profile langfuse up -d` (it brings its own Postgres).
 services:
   app:
     image: ghcr.io/relativityai/relativity-markets:latest
@@ -64,10 +64,10 @@ services:
   # official PyPI package so we get the current TA/screener tools (the old
   # arm64 image only had 11 crypto scanners). News/sentiment degrade to a
   # "not configured" note without MARKETAUX_API_TOKEN.
+  # Published by the `docker` workflow; to develop it locally:
+  #   docker build -t ghcr.io/relativityai/tradingview-mcp:0.8.1 docker/tradingview-mcp
   tvmcp:
-    build:
-      context: ./docker/tradingview-mcp
-    image: relativity/tradingview-mcp:0.8.1
+    image: ghcr.io/relativityai/tradingview-mcp:0.8.1
     command:
       - python
       - -c
@@ -78,12 +78,12 @@ services:
       MARKETAUX_API_TOKEN: ${MARKETAUX_API_TOKEN:-}
     restart: unless-stopped
 
+  # searxng — web search for the agent. Settings (JSON API, engine set) are
+  # baked into the published image by docker/searxng/Dockerfile.
   searxng:
-    image: docker.io/searxng/searxng:latest
+    image: ghcr.io/relativityai/relativity-searxng:latest
     ports:
       - "127.0.0.1:8888:8080"
-    volumes:
-      - ./services/searxng/settings.yml:/etc/searxng/settings.yml:ro
 
   langfuse:
     profiles: [langfuse]
@@ -112,23 +112,5 @@ services:
       timeout: 3s
       retries: 10
 
-  postgres:
-    profiles: [legacy]
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: relativity
-    ports:
-      - "5432:5432"
-    volumes:
-      - relativity-pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d relativity"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
 volumes:
-  relativity-pgdata:
   langfuse-pgdata:
