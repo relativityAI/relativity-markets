@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.14.0...relativity-markets-v0.15.0) (2026-11-24)
+
+
+### Features
+
+* **install:** no-clone installers, published helper images, drop postgres ([08ee7ec](https://github.com/relativityAI/relativity-markets/commit/08ee7ec709ebf3bd26ea92fd15dad718084c1b60))
+
 ## [0.14.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.13.0...relativity-markets-v0.14.0) (2026-11-22)
 
 
