@@ -166,7 +166,7 @@ let langfuseHandlers: unknown[] = [];
  * built-in search used to wrap results itself; MCP tools don't.
  */
 const WEB_TOOLS = new Set([
-  "searxng_web_search", "web_url_read", "tavily_search", "tavily_extract",
+  "searxng_web_search", "web_url_read",
   "yfinance_get_ticker_news", "financial_news", "market_sentiment", "combined_analysis",
 ]);
 

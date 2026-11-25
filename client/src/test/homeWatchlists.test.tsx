@@ -35,6 +35,8 @@ vi.mock("@/db", () => ({
     listAlertRules: vi.fn(async () => []),
     listAnalyses: vi.fn(async () => []),
     listOccurrences: vi.fn(async () => []),
+    runAnalysis: vi.fn(async () => ({ id: "r9", status: "RUNNING" })),
+    createAlertRule: vi.fn(async (c: Record<string, unknown>) => ({ id: "ar1", enabled: 1, ...c })),
   },
   AlertService: { listAlerts: vi.fn(async () => []), markRead: vi.fn(async () => {}), markAllRead: vi.fn(async () => {}) },
   PluginService: { list: vi.fn(async () => []) },
@@ -63,7 +65,9 @@ vi.mock("@/db", () => ({
 }));
 
 import HomePage from "@/pages/HomePage";
-import { AnalysisService, WatchlistService } from "@/db";
+import { badgeAge, badgeFill, badgeIcons } from "@/lib/analysisFormat";
+import { AnalysisService, PluginService, WatchlistService } from "@/db";
+import { FaceNeutral, ThumbsDown, ThumbsUp } from "lucide-react";
 
 const wrap = (n: React.ReactNode) => (
   <>
@@ -99,6 +103,7 @@ describe("home watchlists", () => {
     state.lists = [];
     state.nextId = 1;
     localStorage.removeItem("relativity.watchlist");
+    localStorage.removeItem("relativity.watchlist.active");
     vi.clearAllMocks();
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       if (String(url).includes("/stocks/search")) {
@@ -191,7 +196,7 @@ describe("home watchlists", () => {
     render(wrap(<HomePage />));
     await screen.findByRole("button", { name: /switch watchlist/i });
 
-    expect(await screen.findByText("create your first watchlist")).toBeTruthy();
+    expect(await screen.findByText("add stocks to watchlist")).toBeTruthy();
     expect(screen.getByRole("button", { name: /rename watchlist/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /export watchlist as csv/i })).toBeTruthy();
 
@@ -200,7 +205,7 @@ describe("home watchlists", () => {
     fireEvent.click(await screen.findByRole("option", { name: /AAPL/i }));
 
     await screen.findByRole("rowheader", { name: /AAPL/ });
-    expect(screen.queryByText("create your first watchlist")).toBeNull();
+    expect(screen.queryByText("add stocks to watchlist")).toBeNull();
   });
 
   it("confirms through the app's dialog before deleting a watchlist", async () => {
@@ -277,7 +282,7 @@ describe("home watchlists", () => {
     // Two consumers of listAnalyses: the home rail and the week calendar —
     // queue the runs twice so neither call drains the other's fixture.
     const fixture = [
-      { id: "r1", symbol: "AAPL", source: "SEC", share_name: "Apple Inc.", agent_name: "Chartist Analyst", verdict: "Strong", created_at: "2026-01-01T10:00:00Z" },
+      { id: "r1", symbol: "AAPL", source: "SEC", share_name: "Apple Inc.", agent_name: "Chartist Analyst", verdict: "Strong", duration: 125, created_at: "2026-01-01T10:00:00Z" },
       { id: "r2", symbol: "AAPL", source: "SEC", share_name: "Apple Inc.", agent_name: "Risk Agent", verdict: "Fair", created_at: "2026-01-01T09:00:00Z" },
       { id: "r3", symbol: "MSFT", source: "SEC", share_name: "Microsoft", agent_name: "Chartist Analyst", verdict: "Sell", created_at: "2026-01-01T08:00:00Z" },
     ] as any;
@@ -286,24 +291,38 @@ describe("home watchlists", () => {
 
     const table = await panel().findByRole("table");
     expect(table.parentElement!.className).toContain("overflow-x-auto");
-    for (const col of ["Symbol", "Chart", "Last", "Chg", "Chg%"]) {
+    for (const col of ["Symbol", "Chart", "Last", "Chg%"]) {
       expect(panel().getByRole("columnheader", { name: col })).toBeTruthy();
     }
     // One column per agent that ran on this list's symbols — only those.
     expect(panel().getByRole("columnheader", { name: /chartist analyst/i })).toBeTruthy();
     expect(panel().getByRole("columnheader", { name: /risk agent/i })).toBeTruthy();
-    // Exactly those two — no extra plugin columns.
-    expect(panel().getAllByRole("columnheader")).toHaveLength(7);
+    // Exactly those — no extra plugin columns (Chg is gone, Chg% stays).
+    expect(panel().getAllByRole("columnheader")).toHaveLength(6);
 
     // AAPL carries both agent badges, MSFT only its own (Risk = dash).
     const appleRow = panel().getByRole("rowheader", { name: /AAPL/ }).closest("tr")!;
     expect(appleRow.textContent).toContain("Strong");
     expect(appleRow.textContent).toContain("Fair");
+    // The badge carries the last run's wall time in light text.
+    expect(appleRow.textContent).toContain("2m 5s");
     expect(appleRow.querySelector('[aria-label="Remove AAPL from watchlist"]')).toBeTruthy();
 
     const msftRow = panel().getByRole("rowheader", { name: /MSFT/ }).closest("tr")!;
     expect(msftRow.textContent).toContain("Sell");
     expect(msftRow.textContent).toContain("—");
+
+    // Badges are solid, bright fills — not tints (amber for mid, red for bad).
+    const badgeStyle = (row: HTMLElement, word: string) =>
+      [...row.querySelectorAll("a.rounded-full, span.rounded-full")].find((s) => s.textContent?.startsWith(word))?.getAttribute("style") || "";
+    expect(badgeStyle(appleRow, "Fair")).toContain("#FACC15");
+    expect(badgeStyle(msftRow, "Sell")).toContain("#F87171");
+    // Every badge carries its band's lucide glyph (currentColor).
+    expect(appleRow.querySelector("a.rounded-full svg")).toBeTruthy();
+
+    // Badge → that agent's last run; ticker + logos → the stock page.
+    expect(appleRow.querySelector("a.rounded-full")?.getAttribute("href")).toBe("/runs/r1");
+    expect(within(appleRow).getByRole("link", { name: /AAPL/ }).getAttribute("href")).toBe("/stock/AAPL?source=SEC");
 
     // Columns sort on click.
     const lastHeader = panel().getByRole("columnheader", { name: "Last" });
@@ -319,6 +338,94 @@ describe("home watchlists", () => {
     expect(panel().getAllByRole("rowheader")[0].textContent).toContain("AAPL"); // Strong over Sell
     fireEvent.click(within(panel().getByRole("columnheader", { name: /chartist analyst/i })).getByRole("button", { name: /chartist/i }));
     expect(panel().getAllByRole("rowheader")[0].textContent).toContain("MSFT"); // flipped: Sell first
+  });
+
+  it("keeps the selected watchlist across remounts (like the heatmap's market)", async () => {
+    state.lists = [
+      { id: "w1", user_id: "u1", name: "My Watchlist", items: [], created_at: "2026-01-01", updated_at: "2026-01-01" },
+      { id: "w2", user_id: "u1", name: "Tech", items: [], created_at: "2026-01-01", updated_at: "2026-01-01" },
+    ];
+    const { unmount } = render(wrap(<HomePage />));
+    const menu = await openSwitcher();
+    fireEvent.click(within(menu as HTMLElement).getByRole("menuitem", { name: /tech/i }));
+    await waitFor(() => expect(localStorage.getItem("relativity.watchlist.active")).toBe("w2"));
+    unmount();
+
+    render(wrap(<HomePage />));
+    expect((await screen.findByRole("button", { name: /switch watchlist/i })).textContent).toContain("Tech");
+  });
+
+  it("maps verdicts to badge glyphs: double thumbs, single thumbs, neutral face", () => {
+    // Great (better than good) → two thumbs up; very bad → two thumbs down.
+    expect(badgeIcons("Excellent")).toHaveLength(2);
+    expect(badgeIcons("Outstanding")).toHaveLength(2);
+    expect(badgeIcons("Very Poor")).toHaveLength(2);
+    // Average/fair → the neutral face; plain good/bad → one thumb.
+    expect(badgeIcons("Fair")).toEqual([FaceNeutral]);
+    expect(badgeIcons("Strong")).toEqual([ThumbsUp]);
+    expect(badgeIcons("Poor")).toEqual([ThumbsDown]);
+    expect(badgeIcons(null)).toEqual([FaceNeutral]);
+  });
+
+  it("fills badges by severity: green shades, yellow average, red shades", () => {
+    expect(badgeFill("Excellent")).toBe("#22C55E"); // great — deeper green
+    expect(badgeFill("Strong")).toBe("#4ADE80"); // good — lighter green
+    expect(badgeFill("Fair")).toBe("#FACC15"); // average — yellow
+    expect(badgeFill("Poor")).toBe("#F87171"); // bad — lighter red
+    expect(badgeFill("Very Poor")).toBe("#EF4444"); // very bad — deeper red
+    expect(badgeFill(null)).toBe("#9CA3AF"); // unclassified — gray
+  });
+
+  it("compacts badge age into now / m / h / d / w, then a short date", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-15T12:00:00Z"));
+    const at = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+    expect(badgeAge(at(0))).toBe("now");
+    expect(badgeAge(at(5))).toBe("5m");
+    expect(badgeAge(at(60 * 3))).toBe("3h");
+    expect(badgeAge(at(60 * 24 * 2))).toBe("2d");
+    expect(badgeAge(at(60 * 24 * 7 * 3))).toBe("3w");
+    expect(badgeAge(at(60 * 24 * 40))).toBe("May 6"); // past five weeks → date
+    expect(badgeAge(null)).toBe("");
+    vi.useRealTimers();
+  });
+
+  it("puts the verdict's age on the badge and runs / schedules the agent from its cell", async () => {
+    state.lists = [{
+      id: "w1", user_id: "u1", name: "My Watchlist",
+      items: [{ symbol: "AAPL", source: "SEC" }],
+      created_at: "2026-01-01", updated_at: "2026-01-01",
+    }];
+    const createdAt = "2026-01-01T10:00:00Z";
+    vi.mocked(AnalysisService.listAnalyses).mockResolvedValue([
+      { id: "r1", symbol: "AAPL", source: "SEC", share_name: "Apple Inc.", plugin_ids: ["p1"], verdict: "Strong", created_at: createdAt },
+    ] as never[]);
+    vi.mocked(PluginService.list).mockResolvedValue([{ id: "p1", display_name: "Chartist Analyst" }] as never[]);
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    render(wrap(<HomePage />));
+
+    // The age reads straight off the badge — no hover needed.
+    const badge = await screen.findByRole("link", { name: /Strong/ });
+    expect(badge.textContent).toContain(badgeAge(createdAt));
+    expect(badge.querySelector(".sr-only")).toBeTruthy(); // hover detail kept for SRs
+
+    // ↻ relaunches that agent on that symbol, then opens the new run.
+    fireEvent.click(await screen.findByRole("button", { name: /run AAPL with Chartist Analyst again/i }));
+    await waitFor(() => expect(AnalysisService.runAnalysis).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: "AAPL", source: "SEC", plugin_ids: ["p1"] }),
+    ));
+    await waitFor(() => expect(openSpy).toHaveBeenCalledWith("/runs/r9", "_blank", "noreferrer"));
+
+    // 📅 opens the cadence menu; picking Daily creates the 9:00 rule…
+    press(await screen.findByRole("button", { name: /schedule AAPL with Chartist Analyst/i }));
+    const menu = await screen.findByRole("menu");
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /daily/i }));
+    await waitFor(() => expect(AnalysisService.createAlertRule).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: "AAPL", frequency: "daily", time: "09:00", plugin_ids: ["p1"] }),
+    ));
+    // …and the cell flips to its scheduled state.
+    expect(await screen.findByRole("button", { name: /schedule AAPL with Chartist Analyst — scheduled/i })).toBeTruthy();
+    openSpy.mockRestore();
   });
 
   it("puts the switcher left and the add / open / export / rename / delete icons right", async () => {

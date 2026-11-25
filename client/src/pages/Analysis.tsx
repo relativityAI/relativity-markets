@@ -11,8 +11,9 @@ import AgentActivity from "@/components/shared/AgentActivity";
 import { motion, AnimatePresence } from "motion/react";
 import { dur, ease } from "@/lib/motion";
 import { FlagLogo, TickerLogo } from "@/lib/sourceLogos";
+import { mcpServerState, MCP_STATE_DOT, requiredIssue } from "@/lib/mcp";
 import PluginAvatar from "@/components/shared/PluginAvatar";
-import { ModelLogo } from "@/lib/modelLogos";
+import { ModelLogo, providerDisplayName } from "@/lib/modelLogos";
 import { Play, CalendarDays, Check, Clock, ChevronDown, Pause, Square, X } from "lucide-react";
 import { toaster } from "@/compat/ui";
 import {
@@ -589,10 +590,10 @@ export default function Analysis() {
             .then((data) => { if (Array.isArray(data)) setCategories(data); })
             .catch(() => {});
         PluginService.mcpSources()
-            .then((list) => {
-                setMcpSources(list);
+            .then(({ servers }) => {
+                setMcpSources(servers);
                 // Settings → MCP decides the default; the toggles still change it per run.
-                setMcpEnabled(list.filter((m) => m.enabled).map((m) => m.name));
+                setMcpEnabled(servers.filter((m) => m.enabled).map((m) => m.name));
             })
             .catch(() => {});
     }, [loadPlugins]);
@@ -911,8 +912,9 @@ export default function Analysis() {
     }, [status, correlationId, navigate]);
 
     const isConfigComplete = config.share !== "" && !!model.trim();
-    // Which MCP server offers web search — the run warns when none is on.
-    const webSearchEnabled = mcpSources.some((m) => m.webProvider && mcpEnabled.includes(m.name));
+    // A required server (incl. the SearXNG web-search source) off for this
+    // run is worth a quiet heads-up.
+    const missingRequired = requiredIssue(mcpSources, mcpEnabled);
     const selectedSkillIds = [...selectedSkills];
     const skillsLoading = plugins.some((p) => pluginSkills[p.id] === undefined);
     const canRunAnalysis =
@@ -1189,6 +1191,7 @@ export default function Analysis() {
                                         <DropdownItem
                                             key={m}
                                             label={m}
+                                            sub={providerDisplayName(m)}
                                             logo={<ModelLogo model={m} size={16} />}
                                             selected={m === model}
                                             onClick={() => {
@@ -1204,7 +1207,7 @@ export default function Analysis() {
                                 to="/settings"
                                 className="shrink-0 font-app-body text-[11px] text-[var(--accent-primary)] underline underline-offset-2 hover:opacity-80"
                             >
-                                Add keys
+                                Settings
                             </Link>
                             </div>
                             {modelError && (
@@ -1258,6 +1261,7 @@ export default function Analysis() {
                                 )}
                                 {mcpSources.map((m) => {
                                     const on = mcpEnabled.includes(m.name);
+                                    const state = mcpServerState({ enabled: on, status: m.status });
                                     return (
                                         <div key={m.name} className="flex items-center gap-3">
                                             <button
@@ -1282,23 +1286,26 @@ export default function Analysis() {
                                                 />
                                             </button>
                                             <span className="min-w-0">
-                                                <span className="font-app-body text-[13px] text-console-ink">{m.label}</span>
-                                                {m.webProvider && (
-                                                    <span className="ml-2 inline-flex items-center rounded-full bg-[color-mix(in_srgb,var(--gh-blue)_14%,transparent)] px-2 py-0.5 font-app-body text-[10px] font-light tracking-wide text-[var(--gh-blue)] uppercase">
-                                                        web search
+                                                <span className="flex items-center gap-1.5">
+                                                    <span
+                                                        aria-hidden
+                                                        className="size-1.5 shrink-0 rounded-full"
+                                                        style={{ background: MCP_STATE_DOT[state] }}
+                                                        title={m.error || undefined}
+                                                    />
+                                                    <span className="font-app-body text-[13px] text-console-ink">{m.label}</span>
+                                                </span>
+                                                {state === "down" && m.error && (
+                                                    <span className="mt-0.5 block text-[11px] text-[var(--signal-negative)] [overflow-wrap:anywhere]" title={m.error}>
+                                                        {m.error}
                                                     </span>
                                                 )}
                                             </span>
                                         </div>
                                     );
                                 })}
-                                {!webSearchEnabled && mcpSources.length > 0 && (
-                                    <Alert variant="destructive" className="mt-1 sm:col-span-2">
-                                        <AlertTitle>No web search enabled</AlertTitle>
-                                        <AlertDescription>
-                                            Neither web-search MCP (SearXNG or Tavily) is selected — the run can start, but it won&apos;t be able to search the web.
-                                        </AlertDescription>
-                                    </Alert>
+                                {missingRequired && (
+                                    <p className="mt-1 text-[11.5px] text-[var(--ink-tertiary)] sm:col-span-2">{missingRequired}</p>
                                 )}
                             </div>
                         </FormRow>

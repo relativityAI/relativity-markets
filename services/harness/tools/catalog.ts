@@ -50,10 +50,6 @@ export const TOOL_CATALOG: { name: string; description: string }[] = [
   { name: "yahoo_price", description: "Real-time quote: price, change %, 52w high/low, market state." },
   { name: "financial_news", description: "Live headline financial news (category=stocks)." },
   { name: "market_sentiment", description: "Sentiment across finance communities (Marketaux-keyed)." },
-
-  // Tavily MCP (remote; connected only when the user's key is set)
-  { name: "tavily_search", description: "AI web search with depth, time-range, and domain filters (topic=news for news)." },
-  { name: "tavily_extract", description: "Extract clean markdown/text content from one or more URLs." },
 ];
 
 /** Server-name → human label for the New Run MCP toggles (GET /mcp-sources). */
@@ -61,7 +57,6 @@ export const MCP_LABELS: Record<string, string> = {
   yfinance: "Yahoo Finance data (yfinance)",
   searxng: "Web search (SearXNG)",
   tradingview: "TradingView",
-  tavily: "Web search (Tavily)",
 };
 
 export function getToolCatalog(): { name: string; description: string }[] {

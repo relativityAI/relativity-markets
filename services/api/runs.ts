@@ -12,7 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { keyPool } from "./keypool.js";
 import { fetchUserKeys } from "./provision.js";
-import { runMcpEntries, defaultMcpEnabled } from "./mcp.js";
+import { runMcpEntries, defaultMcpEnabled, mcpKeyContext } from "./mcp.js";
 import { log } from "./logger.js";
 import type { TraceEvent } from "../harness/types.js";
 import type { TraceRowEvent } from "../harness/trace.js";
@@ -185,7 +185,7 @@ export async function runHarnessSymbol(
     template,
     vars: { symbol, title: symbol, date: new Date().toISOString().slice(0, 10), source, agent: label },
   });
-  const { llmKeys, webSearchProvider, prefs } = await fetchUserKeys(userId);
+  const { llmKeys, prefs } = await fetchUserKeys(userId);
   let modelId = requestedModel || keyPool.getDefaultModel(llmKeys);
   const budget: Budget = clampBudget({ ...compiled.budget, ...o.budgetOverride });
   // API wall-clock backstop: hard stop at 180s.
@@ -259,8 +259,8 @@ export async function runHarnessSymbol(
       const { tools, close, skipped } = await buildRunTools(toolsCfg, process.env, {
         symbol,
         source,
-        tavilyKey: llmKeys.tavily || undefined,
-        webSearchProvider,
+        // Per-server credentials for keyFrom entries (custom MCP keys).
+        ...mcpKeyContext(mcpEntries, llmKeys),
         mcpEnabled,
       });
       toolsSkipped = skipped;
@@ -391,7 +391,7 @@ export async function resumePausedRun(
   const label = String(row.agent_name ?? "") || pluginLabel(pluginIds) || "Run";
   const profile = compileProfile(pluginIds, label, row.skill_ids);
 
-  const { llmKeys, webSearchProvider, prefs } = await fetchUserKeys(userId);
+  const { llmKeys, prefs } = await fetchUserKeys(userId);
   const modelId = (row.model as string) || keyPool.getDefaultModel(llmKeys);
   const { apiKey } = keyPool.pickKey(modelId, llmKeys);
   const template = getSystemPrompt(systemPrompt || "");
@@ -403,8 +403,7 @@ export async function resumePausedRun(
   const { tools, close, skipped } = await buildRunTools(toolsCfg, process.env, {
     symbol,
     source,
-    tavilyKey: llmKeys.tavily || undefined,
-    webSearchProvider,
+    ...mcpKeyContext(mcpEntries, llmKeys),
     mcpEnabled: row.mcp_enabled ?? defaultMcpEnabled(mcpEntries, prefs),
   });
   if (skipped.length) {
@@ -526,6 +525,48 @@ export async function startAnalysisRun(o: StartAnalysisRunOpts): Promise<string>
     void alertRunFailure(o.userId, runId);
   });
   return runId;
+}
+
+/** Re-launch a failed run in place — same row (workspace and all), fresh
+ *  execution. The Retry button on the run result page calls this; the
+ *  answer distinguishes "gone" from "not actually failed" from "go". */
+export async function retryFailedRun(
+  userId: string,
+  runId: string,
+): Promise<"missing" | "not-failed" | "started"> {
+  const row = await getRunRow(userId, runId);
+  if (!row) return "missing";
+  const status = String(row.status ?? "").toLowerCase();
+  if (!["failed", "error", "budget_exhausted"].includes(status)) return "not-failed";
+
+  const pluginIds = row.plugin_ids?.length ? row.plugin_ids : pluginsForSkills(row.skill_ids ?? []);
+  await updateRunRow(runId, {
+    status: "RUNNING",
+    error: null,
+    started_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+
+  runHarnessSymbol(
+    userId,
+    String(row.symbol ?? ""),
+    String(row.source ?? "SEC"),
+    (row.model as string) || undefined,
+    (row.system_prompt as string | null) ?? undefined,
+    {
+      existingRunId: runId,
+      pluginIds,
+      skillIds: row.skill_ids ?? undefined,
+      mcpEnabled: row.mcp_enabled ?? undefined,
+    },
+  ).then((result) => {
+    if (!result) throw new Error("run did not start");
+  }).catch(async (e: any) => {
+    console.error("retry run failed:", e);
+    await updateRunRow(runId, { status: "ERROR", error: e?.message || "run failed" }).catch(() => {});
+    void alertRunFailure(userId, runId);
+  });
+  return "started";
 }
 
 const STALE_RUN_MS = 15 * 60 * 1000;
