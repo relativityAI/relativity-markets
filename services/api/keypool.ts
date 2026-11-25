@@ -134,7 +134,7 @@ export class KeyPool {
     // so they must be added from the bundle rather than from a key entry.
     for (const c of customProviders(userKeys)) out.add(c.id);
     for (const [p, v] of Object.entries(userKeys || {})) {
-      if (p !== "tavily" && p !== CUSTOM_KEY && v && !out.has(p)) out.add(p);
+      if (p !== CUSTOM_KEY && v && !out.has(p)) out.add(p);
     }
     return [...out];
   }
@@ -248,7 +248,7 @@ export class KeyPool {
       if (this.hasHealthyKey(pp, userKeys) && (userKeys[pp] || this.providerQuota(pp) > 0)) return pinned;
     }
 
-    const hasUser = (p: string) => !!userKeys[p] && p !== "tavily";
+    const hasUser = (p: string) => !!userKeys[p];
     // Prefer providers with a live key; if every key is cooling down, fall back
     // to the full list so we still return something rather than "".
     const healthy = providers.filter((p) => this.hasHealthyKey(p, userKeys));

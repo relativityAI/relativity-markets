@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseMcpPrefs, runMcpEntries, defaultMcpEnabled } from "../mcp.js";
+import { parseMcpPrefs, runMcpEntries, defaultMcpEnabled, mcpKeyContext } from "../mcp.js";
 import type { McpSourceConfig } from "../../harness/tools/sources.js";
 
 const configured: McpSourceConfig[] = [
@@ -40,5 +40,30 @@ describe("MCP prefs", () => {
     expect(defaultMcpEnabled(entries, off)).toEqual(["yfinance"]);
     // Everything preconfigured off → only the user's own server is left.
     expect(defaultMcpEnabled(entries, prefs([{ name: "yfinance", enabled: false }, { name: "searxng", enabled: false }]))).toEqual(["notes"]);
+  });
+});
+
+describe("MCP credentials", () => {
+  it("binds a stored custom key as the connection's keyFrom", () => {
+    const entries = runMcpEntries(
+      configured,
+      prefs([{ name: "notes", url: "https://example.com/mcp", custom: true, keyName: "mcpkey_notes" }]),
+    );
+    expect(entries[2]).toMatchObject({ name: "notes", keyFrom: "mcpkey_notes" });
+    // No stored key → no credential bound.
+    const bare = runMcpEntries(configured, prefs([{ name: "bare", url: "https://x/mcp", custom: true }]));
+    expect(bare[2].keyFrom).toBeUndefined();
+  });
+
+  it("builds the run context from keyFrom → the llm_keys entry of the same name", () => {
+    const entries = runMcpEntries(
+      configured,
+      prefs([{ name: "notes", url: "https://x/mcp", custom: true, keyName: "mcpkey_notes" }]),
+    );
+    expect(mcpKeyContext(entries, { mcpkey_notes: "secret" })).toEqual({ mcpkey_notes: "secret" });
+    // Stored key removed → the ctx field is present but empty (skip, not keyless connect).
+    expect(mcpKeyContext(entries, {}).mcpkey_notes).toBeUndefined();
+    // No keyFrom → nothing bound, regardless of keys lying around.
+    expect(mcpKeyContext(configured, { mcpkey_notes: "secret" })).toEqual({});
   });
 });

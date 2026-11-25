@@ -109,6 +109,19 @@ html.dark {
   --signal-down: #EF4444;
 }
 
+/* Watchlist verdict badge — the fill rides --vb (set inline per band); the
+   ink flips with the mode, and dark mode deepens the fill so light text
+   keeps ≥4.5:1 on it. */
+.verdict-badge {
+  background: var(--vb);
+  color: #0b1220;
+}
+
+html.dark .verdict-badge {
+  background: color-mix(in srgb, var(--vb) 55%, #000);
+  color: #f8fafc;
+}
+
 /* ── GitHub Primer accents ──────────────────────────────────────────────────
    Used by the runs page (insights cards + runs table). Flat and borderless —
    colour lives in glyphs and words, never in boxes. */
@@ -776,6 +789,15 @@ html.dark .sectoral-title {
 }
 @media (prefers-reduced-motion: reduce) {
   .rel-run-cta .rel-cta-chip { animation: none; }
+}
+
+/* Fetch-models in the provider dialog: the same halo, so the next click in
+   the setup flow is the one the eye lands on. */
+.rel-fetch-cta {
+  animation: rel-cta-breathe 2.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rel-fetch-cta { animation: none; }
 }
 
 /* New Run title: each letter rides the hue cycle on its own delay, so a band

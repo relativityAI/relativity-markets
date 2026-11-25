@@ -134,7 +134,6 @@ export const config = {
   agentMaxSteps: Number(process.env.AGENT_MAX_STEPS || 40),
   agentMaxTokens: Number(process.env.AGENT_MAX_TOKENS || 200_000),
   rateLimitPerMin: 10,
-  tavilyUrl: "https://api.tavily.com/search",
   // The yfinance MCP server is the harness agent's market-data toolbox
   // (streamable HTTP, tool list re-fetched each run).
   mcpYfinanceUrl: process.env.MCP_YFINANCE_URL || "",

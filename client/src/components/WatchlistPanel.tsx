@@ -1,21 +1,24 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
 import { Avatar, Style } from "@dicebear/core";
 import discoDefinition from "@dicebear/styles/disco.json";
-import { ArrowUpRight, ChevronDown, Download, Loader2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
-import { API_BASE, WatchlistService, runPluginLabel, type PluginSummary, type WatchlistRow, type WatchlistItem } from "@/db";
+import { ArrowUpRight, CalendarCheck, CalendarClock, ChevronDown, Download, Loader2, Pencil, Plus, RotateCw, Search, Trash2, X } from "lucide-react";
+import { AnalysisService, API_BASE, WatchlistService, runPluginLabel, type AlertRuleRow, type PluginSummary, type WatchlistRow, type WatchlistItem } from "@/db";
+import { formatSeconds } from "@/utils";
 import { FlagLogo, TickerLogo } from "@/lib/sourceLogos";
+import { badgeAge, badgeFill, badgeIcons, verdictTone } from "@/lib/analysisFormat";
 import { DropdownItem } from "@/pages/shared/AnalysisControls";
 import PluginAvatar from "@/components/shared/PluginAvatar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { toaster } from "@/compat/ui";
+import * as Tooltip from "@radix-ui/react-tooltip";
 
 /** TradingView-style watchlist table: list switcher + add/options in the
  *  header, one hairline row per symbol (logo, ticker, status dot, tiny chart,
- *  Last/Chg/Chg%, verdict badges). Shared by the homepage rail (`page=false`)
+ *  Last/Chg%, verdict badges). Shared by the homepage rail (`page=false`)
  *  and the full-page /watchlists route. */
 
 /** Shared shell of every header icon button; colour comes per button so the
@@ -50,6 +53,8 @@ function ListAvatar({ seed, size = 22 }: { seed: string; size?: number }) {
 
 /** The watchlist before SQLite kept only symbols under this localStorage key. */
 const LEGACY_WATCH_KEY = "relativity.watchlist";
+/** Last-switched list — survives reloads, like the heatmap's market key. */
+const ACTIVE_KEY = "relativity.watchlist.active";
 
 function legacyWatchSymbols(): string[] {
     try {
@@ -72,27 +77,31 @@ function timeAgo(dateStr: string): string {
     return new Date(dateStr).toLocaleDateString();
 }
 
-/** Verdict word → status band (green strong, amber mid, red negative) —
- *  same banding as verdictForScore in lib/analysisFormat. */
+/** Verdict word → status band — delegates to the app's canonical
+ *  verdictTone (harness five-band + score words + buy/sell vocabulary),
+ *  so a "Good"/"Poor" run bands the same here as everywhere else. */
 function verdictBand(verdict?: string | null): "up" | "mid" | "down" | null {
-    if (!verdict) return null;
-    const v = verdict.toLowerCase();
-    if (["outstanding", "strong", "shortlist", "buy"].includes(v)) return "up";
-    if (["fair", "watch", "hold", "underwhelming", "neutral"].includes(v)) return "mid";
-    if (["subpar", "pass", "error", "sell"].includes(v)) return "down";
-    return null;
+    const tone = verdictTone(verdict);
+    return tone === "good" ? "up" : tone === "caution" ? "mid" : tone === "bad" ? "down" : null;
 }
-
-const BAND = {
-    up: { text: "var(--signal-positive-text)", dot: "#22C55E" },
-    mid: { text: "var(--signal-caution-text)", dot: "#E9A23B" },
-    down: { text: "var(--signal-negative-text)", dot: "#EF4444" },
-} as const;
 
 /** Sort weight for an agent column: strong beats watch beats weak. */
 const VERDICT_RANK: Record<"up" | "mid" | "down", number> = { up: 3, mid: 2, down: 1 };
 
-type Agent = { agent?: string; verdict?: string; when: string };
+type Agent = {
+    agent?: string;
+    verdict?: string;
+    when: string;
+    /** Last run's wall time, compact ("2m 5s"). */
+    dur?: string;
+    /** Where this agent's last run lives. */
+    runId?: string;
+    /** Run config carried forward so the cell can re-run / schedule it. */
+    pluginIds?: string[];
+    skills?: string[];
+    /** ISO wall time of the last run — feeds the badge's age. */
+    createdAt?: string;
+};
 
 type RowData = {
     symbol: string;
@@ -102,10 +111,10 @@ type RowData = {
     href: string;
 };
 
-type Quote = { pts: string; color: string; last: number | null; chg: number | null; pct: number | null };
+type Quote = { pts: string; color: string; last: number | null; pct: number | null };
 
 /** One intraday fetch per symbol (server caches 60s) — feeds the tiny chart
- *  and the Last/Chg/Chg% columns from the same numbers, so they never drift. */
+ *  and the Last/Chg% columns from the same numbers, so they never drift. */
 function useQuotes(pairs: { symbol: string; source?: string }[]): Record<string, Quote> {
     const key = JSON.stringify(pairs.map((p) => [p.symbol, p.source || ""]));
     const [map, setMap] = useState<Record<string, Quote>>({});
@@ -131,10 +140,9 @@ function useQuotes(pairs: { symbol: string; source?: string }[]): Record<string,
                             .join(" ");
                         const last = closes[closes.length - 1];
                         const prev = typeof d.previous_close === "number" ? d.previous_close : null;
-                        const chg = prev != null ? last - prev : null;
                         const pct = prev ? ((last - prev) / prev) * 100 : null;
                         const up = prev ? last >= prev : last >= closes[0];
-                        return [`${symbol}:${source}`, { pts, color: up ? "#22C55E" : "#EF4444", last, chg, pct }] as const;
+                        return [`${symbol}:${source}`, { pts, color: up ? "#22C55E" : "#EF4444", last, pct }] as const;
                     })
                     .catch(() => null),
             ),
@@ -153,7 +161,7 @@ function useQuotes(pairs: { symbol: string; source?: string }[]): Record<string,
 /** The whole chart: ~48×20, line only — big enough to read the shape. */
 function SparkSvg({ pts, color }: { pts: string; color: string }) {
     return (
-        <svg viewBox="0 0 100 40" preserveAspectRatio="none" className="h-5 w-12" aria-hidden="true">
+        <svg viewBox="0 0 100 40" preserveAspectRatio="none" className="h-7 w-16" aria-hidden="true">
             <polyline
                 points={pts}
                 fill="none"
@@ -168,36 +176,188 @@ function SparkSvg({ pts, color }: { pts: string; color: string }) {
 }
 
 function VerdictBadge({ agent }: { agent: Agent }) {
-    const band = verdictBand(agent.verdict);
-    const color = band ? BAND[band].text : "var(--ink-secondary)";
-    const bg = band ? BAND[band].dot : "var(--ink-tertiary)";
+    const Icons = badgeIcons(agent.verdict);
+    const age = badgeAge(agent.createdAt);
     return (
-        <span
-            title={`${agent.agent || "Plugin"} · ${agent.verdict || "Run"} · ${agent.when}`}
-            className="max-w-[86px] shrink-0 truncate rounded-full px-1.5 py-0.5 font-app-body text-[11px] font-light leading-none"
-            style={{ color, background: `color-mix(in srgb, ${bg} 25%, transparent)` }}
-        >
-            {agent.verdict || "Run"}
-        </span>
+        // Hover tooltip (Radix — the compat Tooltip is click-triggered):
+        // instant, leads with when the last run happened. The badge itself
+        // is the link to that run; the age sits on the badge so "old
+        // verdict" reads without hovering. The fill rides --vb; .verdict-badge
+        // (index.css) flips the ink with the mode.
+        <Tooltip.Root>
+            <Tooltip.Trigger asChild>
+                <Link
+                    to={`/runs/${agent.runId}`}
+                    target="_blank" rel="noreferrer"
+                    className="verdict-badge inline-flex max-w-[190px] shrink-0 items-center gap-1.5 truncate rounded-full px-3 py-1.5 font-app-body text-[14px] font-medium leading-none"
+                    style={{ "--vb": badgeFill(agent.verdict) } as CSSProperties}
+                >
+                    {Icons.map((Glyph, i) => (
+                        <Glyph key={i} size={15} className="shrink-0" aria-hidden="true" />
+                    ))}
+                    <span className="min-w-0 truncate">{agent.verdict || "Run"}</span>
+                    {age && <span className="shrink-0 text-[11px] font-light leading-none opacity-70" aria-hidden="true">{age}</span>}
+                    {/* Screen readers get the hover-only info as text. */}
+                    <span className="sr-only"> — last run {agent.when}{agent.dur ? ` · ${agent.dur}` : ""}</span>
+                </Link>
+            </Tooltip.Trigger>
+            <Tooltip.Portal>
+                <Tooltip.Content
+                    sideOffset={6}
+                    style={{
+                        background: "var(--surface-inverse)",
+                        color: "var(--ink-inverse-primary)",
+                        fontSize: "11.5px",
+                        padding: "5px 8px",
+                        borderRadius: 4,
+                        maxWidth: 260,
+                        zIndex: 60,
+                    }}
+                >
+                    Last run {agent.when}{agent.dur ? ` · ${agent.dur}` : ""}
+                </Tooltip.Content>
+            </Tooltip.Portal>
+        </Tooltip.Root>
     );
 }
 
 /** Sort key: a price column, or one agent column (`agent:<name>`). */
-type SortKey = "last" | "chg" | "pct" | `agent:${string}`;
+type SortKey = "last" | "pct" | `agent:${string}`;
+
+const SCHEDULE_FREQS = [
+    ["daily", "Daily"],
+    ["weekly", "Weekly"],
+    ["biweekly", "Biweekly"],
+    ["monthly", "Monthly"],
+] as const;
+
+const ACTION_BTN =
+    "flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-[var(--ink-tertiary)] transition-colors hover:bg-[var(--surface-recessed)] hover:text-[var(--ink-primary)] focus-visible:text-[var(--ink-primary)] disabled:opacity-50";
+
+/** The badge's row-hover sidekicks: ↻ relaunches this agent on this symbol,
+ *  📅 sets a cadence (9:00 AM local, starting today). Icons only appear for
+ *  agents whose run config we can re-fire (plugin or skill ids). */
+function AgentActions({ row, agent, rule, onScheduled }: {
+    row: RowData;
+    agent: Agent;
+    /** This symbol+agent's existing alert rule, when it has one. */
+    rule?: AlertRuleRow;
+    onScheduled: (r: AlertRuleRow) => void;
+}) {
+    const navigate = useNavigate();
+    const [busy, setBusy] = useState(false);
+
+    const runAgain = async () => {
+        if (busy) return;
+        setBusy(true);
+        try {
+            const res = await AnalysisService.runAnalysis({
+                symbol: row.symbol,
+                source: String(row.source || "SEC").toUpperCase(),
+                share_name: row.name,
+                plugin_ids: agent.pluginIds || [],
+                skills: agent.skills,
+            });
+            toaster.create({ title: "Run started", description: `${row.symbol} · ${agent.agent || "agent"}`, type: "success" });
+            window.open(`/runs/${res.id}`, "_blank", "noreferrer");
+        } catch (e) {
+            const err = e as { message?: string; response?: { data?: { error?: string } } };
+            toaster.create({
+                title: "Couldn't start the run",
+                description: err?.response?.data?.error || err?.message,
+                type: "error",
+            });
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const schedule = async (freq: string) => {
+        try {
+            const created = await AnalysisService.createAlertRule({
+                symbol: row.symbol,
+                share_name: row.name,
+                source: String(row.source || "SEC").toUpperCase(),
+                plugin_ids: agent.pluginIds || [],
+                skills: agent.skills,
+                frequency: freq,
+                start_date: new Date().toISOString().slice(0, 10),
+                time: "09:00",
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            });
+            onScheduled(created);
+            const label = SCHEDULE_FREQS.find(([v]) => v === freq)?.[1] || freq;
+            toaster.create({ title: `${label} schedule set`, description: `${row.symbol} · 9:00 AM`, type: "success" });
+        } catch (e) {
+            const err = e as { message?: string; response?: { data?: { error?: string } } };
+            toaster.create({
+                title: "Couldn't set the schedule",
+                description: err?.response?.data?.error || err?.message,
+                type: "error",
+            });
+        }
+    };
+
+    return (
+        <span className="flex shrink-0 items-center gap-1">
+            <button
+                type="button"
+                aria-label={`Run ${row.symbol} with ${agent.agent || "agent"} again`}
+                title="Run again"
+                disabled={busy}
+                onClick={() => void runAgain()}
+                className={ACTION_BTN}
+            >
+                {busy ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <RotateCw size={14} aria-hidden="true" />}
+            </button>
+            <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                    <button
+                        type="button"
+                        aria-label={rule
+                            ? `Schedule ${row.symbol} with ${agent.agent || "agent"} — scheduled`
+                            : `Schedule ${row.symbol} with ${agent.agent || "agent"}`}
+                        title={rule ? `Scheduled — ${rule.frequency} at ${rule.time}` : "Schedule"}
+                        className={ACTION_BTN}
+                    >
+                        {rule
+                            ? <CalendarCheck size={14} aria-hidden="true" />
+                            : <CalendarClock size={14} aria-hidden="true" />}
+                    </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className={`min-w-[190px] ${MENU_CLS}`}>
+                    {rule && (
+                        <div className="px-2.5 py-1.5 font-app-body text-[11px] font-light text-[var(--ink-tertiary)]">
+                            Scheduled — {rule.frequency} at {rule.time}
+                        </div>
+                    )}
+                    {SCHEDULE_FREQS.map(([value, label]) => (
+                        <DropdownMenuItem key={value} onSelect={() => void schedule(value)}>
+                            {label} · 9:00 AM
+                        </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuItem onSelect={() => navigate("/new-run?mode=alert")}>
+                        Manage schedules
+                    </DropdownMenuItem>
+                </DropdownMenuContent>
+            </DropdownMenu>
+        </span>
+    );
+}
 
 function SortTh({ label, k, sort, onSort, align = "right" }: {
     label: ReactNode;
     k: SortKey;
     sort: { k: SortKey; dir: 1 | -1 } | null;
     onSort: (k: SortKey) => void;
-    align?: "left" | "right";
+    align?: "left" | "right" | "center";
 }) {
     const on = sort?.k === k;
     return (
         <th
             scope="col"
             aria-sort={on ? (sort!.dir === 1 ? "ascending" : "descending") : "none"}
-            className={`py-1.5 pl-3 ${align === "right" ? "text-right" : "text-left"}`}
+            className={`py-2 pl-3 ${align === "right" ? "text-right" : align === "center" ? "text-center" : "text-left"}`}
         >
             <button
                 type="button"
@@ -212,7 +372,6 @@ function SortTh({ label, k, sort, onSort, align = "right" }: {
 }
 
 const fmtLast = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 3 });
-const fmtChg = (n: number) => `${n > 0 ? "+" : n < 0 ? "-" : ""}${Math.abs(n).toFixed(2)}`;
 const fmtPct = (n: number) => `${n > 0 ? "+" : ""}${n.toFixed(2)}%`;
 const changeColor = (n: number | null) =>
     n == null || n === 0 ? "var(--ink-primary)" : n > 0 ? "var(--signal-up)" : "var(--signal-down)";
@@ -222,7 +381,9 @@ type StockRow = { ticker?: string; SYMBOL?: string; name?: string; NAME?: string
 
 export default function WatchlistPanel({ runs, plugins, page = false }: { runs: any[]; plugins: PluginSummary[]; page?: boolean }) {
     const [lists, setLists] = useState<WatchlistRow[]>([]);
-    const [activeId, setActiveId] = useState<string | null>(null);
+    const [activeId, setActiveId] = useState<string | null>(() => {
+        try { return localStorage.getItem(ACTIVE_KEY); } catch { return null; }
+    });
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState(false);
     // StrictMode runs this effect twice; a ref keeps the second run from
@@ -238,11 +399,19 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
     /** Highlighted row of the search results — moved with ArrowUp/ArrowDown. */
     const [cursor, setCursor] = useState(-1);
     const [sort, setSort] = useState<{ k: SortKey; dir: 1 | -1 } | null>(null);
+    /** Alert rules — so a scheduled cell shows its check instead of re-asking. */
+    const [rules, setRules] = useState<AlertRuleRow[]>([]);
     const searchRef = useRef<HTMLDivElement>(null);
     const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const abortRef = useRef<AbortController | null>(null);
 
     const active = lists.find((l) => l.id === activeId) || lists[0];
+
+    useEffect(() => {
+        AnalysisService.listAlertRules()
+            .then((r) => { if (Array.isArray(r)) setRules(r); })
+            .catch(() => {});
+    }, []);
 
     useEffect(() => {
         if (bootstrapped.current) return;
@@ -276,7 +445,8 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
                 if (!rows.length) rows = [await WatchlistService.create("My Watchlist")];
                 rows = rows.filter((r) => !duplicates.some((d) => d.id === r.id));
                 setLists(rows);
-                setActiveId(rows[0].id);
+                // Keep the remembered list when it still exists; else first.
+                setActiveId((prev) => (prev && rows.some((r) => r.id === prev) ? prev : rows[0].id));
                 for (const dup of duplicates) void WatchlistService.delete(dup.id).catch(() => {});
             } catch {
                 // Never read a failed request as "no watchlists" — that looks
@@ -287,6 +457,12 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
             }
         })();
     }, []);
+
+    // Last choice survives reloads — same pattern as the heatmap's market key.
+    useEffect(() => {
+        if (!activeId) return;
+        try { localStorage.setItem(ACTIVE_KEY, activeId); } catch { /* private mode */ }
+    }, [activeId]);
 
     useEffect(() => {
         const handler = (e: MouseEvent) => {
@@ -426,17 +602,25 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
             const a = runPluginLabel(r.plugin_ids, plugins, null) || r.agent_name || r.agent || "Plugin";
             if (seen.has(a)) continue;
             seen.add(a);
-            agents.push({ agent: a, verdict: r.verdict || r.status, when: timeAgo(r.created_at) });
+            agents.push({
+                agent: a,
+                verdict: r.verdict || r.status,
+                when: timeAgo(r.created_at),
+                dur: typeof r.duration === "number" && r.duration > 0 ? formatSeconds(Math.round(r.duration)) : undefined,
+                runId: r.id || r.analysis_id,
+                pluginIds: Array.isArray(r.plugin_ids) ? r.plugin_ids.map(String) : undefined,
+                skills: Array.isArray(r.skill_ids) ? r.skill_ids.map(String) : undefined,
+                createdAt: r.created_at,
+            });
         }
-        const runId = rs[0]?.id || rs[0]?.analysis_id;
         return {
             symbol: item.symbol,
             name: rs[0]?.share_name || item.name || item.symbol,
             source: item.source || rs[0]?.source,
             agents,
-            href: runId
-                ? `/runs/${runId}`
-                : `/stock/${encodeURIComponent(item.symbol)}?source=${encodeURIComponent(item.source || "")}`,
+            // Ticker/logo always land on the stock page; the run lives behind
+            // the verdict badge.
+            href: `/stock/${encodeURIComponent(item.symbol)}?source=${encodeURIComponent(item.source || "")}`,
         };
     });
 
@@ -460,7 +644,7 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
             const band = verdictBand(hit.verdict);
             return band ? VERDICT_RANK[band] : 2;
         }
-        return quoteOf(r)?.[k as "last" | "chg" | "pct"] ?? null;
+        return quoteOf(r)?.[k as "last" | "pct"] ?? null;
     };
     const sorted = sort
         ? [...rows].sort((a, b) => {
@@ -537,7 +721,7 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
             )}
 
             {/* Header — list switcher left, then the icon row (+ / open /
-                export / rename / delete), with the first-watchlist nudge
+                export / rename / delete), with the empty-list nudge
                 tucked in front of the + when the list is still empty. */}
             <div className="flex flex-wrap items-center justify-between gap-3">
                 {editor ? (
@@ -607,12 +791,12 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
                 )}
 
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-1 gap-y-2">
-                    {/* First-watchlist nudge — the arrow's head sits right
+                    {/* Empty-list nudge — the arrow's head sits right
                         against the + it is pointing at. */}
                     {showFirstHint && (
                         <span className="rel-hint mr-1.5 flex select-none items-center gap-1 whitespace-nowrap">
                             <span className="font-app-body text-[13px] font-light text-[var(--ink-tertiary)]">
-                                create your first watchlist
+                                add stocks to watchlist
                             </span>
                             <span
                                 aria-hidden="true"
@@ -714,11 +898,11 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
                                         label={stock.name || stock.NAME || sym}
                                         sub={
                                             <span className="flex items-center gap-1">
-                                                <FlagLogo source={stock.source} size={11} />
+                                                <FlagLogo source={stock.source} size={14} />
                                                 {india ? "NSE" : "SEC"}:{sym}
                                             </span>
                                         }
-                                        logo={<TickerLogo symbol={sym} size={18} />}
+                                        logo={<TickerLogo symbol={sym} size={24} />}
                                         onClick={() => addStock(stock)}
                                     />
                                 );
@@ -730,24 +914,24 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
 
             {active && rows.length > 0 ? (
                 <div className="mt-2 w-full overflow-x-auto">
-                    <table className="w-full min-w-[560px] border-collapse text-left">
+                    <Tooltip.Provider delayDuration={0}>
+                    <table className="w-full min-w-[720px] border-collapse text-left">
                         <thead>
                             <tr className="border-b border-[var(--hairline)]">
-                                <th scope="col" className="py-1.5 pr-2 font-app-body text-[11px] font-light text-[var(--ink-tertiary)]">Symbol</th>
-                                <th scope="col" className="py-1.5 pr-2 font-app-body text-[11px] font-light text-[var(--ink-tertiary)]">Chart</th>
+                                <th scope="col" className="py-2 pr-2 font-app-body text-[11px] font-light text-[var(--ink-tertiary)]">Symbol</th>
+                                <th scope="col" className="py-2 pr-2 font-app-body text-[11px] font-light text-[var(--ink-tertiary)]">Chart</th>
                                 <SortTh label="Last" k="last" sort={sort} onSort={onSort} />
-                                <SortTh label="Chg" k="chg" sort={sort} onSort={onSort} />
                                 <SortTh label="Chg%" k="pct" sort={sort} onSort={onSort} />
                                 {agentColumns.map((name) => (
                                     <SortTh
                                         key={name}
                                         k={`agent:${name}`}
-                                        align="left"
+                                        align="center"
                                         sort={sort}
                                         onSort={onSort}
                                         label={
-                                            <span className="flex items-center gap-1.5 whitespace-nowrap">
-                                                <PluginAvatar plugin={name} size={16} />
+                                            <span className="flex items-center gap-1.5 whitespace-nowrap text-[14px] font-normal text-[var(--ink-primary)]">
+                                                <PluginAvatar plugin={name} size={26} />
                                                 {name}
                                             </span>
                                         }
@@ -759,26 +943,25 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
                             {sorted.map((row, i) => {
                                 const q = quoteOf(row);
                                 const latest = row.agents.find((a) => a.verdict);
-                                const band = verdictBand(latest?.verdict);
-                                const dot = band ? BAND[band].dot : "#9CA3AF";
+                                const dot = badgeFill(latest?.verdict);
                                 return (
                                     <tr key={`${row.symbol}-${row.source || ""}`} {...dragProps(i)} className="group border-b border-[var(--hairline)] transition-colors hover:bg-[var(--surface-recessed)]">
-                                        <th scope="row" className="py-1.5 pr-2 align-middle font-light">
+                                        <th scope="row" className="py-2.5 pr-2 align-middle font-light">
                                             <div className="flex items-center gap-2">
-                                                <FlagLogo source={row.source} size={14} />
-                                                <TickerLogo symbol={row.symbol} size={20} />
                                                 <Link
                                                     to={row.href} target="_blank" rel="noreferrer" data-solid=""
                                                     title={row.name}
-                                                    className="flex min-w-0 items-center gap-1.5 hover:opacity-80"
+                                                    className="flex min-w-0 items-center gap-2 hover:opacity-80"
                                                 >
-                                                    <span className="truncate font-app-body text-[14px] font-light text-[var(--ink-primary)]">
+                                                    <FlagLogo source={row.source} size={20} />
+                                                    <TickerLogo symbol={row.symbol} size={30} />
+                                                    <span className="truncate font-app-body text-[17px] font-medium text-[var(--ink-primary)]">
                                                         {row.symbol}
                                                     </span>
                                                     <span
                                                         aria-hidden="true"
                                                         title={latest?.verdict ? `Latest verdict: ${latest.verdict}` : "No runs yet"}
-                                                        className="h-1.5 w-1.5 shrink-0 rounded-full"
+                                                        className="h-2 w-2 shrink-0 rounded-full"
                                                         style={{ background: dot }}
                                                     />
                                                 </Link>
@@ -789,29 +972,43 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
                                                     onClick={() => void saveItems(active.items.filter((it) => it.symbol !== row.symbol))}
                                                     className="shrink-0 text-[var(--ink-tertiary)] opacity-0 transition-opacity hover:text-[var(--ink-primary)] focus-visible:opacity-100 group-hover:opacity-100"
                                                 >
-                                                    <X size={12} />
+                                                    <X size={16} />
                                                 </button>
                                             </div>
                                         </th>
-                                        <td className="py-1.5 pr-2 align-middle">
-                                            {q ? <SparkSvg pts={q.pts} color={q.color} /> : <span className="block h-5 w-12" aria-hidden="true" />}
+                                        <td className="py-2.5 pr-2 align-middle">
+                                            {q ? <SparkSvg pts={q.pts} color={q.color} /> : <span className="block h-7 w-16" aria-hidden="true" />}
                                         </td>
-                                        <td className="py-1.5 pl-3 text-right align-middle font-app-tabular text-[13px] text-[var(--ink-primary)]">
+                                        <td className="py-2.5 pl-3 text-right align-middle font-app-tabular text-[15px] text-[var(--ink-primary)]">
                                             {q?.last != null ? fmtLast(q.last) : "—"}
                                         </td>
-                                        <td className="py-1.5 pl-3 text-right align-middle font-app-tabular text-[13px]" style={{ color: changeColor(q?.chg ?? null) }}>
-                                            {q?.chg != null ? fmtChg(q.chg) : "—"}
-                                        </td>
-                                        <td className="py-1.5 pl-3 text-right align-middle font-app-tabular text-[13px]" style={{ color: changeColor(q?.pct ?? null) }}>
+                                        <td className="py-2.5 pl-3 text-right align-middle font-app-tabular text-[15px]" style={{ color: changeColor(q?.pct ?? null) }}>
                                             {q?.pct != null ? fmtPct(q.pct) : "—"}
                                         </td>
                                         {agentColumns.map((name) => {
                                             const hit = row.agents.find((a) => (a.agent || "Plugin") === name);
+                                            const rule = hit && rules.find((r) =>
+                                                r.enabled !== 0
+                                                && r.symbol === row.symbol
+                                                && (r.plugin_ids || []).some((p) => hit.pluginIds?.includes(p)));
+                                            const canFire = !!hit && (!!hit.pluginIds?.length || !!hit.skills?.length);
                                             return (
-                                                <td key={name} className="py-1.5 pl-3 align-middle">
-                                                    {hit
-                                                        ? <VerdictBadge agent={hit} />
-                                                        : <span className="font-app-body text-[11px] font-light text-[var(--ink-tertiary)]">—</span>}
+                                                <td key={name} className="py-2.5 pl-3 align-middle">
+                                                    <div className="flex items-center justify-center gap-1.5">
+                                                        {hit
+                                                            ? <VerdictBadge agent={hit} />
+                                                            : <span className="font-app-body text-[11px] font-light text-[var(--ink-tertiary)]">—</span>}
+                                                        {hit && canFire && (
+                                                            <span className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                                                                <AgentActions
+                                                                    row={row}
+                                                                    agent={hit}
+                                                                    rule={rule}
+                                                                    onScheduled={(r) => setRules((prev) => [...prev.filter((x) => x.id !== r.id), r])}
+                                                                />
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 </td>
                                             );
                                         })}
@@ -820,6 +1017,7 @@ export default function WatchlistPanel({ runs, plugins, page = false }: { runs: 
                             })}
                         </tbody>
                     </table>
+                    </Tooltip.Provider>
                 </div>
             ) : null}
 
