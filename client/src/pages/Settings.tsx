@@ -1,10 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
     Flex, Text, Box
 } from "@/compat/ui";
 import {
     Check, Eye, EyeOff, X, Trash2, Plus, Pencil, ExternalLink,
-    Search, CircleArrowDown, SlidersHorizontal,
+    Search, CircleArrowDown, SlidersHorizontal, RefreshCw,
     ChevronsUpDown, ArrowUp, ArrowDown,
     ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
 } from "lucide-react";
@@ -40,47 +40,8 @@ const MODEL_PROVIDERS = [
 ];
 
 const providerLabel = (value: string) =>
-    value === "tavily" ? "Tavily" : MODEL_PROVIDERS.find((p) => p.value === value)?.label || value;
+    MODEL_PROVIDERS.find((p) => p.value === value)?.label || value;
 
-function StatusPill({ connected }: { connected: boolean }) {
-    return (
-        <Flex
-            align="center"
-            gap={1.5}
-            px={2}
-            py={0.5}
-            borderRadius="full"
-            w="full"
-            flexShrink={0}
-            bg={connected ? "color-mix(in srgb, var(--signal-positive) 12%, transparent)" : "var(--surface-recessed)"}
-        >
-            <Box
-                w="6px"
-                h="6px"
-                borderRadius="full"
-                bg={connected ? "var(--signal-positive)" : "var(--ink-tertiary)"}
-            />
-            <Text fontSize="10.5px" color={connected ? "var(--signal-positive)" : "var(--ink-tertiary)"}>
-                {connected ? "Connected" : "Not connected"}
-            </Text>
-        </Flex>
-    );
-}
-
-interface ProviderCardProps {
-    value: string;
-    label: string;
-    /** Where to get an API key for this provider — shown as a subtle icon link. */
-    url?: string;
-    savedKey?: string;
-    onSave: (value: string, key: string) => Promise<void>;
-    onRemove: (value: string) => Promise<void>;
-}
-
-/**
- * One provider row: logo + name + link, full-width status badge, Add/Edit.
- * Clicking opens the key editor as a popup — same shell as the agent editor.
- */
 interface KeyDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
@@ -92,8 +53,8 @@ interface KeyDialogProps {
 }
 
 /**
- * Key editor popup — one component shared by the AI Providers table and the
- * Web Search row. Draft state lives here and is cleared on close, so opening
+ * Key editor popup — one component shared by every AI Providers table row.
+ * Draft state lives here and is cleared on close, so opening
  * a different provider always starts clean.
  */
 function KeyDialog({ open, onOpenChange, value, label, connected, onSave, onRemove }: KeyDialogProps) {
@@ -225,8 +186,8 @@ interface CustomProvider {
     models: string[];
 }
 
-/** Built-in ids a custom provider may not shadow, plus the web-search key. */
-const RESERVED_IDS = new Set([...MODEL_PROVIDERS.map((p) => p.value), "tavily"]);
+/** Built-in ids a custom provider may not shadow. */
+const RESERVED_IDS = new Set(MODEL_PROVIDERS.map((p) => p.value));
 
 function parseCustoms(prefs: Record<string, string>): CustomProvider[] {
     try {
@@ -240,6 +201,13 @@ function parseCustoms(prefs: Record<string, string>): CustomProvider[] {
 const slugify = (name: string) =>
     name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
+/** One-click fills for the common local endpoints (create mode only). */
+const PRESETS = [
+    { label: "Ollama", name: "Ollama", url: "http://localhost:11434/v1" },
+    { label: "LM Studio", name: "LM Studio", url: "http://localhost:1234/v1" },
+    { label: "vLLM", name: "vLLM", url: "http://localhost:8000/v1" },
+];
+
 /**
  * Add or edit a custom OpenAI-compatible provider (Ollama, vLLM, LiteLLM, a
  * company gateway). Model IDs are typed rather than probed from /models: the
@@ -247,37 +215,85 @@ const slugify = (name: string) =>
  * gain — anyone adding a local endpoint knows its model names.
  */
 function CustomProviderDialog({
-    open, onOpenChange, initial, existing, onSave, onDelete,
+    open, onOpenChange, initial, preset, existing, onSave, onDelete,
 }: {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     /** Provider being edited, or null to create one. */
     initial: CustomProvider | null;
+    /** Prefill for create mode when opened from a standing row (Ollama). */
+    preset?: (typeof PRESETS)[number];
     existing: CustomProvider[];
     onSave: (custom: CustomProvider, apiKey: string) => Promise<void>;
     onDelete: (custom: CustomProvider) => Promise<void>;
 }) {
-    const [name, setName] = useState(initial?.name || "");
-    const [baseURL, setBaseURL] = useState(initial?.baseURL || "");
+    const [name, setName] = useState(initial?.name || preset?.name || "");
+    const [baseURL, setBaseURL] = useState(initial?.baseURL || preset?.url || "");
     const [apiKey, setApiKey] = useState("");
     const [showKey, setShowKey] = useState(false);
     const [models, setModels] = useState(initial?.models.join("\n") || "");
     const [busy, setBusy] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState(false);
+    const [fetching, setFetching] = useState(false);
+    const [fetchErr, setFetchErr] = useState("");
+    // Success tick: pops in after a fetch, fades after a beat so the button
+    // returns to its resting state.
+    const [fetched, setFetched] = useState(false);
+    const fetchedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
     const reset = () => {
-        setName(initial?.name || "");
-        setBaseURL(initial?.baseURL || "");
+        setName(initial?.name || preset?.name || "");
+        setBaseURL(initial?.baseURL || preset?.url || "");
         setApiKey("");
         setShowKey(false);
         setModels(initial?.models.join("\n") || "");
         setConfirmDelete(false);
+        setFetchErr("");
+        setFetched(false);
+        clearTimeout(fetchedTimer.current);
     };
     const close = () => {
         reset();
         onOpenChange(false);
     };
     const fail = (title: string) => toaster.create({ title, type: "error" });
+
+    /**
+     * Probe the endpoint's /models from the browser and fill the textarea.
+     * Browser-side on purpose: the server never fetches a user-supplied URL
+     * (no SSRF), and local servers (Ollama et al) reflect CORS — verified.
+     */
+    const fetchModels = async () => {
+        setFetchErr("");
+        setFetched(false);
+        let url: URL;
+        try {
+            url = new URL(baseURL.trim());
+        } catch {
+            return setFetchErr("Enter the base URL first, e.g. http://localhost:11434/v1");
+        }
+        setFetching(true);
+        try {
+            const res = await fetch(`${url.toString().replace(/\/+$/, "")}/models`, {
+                headers: apiKey.trim() ? { Authorization: `Bearer ${apiKey.trim()}` } : {},
+                signal: AbortSignal.timeout(8_000),
+            });
+            if (!res.ok) throw new Error(`${res.status}`);
+            const data = (await res.json()) as { data?: Array<{ id?: string }> };
+            const ids = (data.data || []).map((m) => m.id).filter(Boolean) as string[];
+            if (!ids.length) throw new Error("no models");
+            setModels(ids.join("\n"));
+            setFetched(true);
+            clearTimeout(fetchedTimer.current);
+            fetchedTimer.current = setTimeout(() => setFetched(false), 1_200);
+        } catch {
+            setFetchErr(
+                "Couldn't reach the endpoint — check the URL and that the server is running. You can type the model IDs manually.",
+            );
+        } finally {
+            setFetching(false);
+        }
+    };
 
     const handleSave = async () => {
         const id = initial?.id || slugify(name);
@@ -347,6 +363,21 @@ function CustomProviderDialog({
                     </div>
                 ) : (
                     <div className="flex flex-col gap-3">
+                        {!initial && (
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                <span className={`${legend} mr-1`}>Start from</span>
+                                {PRESETS.map((p) => (
+                                    <button
+                                        key={p.label}
+                                        type="button"
+                                        onClick={() => { setName(p.name); setBaseURL(p.url); setFetchErr(""); }}
+                                        className="rounded-full border border-[color:var(--hairline)] px-2.5 py-0.5 font-app-body text-[12px] font-light text-[var(--ink-secondary)] transition-colors hover:bg-[var(--surface-recessed)] hover:text-[var(--ink-primary)]"
+                                    >
+                                        {p.label}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                         <div className="flex flex-col gap-1.5">
                             <label className={legend} htmlFor="cp-name">Name</label>
                             <input
@@ -403,7 +434,29 @@ function CustomProviderDialog({
                         </div>
 
                         <div className="flex flex-col gap-1.5">
-                            <label className={legend} htmlFor="cp-models">Model IDs</label>
+                            <div className="flex items-center justify-between">
+                                <label className={legend} htmlFor="cp-models">Model IDs</label>
+                                <button
+                                    type="button"
+                                    onClick={fetchModels}
+                                    disabled={fetching}
+                                    className="rel-fetch-cta inline-flex items-center gap-1.5 rounded-[6px] bg-[var(--surface-inverse)] px-2.5 py-1 font-app-body text-[11.5px] font-normal text-[var(--ink-inverse-primary)] transition-opacity hover:opacity-90 disabled:opacity-50"
+                                >
+                                    {fetched ? (
+                                        <motion.span
+                                            initial={{ scale: 0.4, opacity: 0 }}
+                                            animate={{ scale: 1, opacity: 1 }}
+                                            transition={{ type: "spring", bounce: 0.3, duration: 0.25 }}
+                                            className="inline-flex"
+                                        >
+                                            <Check size={12} />
+                                        </motion.span>
+                                    ) : (
+                                        <RefreshCw size={12} className={fetching ? "animate-spin" : undefined} />
+                                    )}
+                                    {fetching ? "Fetching…" : "Fetch models"}
+                                </button>
+                            </div>
                             <textarea
                                 id="cp-models"
                                 value={models}
@@ -412,9 +465,13 @@ function CustomProviderDialog({
                                 placeholder={"llama3.2\nqwen2.5:14b"}
                                 className="w-full rounded-[6px] border-[0.5px] border-[color:var(--hairline)] bg-transparent px-2.5 py-2 font-app-mono text-[12.5px] text-[var(--ink-primary)] shadow-none placeholder:text-[var(--ink-tertiary)] focus-visible:ring-1 focus-visible:ring-console-accent/40"
                             />
-                            <span className="text-[11.5px] text-console-ink-4">
-                                One per line or comma-separated — the names the endpoint serves.
-                            </span>
+                            {fetchErr ? (
+                                <span className="text-[11.5px] text-[var(--signal-negative)]">{fetchErr}</span>
+                            ) : (
+                                <span className="text-[11.5px] text-console-ink-4">
+                                    One per line or comma-separated — the names the endpoint serves.
+                                </span>
+                            )}
                         </div>
 
                         <div className="flex items-center gap-2">
@@ -443,85 +500,6 @@ function CustomProviderDialog({
     );
 }
 
-/** One provider row of the legacy flat list — still used by Web Search. */
-function ProviderCard({ value, label, url, savedKey, onSave, onRemove }: ProviderCardProps) {
-    const [open, setOpen] = useState(false);
-    const connected = !!savedKey;
-
-    return (
-        <Box w="full">
-            {/* Row — click Add/Edit to open the key popup */}
-            <Flex
-                as="button"
-                type="button"
-                onClick={() => setOpen(true)}
-                align="center"
-                gap={3}
-                w="100%"
-                minH="56px"
-                textAlign="left"
-                cursor="pointer"
-                px={1}
-                borderRadius="2px"
-                _hover={{ bg: "var(--surface-recessed)" }}
-            >
-                <Box w="fit-content" maxW="full">
-                    <Flex align="center" gap={2.5} minW={0} w="fit-content" maxW="full">
-                        <ModelLogo model={value} size={30} />
-                        <Text fontSize="14px" color="var(--ink-primary)" noOfLines={1}>
-                            {label}
-                        </Text>
-                        {url && (
-                            <a
-                                href={url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                title={`Get your ${label} API key`}
-                                aria-label={`Get your ${label} API key`}
-                                onClick={(e) => e.stopPropagation()}
-                                style={{ display: "flex", color: "var(--ink-tertiary)", flexShrink: 0 }}
-                            >
-                                <ExternalLink size={14} />
-                            </a>
-                        )}
-                    </Flex>
-                    {/* Badge spans icon → end of name/link */}
-                    <Box mt={1.5} w="full">
-                        <StatusPill connected={connected} />
-                    </Box>
-                </Box>
-                <Box
-                    as="span"
-                    display="inline-flex"
-                    align="center"
-                    gap={1}
-                    flexShrink={0}
-                    ml="auto"
-                    px={2.5}
-                    py={1.5}
-                    borderRadius="2px"
-                    fontSize="12px"
-                    color="var(--accent-primary)"
-                    _hover={{ bg: "var(--surface-recessed)" }}
-                >
-                    {connected ? <Pencil size={13} /> : <Plus size={13} />}
-                    {connected ? "Edit" : "Add"}
-                </Box>
-            </Flex>
-
-            <KeyDialog
-                open={open}
-                onOpenChange={setOpen}
-                value={value}
-                label={label}
-                connected={connected}
-                onSave={onSave}
-                onRemove={onRemove}
-            />
-        </Box>
-    );
-}
-
 type SortKey = "name" | "models" | "status" | "updated";
 
 interface ProviderRow {
@@ -535,6 +513,8 @@ interface ProviderRow {
     updated: string;
     /** Set when the row is a user-added OpenAI-compatible provider. */
     custom?: CustomProvider;
+    /** Standing entry for a provider not yet added (Ollama) — opens the dialog prefilled. */
+    preset?: (typeof PRESETS)[number];
 }
 
 function SortTh({
@@ -600,7 +580,7 @@ function ModelProvidersPanel({
     const [cols, setCols] = useState({ models: true, status: true, updated: true });
     const [editing, setEditing] = useState<string | null>(null);
     const [open, setOpen] = useState(false);
-    const [customDlg, setCustomDlg] = useState<{ open: boolean; initial: CustomProvider | null }>({
+    const [customDlg, setCustomDlg] = useState<{ open: boolean; initial: CustomProvider | null; preset?: (typeof PRESETS)[number] }>({
         open: false,
         initial: null,
     });
@@ -608,6 +588,12 @@ function ModelProvidersPanel({
     const customs = parseCustoms(prefs);
 
     const rows: ProviderRow[] = [
+        // Ollama is listed out of the box so local users find it without
+        // knowing "Add provider" exists; the row opens the dialog prefilled.
+        // Rides first so it lands on page 1 of the paginated table.
+        ...(customs.some((c) => c.id === "ollama")
+            ? []
+            : [{ value: "ollama", label: "Ollama", connected: false, updated: "", preset: PRESETS[0] }]),
         ...MODEL_PROVIDERS.map((p) => ({
             ...p,
             connected: !!savedKeys[p.value],
@@ -660,7 +646,12 @@ function ModelProvidersPanel({
             s?.key !== key ? { key, dir: "asc" } : s.dir === "asc" ? { key, dir: "desc" } : null,
         );
     const openEditor = (row: ProviderRow) => {
-        // Custom rows edit their own config; built-ins open the key editor.
+        // Standing rows (Ollama) open the custom dialog prefilled; custom rows
+        // edit their own config; built-ins open the key editor.
+        if (row.preset) {
+            setCustomDlg({ open: true, initial: null, preset: row.preset });
+            return;
+        }
         if (row.custom) {
             setCustomDlg({ open: true, initial: row.custom });
             return;
@@ -823,7 +814,7 @@ function ModelProvidersPanel({
                                                     )}
                                                 </div>
                                                 <div className="truncate font-app-mono text-[10.5px] tracking-[0.06em] text-[var(--ink-tertiary)] uppercase">
-                                                    {r.custom ? r.custom.baseURL : `${r.value.toUpperCase()}_API_KEY`}
+                                                    {r.preset ? r.preset.url : r.custom ? r.custom.baseURL : `${r.value.toUpperCase()}_API_KEY`}
                                                 </div>
                                             </div>
                                         </div>
@@ -866,7 +857,7 @@ function ModelProvidersPanel({
                                     <td className="px-2 py-3 text-right">
                                         <button
                                             type="button"
-                                            aria-label={`Edit ${r.label} key`}
+                                            aria-label={r.preset ? `Set up ${r.label}` : `Edit ${r.label} key`}
                                             onClick={(e) => { e.stopPropagation(); openEditor(r); }}
                                             className="rounded-[6px] p-1.5 text-[var(--ink-tertiary)] transition-colors hover:bg-[var(--surface-raised)] hover:text-[var(--ink-primary)]"
                                         >
@@ -935,10 +926,11 @@ function ModelProvidersPanel({
             />
 
             <CustomProviderDialog
-                key={customDlg.initial?.id ?? "new"}
+                key={customDlg.initial?.id ?? customDlg.preset?.name ?? "new"}
                 open={customDlg.open}
                 onOpenChange={(o) => setCustomDlg((s) => ({ ...s, open: o }))}
                 initial={customDlg.initial}
+                preset={customDlg.preset}
                 existing={customs}
                 onSave={onSaveCustom}
                 onDelete={onDeleteCustom}
@@ -962,29 +954,10 @@ function GridSkeleton() {
     );
 }
 
-function GroupHeader({ title, purpose }: { title: string; purpose: string }) {
-    return (
-        <Box mb={3} mt={1}>
-            <Text
-                fontSize="10.5px"
-                color="var(--ink-tertiary)"
-                textTransform="uppercase"
-                letterSpacing="0.06em"
-            >
-                {title}
-            </Text>
-            <Text fontSize="12px" color="var(--ink-tertiary)" mt={0.5}>
-                {purpose}
-            </Text>
-        </Box>
-    );
-}
-
 export default function Settings() {
     const [savedKeys, setSavedKeys] = useState<Record<string, string>>({});
     const [prefs, setPrefs] = useState<Record<string, string>>({});
     const [catalog, setCatalog] = useState<Record<string, number>>({});
-    const [webProvider, setWebProvider] = useState<"searxng" | "tavily">("searxng");
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState(false);
 
@@ -995,7 +968,6 @@ export default function Settings() {
             .then((data) => {
                 setSavedKeys({ ...(data.llm_keys || {}) });
                 setPrefs({ ...(data.prefs || {}) });
-                setWebProvider(data.prefs?.web_search_provider === "tavily" ? "tavily" : "searxng");
             })
             // Fail loudly: a silent catch here painted every provider
             // "Not connected" with no hint that the fetch never landed.
@@ -1048,12 +1020,6 @@ export default function Settings() {
             });
             // Timestamp stays in prefs; the row hides it once disconnected.
             setPrefs((prev) => ({ ...prev, [`key_ts_${keyName}`]: "" }));
-            // ponytail: no Tavily key → keep the toggle honest; the backend
-            // falls back to SearXNG too, but stale UI would re-enable it later.
-            if (keyName === "tavily" && webProvider === "tavily") {
-                await SettingsService.updateSettings({ prefs: { web_search_provider: "searxng" } });
-                setWebProvider("searxng");
-            }
             toaster.create({ title: `${providerLabel(keyName)} key removed`, type: "info" });
         } catch (e) {
             toaster.create({ title: `Failed to remove: ${(e as Error).message}`, type: "error" });
@@ -1107,15 +1073,6 @@ export default function Settings() {
         }
     };
 
-    const handleWebProvider = async (value: "searxng" | "tavily") => {
-        try {
-            await SettingsService.updateSettings({ prefs: { web_search_provider: value } });
-            setWebProvider(value);
-        } catch (e) {
-            toaster.create({ title: `Failed to save preference: ${(e as Error).message}`, type: "error" });
-        }
-    };
-
     const connectedCount = Object.keys(savedKeys).length;
 
     return (
@@ -1161,53 +1118,6 @@ export default function Settings() {
                                 <div className="grid grid-cols-1 items-start gap-6 min-[992px]:grid-cols-2 [&>*]:min-w-0">
                                     <div className="flex min-w-0 flex-col gap-6">
                                         <McpPanel prefs={prefs} savePrefs={savePrefs} />
-                                        <Box>
-                                            <GroupHeader
-                                                title="Web Search"
-                                                purpose="Powers the optional web-search step during analysis."
-                                            />
-                                            <Box display="flex" flexDirection="column" gap={1}>
-                                                <ProviderCard
-                                                    value="tavily"
-                                                    label="Tavily"
-                                                    url="https://app.tavily.com"
-                                                    savedKey={savedKeys.tavily}
-                                                    onSave={handleSaveKey}
-                                                    onRemove={handleRemoveKey}
-                                                />
-                                            </Box>
-                                            {!!savedKeys.tavily && (
-                                                <Box mt={4}>
-                                                    <Text fontSize="12px" color="var(--ink-tertiary)" mb={2}>
-                                                        Default web search — SearXNG is self-hosted and free; Tavily uses the key above.
-                                                    </Text>
-                                                    <Flex gap={1} p={1} bg="var(--surface-recessed)" borderRadius="2px" w="fit-content">
-                                                        {(["searxng", "tavily"] as const).map((v) => {
-                                                            const active = webProvider === v;
-                                                            return (
-                                                                <Flex
-                                                                    key={v}
-                                                                    as="button"
-                                                                    type="button"
-                                                                    onClick={() => handleWebProvider(v)}
-                                                                    aria-pressed={active}
-                                                                    px={4}
-                                                                    py={1.5}
-                                                                    borderRadius="2px"
-                                                                    cursor="pointer"
-                                                                    bg={active ? "var(--surface-panel)" : "transparent"}
-                                                                    boxShadow={active ? "0 1px 2px rgba(0,0,0,0.08)" : "none"}
-                                                                >
-                                                                    <Text fontSize="12.5px" color={active ? "var(--accent-primary)" : "var(--ink-tertiary)"}>
-                                                                        {v === "searxng" ? "SearXNG" : "Tavily"}
-                                                                    </Text>
-                                                                </Flex>
-                                                            );
-                                                        })}
-                                                    </Flex>
-                                                </Box>
-                                            )}
-                                        </Box>
                                     </div>
 
                                     <ModelProvidersPanel

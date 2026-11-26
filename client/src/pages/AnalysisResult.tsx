@@ -379,7 +379,8 @@ export default function AnalysisResult() {
     }, [id]);
 
     /** Re-read the run — the Retry affordance shared by the load-error state
-     *  and the failed-run banner below. */
+     *  and the failed-run banner below. Keeps polling while the run is live
+     *  (a retried run comes back RUNNING and must not freeze on one fetch). */
     const reload = () => {
         setError(null);
         setLoading(true);
@@ -388,14 +389,29 @@ export default function AnalysisResult() {
         (async () => {
             try {
                 const data = await AnalysisService.readAnalysis(id!);
-                if (data) setAnalysis(data);
-                else setError("Run not found");
+                if (fetchCancelled.current) return;
+                if (data) {
+                    setAnalysis(data);
+                    const s = (data.status || "").toLowerCase();
+                    if (s === "pending" || s === "running" || s === "processing")
+                        fetchTimer.current = window.setTimeout(reload, 3000);
+                } else setError("Run not found");
             } catch {
                 setError("Failed to load run result");
             } finally {
-                setLoading(false);
+                if (!fetchCancelled.current) setLoading(false);
             }
         })();
+    };
+
+    /** The failed-run Retry: relaunch server-side, then poll the fresh run. */
+    const retryRun = async () => {
+        try {
+            await AnalysisService.retryAnalysis(id!);
+            reload();
+        } catch (e: any) {
+            toaster.create({ title: "Couldn't retry the run", description: e?.message, type: "error" });
+        }
     };
 
     // U4: the Report tab is not populated while a run is in progress.
@@ -533,7 +549,7 @@ export default function AnalysisResult() {
     // report only once the run is terminal. The legacy layout below is for
     // completed skill-era rows.
     if (isRunning || analysis.report_document) {
-        return <HarnessRunView run={analysis} tags={runSkillTags} onRetry={reload} />;
+        return <HarnessRunView run={analysis} tags={runSkillTags} onRetry={retryRun} />;
     }
 
     const s = (analysis.status || "").toLowerCase();
@@ -1043,7 +1059,27 @@ const VERDICT_BAND_EXAMPLE: Record<string, number> = {
 };
 
 /** Harness run result: the typed ReportDocument + the Agent Workspace (reasoning + knowledge base). */
-function HarnessRunView({ run, onRetry }: { run: any; tags?: string[]; onRetry?: () => void }) {
+/** The banner's Retry — spins while the relaunch request is in flight, so
+ *  a click always answers visibly. */
+function RetryButton({ onRetry }: { onRetry: () => void | Promise<void> }) {
+    const [retrying, setRetrying] = useState(false);
+    return (
+        <Button
+            variant="solid"
+            size="sm"
+            loading={retrying}
+            onClick={() => {
+                if (retrying) return;
+                setRetrying(true);
+                void Promise.resolve(onRetry()).finally(() => setRetrying(false));
+            }}
+        >
+            Retry
+        </Button>
+    );
+}
+
+function HarnessRunView({ run, onRetry }: { run: any; tags?: string[]; onRetry?: () => void | Promise<void> }) {
     const doc = run.report_document as ReportDocument;
     const status = String(run.status || "").toLowerCase();
     const failed = status === "failed" || status === "budget_exhausted" || status === "error";
@@ -1153,9 +1189,7 @@ function HarnessRunView({ run, onRetry }: { run: any; tags?: string[]; onRetry?:
                                 Check Settings → API keys, then retry.
                             </Text>
                             {onRetry && (
-                                <Button variant="solid" size="sm" onClick={onRetry}>
-                                    Retry
-                                </Button>
+                                <RetryButton onRetry={onRetry} />
                             )}
                         </Flex>
                     </Box>

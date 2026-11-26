@@ -18,7 +18,7 @@ if (!entries.length) {
 
 let failed = false;
 for (const entry of entries) {
-  // Keyed sources (Tavily) need a per-user credential the smoke has no access
+  // Keyed sources need a per-user credential the smoke has no access
   // to — buildRunTools skips them too, so do the same here.
   if (entry.keyFrom) {
     console.log(`- ${entry.name}: skipped (needs ${entry.keyFrom})`);

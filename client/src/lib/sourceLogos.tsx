@@ -8,9 +8,8 @@ import voyagerLogo from "@/assets/voyager_logo.png";
 import yahooLogo from "@/assets/yahoo_finance.png";
 import youtubeLogo from "@/assets/youtube_logo.png";
 import redditLogo from "@/assets/reddit_logo.png";
-import tavilyLogo from "@/assets/tavily-color.svg";
 
-export type SourceKey = "sec" | "nse" | "voyager" | "yahoo" | "youtube" | "reddit" | "news" | "web" | "tradingview" | "tavily";
+export type SourceKey = "sec" | "nse" | "voyager" | "yahoo" | "youtube" | "reddit" | "news" | "web" | "tradingview";
 
 type SourceDef = { image?: string; icon?: IconType; label: string; full: string };
 
@@ -24,7 +23,6 @@ export const SOURCE_DEFS: Record<SourceKey, SourceDef> = {
     news: { icon: LuNewspaper, label: "News", full: "Market & ticker news" },
     web: { icon: LuGlobe, label: "Web", full: "Live web search" },
     tradingview: { icon: LuChartLine, label: "TradingView", full: "TradingView market data & technicals" },
-    tavily: { image: tavilyLogo, label: "Tavily", full: "Tavily AI web search" },
 };
 
 export function SourceMark({ source, size = 12, muted = false }: { source: SourceKey; size?: number; muted?: boolean }) {
@@ -184,8 +182,6 @@ const TOOL_SOURCES: Record<string, SourceKey[]> = {
     web_url_read: ["web"],
     searxng_search_suggestions: ["web"],
     searxng_instance_info: ["web"],
-    tavily_search: ["tavily"],
-    tavily_extract: ["tavily"],
     financial_news: ["tradingview"],
     market_sentiment: ["tradingview"],
     combined_analysis: ["tradingview"],

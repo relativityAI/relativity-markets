@@ -222,8 +222,10 @@ export default function HomePage() {
                     (min two cards wide) + the week's schedule below it on
                     the right. Below lg they stack in reading order. */}
                 <div className="flex flex-wrap items-start gap-x-10 gap-y-10 pt-7">
-                    {/* ponytail: fixed left rail — the heatmap's width. */}
-                    <div className="order-1 flex w-full flex-col gap-12 pb-12 lg:w-[420px] lg:shrink-0 xl:w-[440px]">
+                    {/* ponytail: fixed left rail — the heatmap's width;
+                        the watchlist is the main item, so the rail gives up
+                        width to the right column. */}
+                    <div className="order-1 flex w-full flex-col gap-12 pb-12 lg:w-[360px] lg:shrink-0 xl:w-[380px]">
                         <HeatmapPanel />
                     </div>
 

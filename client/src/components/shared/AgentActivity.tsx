@@ -156,7 +156,7 @@ function toolArgsSummary(args: unknown): string {
 }
 
 /** Search-flavoured tools whose result can render as the WebSearch element. */
-const SEARCHY = /search|news|tavily|web/i;
+const SEARCHY = /search|news|web/i;
 
 /**
  * (args, result) → WebSearch element data, or null when it isn't a search payload.
@@ -307,9 +307,6 @@ function Row({
                             name={row.name}
                             target={query || "—"}
                             message={msg.length > 300 ? `${msg.slice(0, 300)}…` : msg}
-                            attempt={1}
-                            maxAttempts={1}
-                            retrying={false}
                             className="max-w-none"
                         />
                     </Box>
@@ -333,9 +330,6 @@ function Row({
                                 name={row.name}
                                 target={ws.query}
                                 message={ws.emptyMessage.length > 300 ? `${ws.emptyMessage.slice(0, 300)}…` : ws.emptyMessage}
-                                attempt={1}
-                                maxAttempts={1}
-                                retrying={false}
                                 className="max-w-none"
                             />
                         </Box>

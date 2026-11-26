@@ -12,7 +12,7 @@ export interface UserSettingsRow {
   key_version: number | null;
   defaults_deleted: boolean | null;
   deleted_preset_keys: string[] | null;
-  /** Non-secret per-user preferences (e.g. web_search_provider). */
+  /** Non-secret per-user preferences (e.g. mcp_servers enable/disable). */
   prefs: Record<string, string>;
 }
 

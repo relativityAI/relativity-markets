@@ -87,7 +87,7 @@ export function applyVariables(text: string, vars: Record<string, string | undef
 
 /** Data tools that only return text — nothing for the plot reference to promise. */
 export const TEXT_TOOLS = new Set([
-  "searxng_web_search", "web_url_read", "tavily_search", "tavily_extract",
+  "searxng_web_search", "web_url_read",
   "yfinance_search", "yfinance_get_ticker_news",
 ]);
 

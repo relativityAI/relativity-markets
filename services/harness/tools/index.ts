@@ -5,7 +5,7 @@
  *   - the static tool catalog (drafts / GET /tool-catalog).
  *
  * All web search / market data is MCP now (sources.ts) — no built-in
- * SearXNG/Tavily fetchers, no per-tool factories here.
+ * SearXNG fetchers, no per-tool factories here.
  */
 
 // ── Run composition + config ──────────────────────────────────────────────
@@ -27,4 +27,4 @@ export { toYahooSymbol, getPriceHistory, priceHistoryDigest, quoteDigest, getMac
 export type { PriceHistory, Candle } from "../marketdata.js";
 
 // ── Shared app config + logging ───────────────────────────────────────────
-export { config, parseCsv } from "./appconfig.js";
+export { parseCsv } from "./appconfig.js";

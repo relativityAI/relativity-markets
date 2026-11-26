@@ -15,7 +15,7 @@ import * as RSlider from "@radix-ui/react-slider";
 import * as RSwitch from "@radix-ui/react-switch";
 import * as RSlot from "@radix-ui/react-slot";
 import { createPortal } from "react-dom";
-import { pseudoProps } from "./primitives";
+import { pseudoProps, Spinner } from "./primitives";
 
 /* onValueChange is declared so inline callbacks get a contextual signature;
  * the loose index signature keeps Chakra's grab-bag call sites compiling. */

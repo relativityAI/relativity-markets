@@ -22,13 +22,13 @@ import type { TraceEvent } from "./types.js";
 import { TraceMapper } from "./trace.js";
 
 /** Web-search toolbox for one-shot turns — same MCP composition as runs. */
-async function webSearchToolset(tavilyKey?: string, webSearchProvider: "searxng" | "tavily" = "searxng"): Promise<{ tools: StructuredTool[]; close: () => Promise<void> }> {
+async function webSearchToolset(): Promise<{ tools: StructuredTool[]; close: () => Promise<void> }> {
   try {
     const { loadRunFileConfig } = await import("./run-config.js");
     const { tools, close } = await buildRunTools(
       loadRunFileConfig().config.tools as Parameters<typeof buildRunTools>[0],
       process.env,
-      { symbol: "", source: "", tavilyKey, webSearchProvider },
+      { symbol: "", source: "" },
     );
     return { tools, close };
   } catch (e) {
@@ -204,7 +204,6 @@ export interface BuilderMessage {
 }
 
 export interface BuilderRequest {
-  web_search_provider?: "searxng" | "tavily";
   session_id?: string;
   user_id?: string;
   model_id: string;
@@ -295,7 +294,7 @@ export async function processBuilderTurn(
     userMessage +
     "\n\nRespond with JSON only.";
 
-  const searchTools = await webSearchToolset(req.llm_keys.tavily, req.web_search_provider);
+  const searchTools = await webSearchToolset();
   const tools = searchTools.tools;
   const trace: TraceEvent[] = [];
   const onEvent = (ev: TraceEvent) => {
@@ -506,7 +505,6 @@ export interface SkillDraftMessage {
 }
 
 export interface SkillDraftRequest {
-  web_search_provider?: "searxng" | "tavily";
   user_id?: string;
   model_id: string;
   llm_keys: LlmKeys;
@@ -593,7 +591,7 @@ export async function skillDraftTurn(req: SkillDraftRequest): Promise<SkillDraft
   promptParts.push("\nRespond now.");
 
   const searchRequested = req.web_search !== false;
-  const searchTools = await webSearchToolset(req.llm_keys.tavily, req.web_search_provider);
+  const searchTools = await webSearchToolset();
   const tools = searchRequested ? searchTools.tools : [];
 
   const searchResults: { query: string; title: string; url: string }[] = [];

@@ -16,12 +16,12 @@ export async function ensureUserSettings(userId: string): Promise<void> {
   }
 }
 
-/** Fetch decrypted user LLM keys + web-search preference (+ raw prefs, for
- *  the MCP enable/disable and custom-server list). */
+/** Fetch decrypted user LLM keys (+ raw prefs, for the MCP enable/disable
+ *  and custom-server list). */
 export async function fetchUserKeys(
   userId: string,
-): Promise<{ llmKeys: Record<string, string>; webSearchProvider: "searxng" | "tavily"; prefs: Record<string, string> }> {
-  const fallback = { llmKeys: {}, webSearchProvider: "searxng" as const, prefs: {} as Record<string, string> };
+): Promise<{ llmKeys: Record<string, string>; prefs: Record<string, string> }> {
+  const fallback = { llmKeys: {}, prefs: {} as Record<string, string> };
   try {
     const data = await getUserSettings(userId);
     if (!data) return fallback;
@@ -29,6 +29,8 @@ export async function fetchUserKeys(
     const llmKeys: Record<string, string> = {};
     if (data.llm_keys_encrypted && typeof data.llm_keys_encrypted === "object") {
       for (const [k, v] of Object.entries(data.llm_keys_encrypted)) {
+        // Legacy orphan: Tavily support is gone — never surface or route its key.
+        if (k === "tavily") continue;
         try { llmKeys[k] = decrypt(v); } catch { llmKeys[k] = ""; }
       }
     }
@@ -36,11 +38,7 @@ export async function fetchUserKeys(
     // the one object every model call already carries, so custom routing needs
     // no extra parameter threaded through the call graph.
     if (data.prefs?.custom_providers) llmKeys[CUSTOM_KEY] = data.prefs.custom_providers;
-    const pref = data.prefs?.web_search_provider;
-    // Tavily mode needs its key — a missing/expired key silently degrades to
-    // SearXNG so the run still has a web tool.
-    const webSearchProvider: "searxng" | "tavily" = pref === "tavily" && llmKeys.tavily ? "tavily" : "searxng";
-    return { llmKeys, webSearchProvider, prefs: data.prefs ?? {} };
+    return { llmKeys, prefs: data.prefs ?? {} };
   } catch (e: any) {
     log.error("[provision]", `fetchUserKeys failed for ${userId}: ${e?.message || e}`);
     return fallback;

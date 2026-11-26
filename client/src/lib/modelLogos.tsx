@@ -7,6 +7,7 @@ import {
     SiMeta,
     SiMistralai,
     SiNvidia,
+    SiOllama,
     SiPerplexity,
 } from "react-icons/si";
 import grokLogo from "@/assets/llm_grok.svg";
@@ -19,7 +20,6 @@ import qwenLogo from "@/assets/llm_qwen.svg";
 import zAiLogo from "@/assets/llm_z-ai.svg";
 import cerebrasLogo from "@/assets/llm_cerebras.svg";
 import opencodeLogo from "@/assets/llm_opencode.png";
-import tavilyLogo from "@/assets/tavily-color.svg";
 
 /**
  * Provider marks for LLM models, keyed by the model-id prefix used
@@ -66,11 +66,11 @@ const PROVIDERS: Record<string, ProviderVisual> = {
     qwen: { label: "Qwen", image: qwenLogo, invert: true },
     zai: { label: "Z.AI", image: zAiLogo },
     cerebras: { label: "Cerebras", image: cerebrasLogo, invert: true },
-    // Data-source provider (web search), shown on the Settings key cards.
-    tavily: { label: "Tavily", image: tavilyLogo },
     // OpenCode Go gateway — Settings key card (bare "opencode" id; the
     // opencode/deepseek-* model ids above keep their DeepSeek mark).
     opencode: { label: "OpenCode", image: opencodeLogo, invert: true },
+    // User-added local endpoint (Ollama preset) — brand mark is monochrome.
+    ollama: { label: "Ollama", Icon: SiOllama, color: "#E7E5E4" },
 };
 
 const FALLBACK_LABELS: Record<string, string> = {
