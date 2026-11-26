@@ -116,14 +116,32 @@ const REASONS: Record<ModelFailureReason, Omit<ModelFailure, "reason">> = {
  * Checks structured status fields first (most accurate), then message text.
  */
 export function classifyModelError(e: unknown): ModelFailure {
-  const err = e as { name?: string; message?: string; statusCode?: unknown; status?: unknown } | null | undefined;
-  const msg = String(err?.message || err || "");
+  const err = e as { name?: string; message?: string; statusCode?: unknown; status?: unknown; cause?: unknown } | null | undefined;
+  const cause = err?.cause as { code?: unknown; message?: unknown } | undefined;
+  // Fold the cause in: the OpenAI SDK buries node's ECONNREFUSED/ENOTFOUND
+  // there under a generic "Connection error.".
+  const msg = [
+    String(err?.message || err || ""),
+    typeof cause?.code === "string" ? cause.code : "",
+    typeof cause?.message === "string" ? cause.message : "",
+  ].filter(Boolean).join(" ");
   // The AI SDK puts the HTTP status on statusCode (probed live: `status` is
   // undefined). Accept both plus numeric codes embedded in provider data.
   const status =
     typeof err?.statusCode === "number" ? err.statusCode :
     typeof err?.status === "number" ? err.status :
     undefined;
+
+  // Endpoint unreachable (local server stopped, wrong base URL): actionable
+  // advice beats the generic server-error text.
+  if (/connection error|fetch failed|econnrefused|enotfound|eai_again|getaddrinfo/i.test(msg)) {
+    return {
+      reason: "server_error",
+      message: "Couldn't reach the provider — check that it's running and the base URL in Settings is correct.",
+      retryable: false,
+      needsKey: false,
+    };
+  }
 
   const reason = classifyReason(msg, status, err?.name);
   return { reason, ...REASONS[reason], ...(reason === "unknown" ? { message: `${REASONS.unknown.message} (${msg.slice(0, 200)})` } : {}) };

@@ -7,6 +7,8 @@
  * from the instrument's market, not a hard-coded ₹.
  */
 
+import { FaceNeutral, ThumbsDown, ThumbsUp, type LucideIcon } from "lucide-react";
+
 export type MarketCurrency = "INR" | "USD";
 
 /** Market from the run's data source ("nse" | "sec" | …). Defaults to USD. */
@@ -177,6 +179,53 @@ export function verdictTone(label: string | null | undefined): VerdictTone {
   if (["fair", "underwhelming", "hold", "watch", "neutral"].includes(v)) return "caution";
   if (["subpar", "pass", "error", "failed", "sell", "poor", "very poor"].includes(v)) return "bad";
   return "neutral";
+}
+
+/** Watchlist badge glyphs — thumbs tell the story: double up = great
+ *  (better than good), double down = very bad, neutral face = average/fair
+ *  (and anything unclassified). Colour comes from badgeFill. */
+export function badgeIcons(label: string | null | undefined): LucideIcon[] {
+  const v = (label || "").trim().toLowerCase();
+  if (v === "outstanding" || v === "excellent") return [ThumbsUp, ThumbsUp];
+  if (v === "very poor") return [ThumbsDown, ThumbsDown];
+  const tone = verdictTone(label);
+  if (tone === "good") return [ThumbsUp];
+  if (tone === "bad") return [ThumbsDown];
+  return [FaceNeutral];
+}
+
+/** Badge/dot fill by severity — shades of green and red (deeper = more
+ *  severe), yellow for average, gray when unclassified. All sit in the
+ *  light-fill range so near-black ink holds ≥4.5:1 in light mode; the
+ *  dark-mode rule in index.css deepens them for white ink. */
+export function badgeFill(label: string | null | undefined): string {
+  const v = (label || "").trim().toLowerCase();
+  if (v === "outstanding" || v === "excellent") return "#22C55E";
+  if (v === "very poor") return "#EF4444";
+  const tone = verdictTone(label);
+  if (tone === "good") return "#4ADE80";
+  if (tone === "bad") return "#F87171";
+  if (tone === "caution") return "#FACC15";
+  return "#9CA3AF";
+}
+
+/** Compact verdict age shown right on the badge — "now" / "4m" / "5h" /
+ *  "3d" / "2w", then a short date past five weeks. Answers "is this verdict
+ *  old?" without a hover. */
+export function badgeAge(iso?: string | null): string {
+  if (!iso) return "";
+  const diff = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(diff)) return "";
+  if (diff < 60_000) return "now";
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `${weeks}w`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 /** Text-safe signal ink for a verdict word (badges, pills, tinted chips) —

@@ -2,7 +2,8 @@
 # relativity — start/stop Relativity (Docker). Works from any directory.
 #   relativity            start: refresh the app image, start the stack and
 #                         open http://127.0.0.1:8501 once it is healthy
-#   relativity stop       stop the stack
+#   relativity stop       stop everything: the Docker stack AND a local
+#                         `npm run dev` running from this checkout
 #   relativity uninstall  stop + remove the command (your data is kept)
 # install.sh symlinks this into ~/.local/bin; it resolves its own location,
 # so it runs against the checkout (or ~/.local/share/relativity) it came from.
@@ -24,6 +25,34 @@ COMPOSE=$DIR/docker-compose.yml
 
 compose() { docker compose -f "$COMPOSE" "$@"; }
 healthy() { curl -fsS -o /dev/null --max-time 2 "$URL/health" 2>/dev/null; }
+listening() { ss -tlnH 2>/dev/null | grep -q ":$1 "; }
+
+# A local `npm run dev` (API on 8501, vite on 5173) started from this checkout
+# is invisible to `docker compose down`, so `stop` used to leave the app
+# serving. Kill it here: any dev-looking process whose cwd is this checkout.
+# ponytail: Linux-only /proc scan — on macOS use lsof -iTCP:8501,5173 instead.
+kill_local_dev() {
+  killed=0
+  for p in /proc/[0-9]*; do
+    pid=${p##*/}
+    [ "$pid" = "$$" ] && continue
+    cmd=$(tr '\0' ' ' 2>/dev/null <"$p/cmdline") || continue
+    # Only node/npm processes — never a shell that merely mentions these
+    # strings (e.g. `vim services/api/index.ts` must survive a stop).
+    first=${cmd%% *}
+    case ${first##*/} in node | npm) ;; *) continue ;; esac
+    case $cmd in
+      *"run dev"* | *"tsx watch"* | *"bin/vite"* | *"api/index.ts"*) ;;
+      *) continue ;;
+    esac
+    cwd=$(readlink "$p/cwd" 2>/dev/null) || continue
+    case $cwd in
+      "$DIR" | "$DIR"/*) kill "$pid" 2>/dev/null && killed=1 ;;
+    esac
+  done
+  [ "$killed" -eq 1 ] && echo "Stopped local dev server (npm run dev)."
+  return 0
+}
 
 open_browser() {
   case $(uname -s) in
@@ -133,10 +162,21 @@ case ${1:-up} in
       exit 0
     fi
 
-    echo "Starting Relativity: $URL"
     # Pre-create the data dir as this user — Docker would create it root-owned
     # and the container (uid 1000) could not write its database.
     mkdir -p "$DIR/services/data"
+
+    # Something else already owns :8501 — a local `npm run dev`. Starting the
+    # app container would fight it for the port, so bring up only the toolbox
+    # (SearXNG + MCPs) that local dev depends on.
+    if [ -z "$running" ] && listening 8501; then
+      echo "Local dev app detected on $URL — starting the toolbox only (SearXNG + MCPs)."
+      compose up -d searxng searxng-mcp tvmcp yfmcp
+      echo "Toolbox is up. Stop everything with:  relativity stop"
+      exit 0
+    fi
+
+    echo "Starting Relativity: $URL"
     compose up -d
     open_when_up
     echo "Stop it with:  relativity stop"
@@ -146,6 +186,7 @@ case ${1:-up} in
     require
     echo "Stopping Relativity..."
     compose down
+    kill_local_dev
     echo "Stopped."
     ;;
 

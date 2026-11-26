@@ -134,7 +134,6 @@ export interface PluginDetail extends PluginSummary {
 export interface McpSource {
     name: string;
     label: string;
-    webProvider: "searxng" | "tavily" | null;
     required: boolean;
     /** Resolved url; blank when the config points at an unset env var. */
     url: string;
@@ -144,8 +143,21 @@ export interface McpSource {
     enabled: boolean;
     /** True when the user added it in Settings. */
     custom: boolean;
-    /** Known tool names; empty for user-added servers (probed at run time). */
+    /** Tool names the run will see (live probe narrowed by the allow-list). */
     tools: string[];
+    /** Live probe: up | down (unreachable) | needs-key | needs-auth | no-url. */    status: "up" | "down" | "needs-key" | "needs-auth" | "no-url";
+    error?: string | null;
+    /** Epoch ms of the last probe. */
+    lastChecked?: number | null;
+    /** llm_keys name holding this server's API key (null = keyless server). */
+    keyName?: string | null;
+    /** Whether that stored key is set. */
+    hasKey?: boolean;
+}
+
+/** GET /mcp-sources — the catalog of servers a run can reach. */
+export interface McpCatalog {
+    servers: McpSource[];
 }
 
 export const PluginService = {
@@ -195,8 +207,17 @@ export const PluginService = {
         return response.data;
     },
 
-    async mcpSources(): Promise<McpSource[]> {
-        const response = await axios.get(`${API_BASE}/mcp-sources`);
+    async mcpSources(refresh = false): Promise<McpCatalog> {
+        const response = await axios.get(`${API_BASE}/mcp-sources`, { params: refresh ? { refresh: 1 } : undefined });
+        // Tolerate an older API still serving the bare array (stale
+        // container): a shape mismatch must degrade, never crash the page.
+        const data: unknown = response.data;
+        return Array.isArray(data) ? { servers: data } : (data as McpCatalog);
+    },
+
+    /** Test-connection before saving a custom server — one fresh probe. */
+    async testMcpSource(url: string, key?: string): Promise<{ status: "up" | "down" | "needs-auth"; error?: string; tools: string[] }> {
+        const response = await axios.post(`${API_BASE}/mcp-sources/test`, { url, ...(key ? { key } : {}) });
         return response.data;
     },
 };
@@ -234,6 +255,12 @@ export const AnalysisService = {
 
     async readAnalysis(id: string) {
         const response = await axios.get(`${API_BASE}/analysis/${encodeURIComponent(id)}`);
+        return response.data;
+    },
+
+    /** Re-launch a failed run in place — the result page's Retry. */
+    async retryAnalysis(id: string): Promise<{ ok: boolean }> {
+        const response = await axios.post(`${API_BASE}/analysis/${encodeURIComponent(id)}/retry`);
         return response.data;
     },
 

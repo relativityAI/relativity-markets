@@ -28,7 +28,8 @@ import {
 } from "../db/repo.js";
 import { fetchUserKeys, ensureUserSettings } from "./provision.js";
 import { disabledMcpNames, parseMcpPrefs, runMcpEntries } from "./mcp.js";
-import { getSourceStatuses } from "./datasources.js";
+import { healthSources, probeAll, probeEntry } from "./datasources.js";
+import type { McpSourceConfig } from "../harness/tools/sources.js";
 import { getModels, getModelIds, getAvailableModelsForUser } from "./models.js";
 import { getAgentCategories } from "./categories.js";
 import { getSources, searchStocks } from "./discovery.js";
@@ -73,7 +74,7 @@ import {
   type ReportDocument,
   type Verdict,
 } from "../harness/index.js";
-import { resumePausedRun, startAnalysisRun, startStaleRunSweeper } from "./runs.js";
+import { resumePausedRun, retryFailedRun, startAnalysisRun, startStaleRunSweeper } from "./runs.js";
 import { startAlertTicker, isValidTime, isValidTimeZone, isValidFrequency, todayInTz, occurrencesBetween } from "./schedule.js";
 import { extractText } from "./upload.js";
 import multer from "multer";
@@ -237,10 +238,16 @@ app.get("/health", async (_req, res) => {
   res.json({ ok: 1, db: dbOk });
 });
 
-// Data-source chips in the navbar — real upstream probes, cached a minute
-// so a page load never hammers Yahoo/SearXNG (see datasources.ts).
+// Data-source chips in the navbar — one real probe per configured MCP
+// server (list derived from harness config, cached a minute; see datasources.ts).
 app.get("/health/sources", async (_req, res) => {
-  res.json({ ok: 1, sources: await getSourceStatuses() });
+  try {
+    const { config: fileCfg } = loadRunFileConfig();
+    const resolved = resolveRunConfig(process.env, fileCfg);
+    res.json({ ok: 1, sources: await healthSources(resolved.tools?.mcp ?? []) });
+  } catch (e: any) {
+    res.status(503).json({ ok: 0, sources: {}, error: e.message });
+  }
 });
 
 // ── user settings (encrypted API keys) ────────────────────────────────
@@ -254,6 +261,8 @@ app.get("/user/settings", requireAuth, async (req, res) => {
     const llmKeysMasked: Record<string, string> = {};
     if (data.llm_keys_encrypted && typeof data.llm_keys_encrypted === "object") {
       for (const [k, v] of Object.entries(data.llm_keys_encrypted)) {
+        // Legacy orphan: Tavily support is gone — never surface its key.
+        if (k === "tavily") continue;
         try {
           const raw = decrypt(v);
           // An empty stored value is not a key — don't mask it into a truthy string.
@@ -277,8 +286,9 @@ app.put("/user/settings", requireAuth, async (req, res) => {
     const { llm_keys } = req.body || {};
 
     const patch: Record<string, unknown> = {};
-    // Merge instead of replace: llm_keys_encrypted carries unrelated keys (e.g. tavily)
-    // plus the client only ever sees masked values, so a full replace would drop or corrupt them.
+    // Merge instead of replace: llm_keys_encrypted carries unrelated keys
+    // (custom MCP credentials), plus the client only ever sees masked values,
+    // so a full replace would drop or corrupt them.
     if (llm_keys === null) {
       patch.llm_keys_encrypted = {};
     } else if (llm_keys !== undefined && typeof llm_keys === "object") {
@@ -447,49 +457,88 @@ app.put("/plugins/:id/files", requireAuth, async (req, res) => {
 
 /** MCP servers for the Settings page and the New Run toggles: the
  *  preconfigured ones (harness config) plus the user's own, each with its
- *  url, enabled flag and tool list. */
+ *  url, enabled flag, live probe status and tool list.
+ *  `?refresh=1` busts the one-minute probe cache (the Retry button). */
 app.get("/mcp-sources", requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
     const { config: fileCfg } = loadRunFileConfig();
     const resolved = resolveRunConfig(process.env, fileCfg);
     const configured = resolved.tools?.mcp ?? [];
-    const prefs = (await getUserSettings(userId))?.prefs ?? {};
+    const { llmKeys, prefs } = await fetchUserKeys(userId);
+    const entries = runMcpEntries(configured, prefs);
+    const probes = await probeAll(entries, {
+      keys: llmKeys,
+      fresh: req.query.refresh === "1",
+    });
     const off = disabledMcpNames(prefs);
     const catalog = getToolCatalog();
     const configuredNames = new Set(configured.map((c) => c.name));
 
-    const rows = [
-      ...configured.map((entry) => ({
+    // What the run will see: live tools narrowed by the config's allow-list;
+    // the static list (allow, else every catalog tool this name prefixes)
+    // only when the probe couldn't reach the server (or, like SearXNG's
+    // liveness check, reached it without a tools/list).
+    const toolsFor = (entry: McpSourceConfig, probe: (typeof probes)[string] | undefined) => {
+      const live = probe?.status === "up" && probe.tools.length ? probe.tools : null;
+      if (!live) {
+        return entry.allow?.length
+          ? entry.allow
+          : catalog.filter((t) => t.name.startsWith(`${entry.name}_`)).map((t) => t.name);
+      }
+      return entry.allow?.length ? live.filter((t) => entry.allow!.includes(t)) : live;
+    };
+    const row = (entry: McpSourceConfig, custom: boolean) => {
+      const p = probes[entry.name];
+      const keyName = entry.keyFrom ?? null;
+      return {
         name: entry.name,
         label: MCP_LABELS[entry.name] ?? entry.name,
-        webProvider: entry.webProvider ?? null,
         required: entry.required ?? true,
         url: entry.url ?? (entry.urlEnv ? process.env[entry.urlEnv] ?? "" : ""),
         urlEnv: entry.urlEnv ?? "",
         enabled: !off.has(entry.name),
-        custom: false,
-        // Known without connecting: the config's allow-list, else every
-        // catalog tool this server's name prefixes (yfinance_*).
-        tools: entry.allow?.length
-          ? entry.allow
-          : catalog.filter((t) => t.name.startsWith(`${entry.name}_`)).map((t) => t.name),
-      })),
-      ...runMcpEntries(configured, prefs)
-        .filter((entry) => !configuredNames.has(entry.name))
-        .map((entry) => ({
-          name: entry.name,
-          label: entry.name,
-          webProvider: null,
-          required: false,
-          url: entry.url ?? "",
-          urlEnv: "",
-          enabled: !off.has(entry.name),
-          custom: true,
-          tools: [] as string[],
-        })),
-    ];
-    res.json(rows);
+        custom,
+        status: p?.status ?? "down",
+        error: p?.error ?? null,
+        lastChecked: p?.at ?? null,
+        keyName,
+        hasKey: keyName ? !!llmKeys[keyName] : false,
+        tools: toolsFor(entry, p),
+      };
+    };
+
+    res.json({
+      servers: [
+        ...configured.map((e) => row(e, false)),
+        ...entries.filter((e) => !configuredNames.has(e.name)).map((e) => row(e, true)),
+      ],
+    });
+  } catch (e: any) {
+    res.status(503).json({ error: e.message });
+  }
+});
+
+/** Test-connection for the add/edit dialog: one fresh probe of the url the
+ *  user is about to save — same validation, same honest result. `key` (when
+ *  the form has one) rides along as the standard static Bearer credential. */
+app.post("/mcp-sources/test", requireAuth, async (req, res) => {
+  try {
+    const url = String(req.body?.url ?? "").trim();
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+        return res.status(400).json({ error: "URL must be http:// or https://" });
+    } catch {
+      return res.status(400).json({ error: "URL must be a full URL, e.g. https://example.com/mcp" });
+    }
+    const key = typeof req.body?.key === "string" && req.body.key.trim() ? req.body.key.trim() : "";
+    res.json(
+      await probeEntry(
+        { name: "test", url, ...(key ? { keyFrom: "testKey" } : {}) },
+        { keys: { testKey: key }, fresh: true },
+      ),
+    );
   } catch (e: any) {
     res.status(503).json({ error: e.message });
   }
@@ -666,10 +715,9 @@ app.post("/skills/draft", requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
     const body = req.body || {};
-    const { llmKeys, webSearchProvider } = await fetchUserKeys(userId);
+    const { llmKeys } = await fetchUserKeys(userId);
     const draftReq: SkillDraftRequest = {
       user_id: userId,
-      web_search_provider: webSearchProvider,
       model_id: String(body.model_id || keyPool.getDefaultModel(llmKeys)),
       llm_keys: llmKeys,
       messages: Array.isArray(body.messages) ? body.messages : [],
@@ -757,6 +805,21 @@ app.post("/analysis/:id/resume", requireAuth, async (req, res) => {
   } catch (e: any) {
     console.error("POST /analysis/:id/resume ERROR:", e);
     res.status(503).json({ error: e?.message || "Resume failed" });
+  }
+});
+
+// A failed run retries in place: same row, fresh execution — the Retry
+// button on the run result page.
+app.post("/analysis/:id/retry", requireAuth, async (req, res) => {
+  try {
+    const userId = (req as AuthedRequest).user.id;
+    const outcome = await retryFailedRun(userId, String(req.params.id));
+    if (outcome === "missing") return res.status(404).json({ error: "Run not found" });
+    if (outcome === "not-failed") return res.status(409).json({ error: "Only a failed run can be retried" });
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error("POST /analysis/:id/retry ERROR:", e);
+    res.status(503).json({ error: e?.message || "Retry failed" });
   }
 });
 
@@ -1268,11 +1331,11 @@ app.get("/stocks/:symbol/overview", async (req, res) => {
   }
 });
 
-// Company logo for a ticker: resolve symbol → domain (search API), then
-// redirect to the CDN. No logo bytes are stored here. Open on purpose — an
-// <img> tag carries no Authorization header, like /stocks/search above.
-// The redirect target is always under the fixed CDN host, so the symbol
-// can never aim it anywhere else.
+// Company logo for a ticker: route to the right free API (symbol-keyed —
+// no search step) and redirect. No logo bytes are stored here. Open on
+// purpose — an <img> tag carries no Authorization header, like
+// /stocks/search above. The redirect target is always under one of the two
+// fixed logo hosts, so the symbol can never aim it anywhere else.
 app.get("/logo/:symbol", async (req, res) => {
   try {
     const url = await tickerLogoUrl(String(req.params.symbol || ""));
@@ -1344,13 +1407,12 @@ app.post("/builder/draft", requireAuth, async (req, res) => {
   let requestedModel = "";
   try {
     const userId = (req as AuthedRequest).user.id;
-    const { llmKeys, webSearchProvider } = await fetchUserKeys(userId);
+    const { llmKeys } = await fetchUserKeys(userId);
 
     const body = req.body || {};
     requestedModel = body.model_id || keyPool.getDefaultModel(llmKeys);
 
     const builderReq: BuilderRequest = {
-      web_search_provider: webSearchProvider,
       session_id: body.session_id ? String(body.session_id) : undefined,
       user_id: userId,
       model_id: requestedModel,

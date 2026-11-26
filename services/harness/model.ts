@@ -29,7 +29,6 @@ export interface LlmKeys {
   cohere?: string;
   zai?: string;
   opencode?: string;
-  tavily?: string;
   /**
    * JSON bundle of user-added OpenAI-compatible providers (see CustomProvider).
    * Server-attached from prefs by fetchUserKeys — the keys record is the one
@@ -178,9 +177,11 @@ export function buildModel(modelId: string, keys: LlmKeys, apiKey?: string, temp
       return new ChatOpenAI({
         ...opts,
         // The OpenAI SDK rejects an empty apiKey by reading OPENAI_API_KEY
-        // from env (and throwing when that is unset too).
+        // from env (and throwing when that is unset too). The top-level apiKey
+        // flows into clientConfig — never repeat it inside `configuration`,
+        // whose spread would clobber it with "" and kill keyless providers.
         apiKey: key || (custom ? "not-required" : ""),
-        configuration: { baseURL: gateway.baseURL, apiKey: key || "" },
+        configuration: { baseURL: gateway.baseURL },
       });
     }
   }

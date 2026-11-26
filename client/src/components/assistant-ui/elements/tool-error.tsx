@@ -1,43 +1,24 @@
 "use client";
 
 import type { ComponentProps } from "react";
-import { AlertCircleIcon, Loader2Icon, RotateCwIcon } from "lucide-react";
+import { AlertCircleIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { field, mono, paper } from "./surfaces";
 
+/** A failed tool call in the reasoning feed — the error, stated plainly.
+ *  No Retry/Skip controls: a trace has no live session to re-run a single
+ *  tool against; the run-level Retry on the result page is the real do-over. */
 export function ToolError({
   name,
   target,
   message,
-  attempt,
-  maxAttempts,
-  retrying,
-  onRetry,
-  onSkip,
   className,
   ...props
-}: Omit<
-  ComponentProps<"div">,
-  | "children"
-  | "name"
-  | "target"
-  | "message"
-  | "attempt"
-  | "maxAttempts"
-  | "retrying"
-  | "onRetry"
-  | "onSkip"
-> & {
+}: Omit<ComponentProps<"div">, "children" | "name" | "target" | "message"> & {
   name: string;
   target: string;
   message: string;
-  attempt: number;
-  maxAttempts: number;
-  retrying: boolean;
-  onRetry?: () => void;
-  onSkip?: () => void;
 }) {
-  const exhausted = attempt >= maxAttempts;
   return (
     <div
       data-slot="tool-error"
@@ -59,11 +40,6 @@ export function ToolError({
         <span className="text-foreground/80 min-w-0 flex-1 truncate text-[13px]">
           {target}
         </span>
-        <span
-          className={cn(mono, "text-muted-foreground shrink-0 tabular-nums")}
-        >
-          {attempt}/{maxAttempts}
-        </span>
       </div>
 
       <div
@@ -73,33 +49,6 @@ export function ToolError({
         )}
       >
         {message}
-      </div>
-
-      <div className="flex items-center justify-end gap-2">
-        <button
-          type="button"
-          onClick={onSkip}
-          disabled={!onSkip}
-          className="text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground/90 h-7 rounded-full px-2.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96] disabled:pointer-events-none disabled:opacity-30"
-        >
-          Skip
-        </button>
-        <button
-          type="button"
-          onClick={onRetry}
-          disabled={retrying || exhausted}
-          className={cn(
-            "text-foreground/70 hover:bg-foreground/[0.06] hover:text-foreground/95 flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96] disabled:pointer-events-none",
-            exhausted && "disabled:opacity-30",
-          )}
-        >
-          {retrying ? (
-            <Loader2Icon className="size-3 animate-spin motion-reduce:animate-none" />
-          ) : (
-            <RotateCwIcon className="size-3" />
-          )}
-          {retrying ? "Retrying" : "Retry"}
-        </button>
       </div>
     </div>
   );

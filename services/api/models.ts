@@ -223,7 +223,7 @@ export async function getAvailableModelsForUser(
   const custom = customProviders(llmKeys);
 
   const userProviders = Object.entries(llmKeys)
-    .filter(([k, v]) => k !== "tavily" && k !== CUSTOM_KEY && !!v)
+    .filter(([k, v]) => k !== CUSTOM_KEY && !!v)
     .map(([k]) => k);
   const serverProviders = Object.keys(config.serverKeys).filter((p) => config.serverKeys[p]?.length);
   const allProviders = [...new Set([...serverProviders, ...userProviders, ...custom.map((c) => c.id)])];
