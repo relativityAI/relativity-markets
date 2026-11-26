@@ -39,6 +39,9 @@ services:
   # connects over the network (verified: FastMCP run(transport)).
   yfmcp:
     image: narumi/yfinance-mcp:latest
+    ports:
+      # Local dev (services/.env) reaches it at http://localhost:8003/mcp.
+      - "127.0.0.1:8003:8000"
     entrypoint:
       - python
       - -c

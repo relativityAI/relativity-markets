@@ -138,7 +138,7 @@ relativity
 - Runs in the background — stop with `relativity stop`
 - Pulls the newest app image every run — no `git pull` needed
 - Works in cmd, PowerShell, Git Bash and any Unix shell
-- Dev mode: `npm install && npm run dev` → http://localhost:5173
+- Dev mode: `npm install && npm run dev` → http://localhost:5173. Run `relativity` once for the toolbox it needs (SearXNG + MCP servers); `relativity stop` stops dev and Docker alike.
 
 > **Used the raw Docker options in Install?** The `relativity` command does not exist there. Start with `docker compose up -d`, stop with `docker compose down`.
 

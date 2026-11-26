@@ -1,179 +1,86 @@
-// Company logos for a ticker, hotlinked from AllInvestView's free Ticker
-// Logos CDN (https://cdn.tickerlogos.com/{domain}). The CDN is keyed by
-// website domain, not by symbol, so a symbol is first resolved to its domain
-// through their search API. Logos are never downloaded or stored here — only
-// a URL (or, for the PDF, the bytes of one image) moves around.
+// Company logos for a ticker, hotlinked by symbol from two free APIs —
+// both keyed directly by the ticker, so there is no symbol→domain search,
+// no rate budget and no cache to persist:
+//   India (NSE symbols): https://api.dharun.dev/v1/logos/{SYMBOL}
+//   US / anything else:  https://logoapi.sh/ticker/{TICKER}.svg
 //
-// Their search API is rate-limited to 60 req/min per IP. Everything here is
-// built to stay well inside that on shared infrastructure:
-//   * lookups are serialized and spaced ~1.1s apart (≈54/min ceiling),
-//   * the symbol→domain map is persisted to disk so server restarts (dev
-//     watch reloads included) never re-burn the quota on known symbols,
-//   * transient 429s / quota-exhaustion are NOT cached, so the symbol is
-//     retried once the next budget slot opens.
+// Market routing comes from the saved NSE equity list (discovery.ts): a
+// symbol listed there goes to dharun, everything else to logoapi.sh —
+// which 404s honestly on unknown tickers, so the UI's letter fallback takes
+// over. dharun never 404s: a miss comes back as a blue "NO" placeholder
+// square, so its SVG is fetched once and that known placeholder is treated
+// as a miss too (no "NO" square in the UI or the PDF report).
 //
-// Attribution: their terms require a visible dofollow link on every page that
-// shows a logo — see client/src/components/Footer.tsx and the analysis pages.
+// Logos are never downloaded or stored here — only a URL (or, for the PDF,
+// the bytes of one image) moves around. Both APIs serve a .png variant,
+// which is what the PDF path uses (PDFKit cannot embed SVG).
 
-import path from "node:path";
-import fs from "node:fs";
-import { config } from "./config.js";
+import { isNseSymbol } from "./discovery.js";
 
-const CDN = "https://cdn.tickerlogos.com";
-const SEARCH = "https://www.allinvestview.com/api/logo-search/";
-const MISS_TTL_MS = 10 * 60 * 1000;
+const IN = "https://api.dharun.dev/v1/logos";
+const US = "https://logoapi.sh/ticker";
 
-// ── Request pacing ────────────────────────────────────────────────────────
-// Search budget: one request per slot; slots open at least 1.1s apart so the
-// worst case is ~54 req/min, under the 60/min limit. A lookup that would have
-// to wait longer than this bails out (renders the letter fallback) rather
-// than pile onto the queue.
-const SLOT_GAP_MS = Number(process.env.TICKER_LOGOS_SLOT_GAP_MS) || 1100;
-const WAIT_BUDGET_MS = 30_000;
-let nextSlotAt = 0;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// dharun's "not found" payload: an 18×18 blue square with <text>NO</text>.
+const NOT_FOUND = /<text[^>]*>NO<\/text>/;
 
-async function waitForSlot(): Promise<boolean> {
-  for (;;) {
-    const waitMs = nextSlotAt - Date.now();
-    if (waitMs <= 0) return true;
-    if (waitMs > WAIT_BUDGET_MS) return false;
-    await sleep(Math.min(waitMs, 250));
-  }
+type Paths = { svg: string; png: string; ind: boolean };
+
+function resolve(symbol?: string): Paths | null {
+  // Tolerate Yahoo-style suffixes; both APIs want the bare symbol.
+  const key = String(symbol || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\.(NS|BO)$/, "");
+  if (!key) return null;
+  const enc = encodeURIComponent(key);
+  return isNseSymbol(key)
+    ? { svg: `${IN}/${enc}`, png: `${IN}/${enc}.png`, ind: true }
+    : { svg: `${US}/${enc}.svg`, png: `${US}/${enc}.png`, ind: false };
 }
 
-// ── Symbol → domain map, persisted to disk ────────────────────────────────
-// Hits live forever; misses expire after MISS_TTL_MS so a not-yet-listed
-// company eventually gets another chance. In-memory map is the source of
-// truth; the file is a restart-proof mirror written on a 2s debounce.
-type Entry = { url: string | null; at: number };
-const cache = new Map<string, Entry>();
-const CACHE_FILE =
-  process.env.TICKER_LOGOS_CACHE_FILE ||
-  path.join(config.assetsDir, "..", ".cache", "ticker-domains.json");
-
-function loadCache() {
+async function get(url: string): Promise<Response | null> {
   try {
-    const raw = JSON.parse(fs.readFileSync(CACHE_FILE, "utf8")) as Record<string, Entry>;
-    const now = Date.now();
-    for (const [sym, e] of Object.entries(raw)) {
-      if (e?.url || now - e.at < MISS_TTL_MS) cache.set(sym.toUpperCase(), e);
-    }
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    return res.ok ? res : null;
   } catch {
-    /* no file yet / unreadable — start empty, still works this run */
+    return null; // offline/timeout/404 — retried on the next lookup
   }
 }
-loadCache();
 
-let saveTimer: NodeJS.Timeout | undefined;
-function scheduleSave() {
-  if (saveTimer) return;
-  saveTimer = setTimeout(() => {
-    saveTimer = undefined;
-    try {
-      const now = Date.now();
-      const fresh = [...cache].filter(([, e]) => e.url || now - e.at < MISS_TTL_MS);
-      fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
-      fs.writeFileSync(CACHE_FILE, JSON.stringify(Object.fromEntries(fresh)));
-    } catch {
-      /* read-only fs (prod container) — in-memory cache still guards */
-    }
-  }, 2000);
-}
-
-function cached(symbol: string): string | null | undefined {
-  const hit = cache.get(symbol);
-  if (!hit) return undefined;
-  if (hit.url || Date.now() - hit.at < MISS_TTL_MS) return hit.url;
-  return undefined;
-}
-
-// ── Resolver ──────────────────────────────────────────────────────────────
-function normalizeDomain(raw: unknown): string | null {
-  const s = String(raw || "").trim();
-  if (!s) return null;
-  let host = "";
+/**
+ * Logo URL for a ticker, or null when the sources have none.
+ *
+ * US symbols are returned unverified — logoapi.sh 404s on its own and the
+ * redirect passes that straight to the <img>, which falls back to its
+ * letter avatar. dharun can't signal a miss, so its SVG is checked once
+ * here; the response itself is browser-cached for a day by the route.
+ */
+export async function tickerLogoUrl(symbol?: string): Promise<string | null> {
+  const p = resolve(symbol);
+  if (!p) return null;
+  if (!p.ind) return p.svg;
+  const res = await get(p.svg);
+  if (!res) return null;
+  const type = String(res.headers.get("content-type") || "");
+  if (!type.startsWith("image/svg")) return null;
   try {
-    host = new URL(s.includes("://") ? s : `https://${s}`).hostname.toLowerCase();
+    const body = await res.text();
+    return NOT_FOUND.test(body) ? null : p.svg;
   } catch {
     return null;
   }
-  host = host.replace(/^www\./, "");
-  return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host) ? host : null;
 }
 
-// Exact symbol match, or an Indian twin. Many NSE tickers come back only as a
-// fuzzy match (ADOR → ADORWELD.NS) or under their BSE code; when nothing exact
-// matches, prefer an Indian listing rather than leaving a letter fallback.
-// A loose US match is still avoided (TCS → The Container Store).
-function pick(results: any[], symbol: string): string | null {
-  const want = [symbol, `${symbol}.NS`, `${symbol}.BO`];
-  const exact = results.find((r) => want.includes(String(r?.symbol || "").toUpperCase()));
-  if (exact?.website) return normalizeDomain(exact.website);
-  const indian = results.find((r) =>
-    ["NSI", "BSE"].includes(String(r?.exchange || "").toUpperCase()) &&
-    String(r?.symbol || "").toUpperCase().startsWith(symbol));
-  return normalizeDomain(indian?.website);
-}
-
-// One live search at a time, spaced ≥ SLOT_GAP_MS (see header).
-let tail: Promise<unknown> = Promise.resolve();
-const inflight = new Map<string, Promise<string | null>>();
-
-async function search(symbol: string): Promise<string | null> {
-  if (!(await waitForSlot())) return null; // too deep behind the queue — don't cache
-  try {
-    const res = await fetch(`${SEARCH}?q=${encodeURIComponent(symbol)}`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (res.status === 429) {
-      // Rate-limited upstream: back off for a minute, retry the symbol later.
-      nextSlotAt = Date.now() + 60_000;
-      return null;
-    }
-    if (!res.ok) return null; // server error — retried on its next lookup
-    const data = await res.json();
-    const domain = pick(Array.isArray(data?.results) ? data.results : [], symbol);
-    // Cache hits forever and clean misses (10-min TTL); transient failures
-    // above are returned before here so they stay eligible for retry.
-    const url = domain ? `${CDN}/${domain}` : null;
-    cache.set(symbol, { url, at: Date.now() });
-    scheduleSave();
-    return url;
-  } catch {
-    return null; // offline/timeout — not cached, retried next time
-  }
-}
-
-/** CDN url for a ticker's logo, or null when the CDN has none. */
-export function tickerLogoUrl(symbol?: string): Promise<string | null> {
-  const key = String(symbol || "").trim().toUpperCase();
-  if (!key) return Promise.resolve(null);
-  const hit = cached(key);
-  if (hit !== undefined) return Promise.resolve(hit);
-  let p = inflight.get(key);
-  if (!p) {
-    // Serialize resolutions; drop a lookup already queued behind a long line.
-    const run = tail.then(() => search(key));
-    tail = run.catch(() => undefined);
-    p = run;
-    inflight.set(key, p);
-    p.then(
-      () => inflight.delete(key),
-      () => inflight.delete(key)
-    );
-  }
-  return p;
-}
-
-/** The logo as a data URI, for embedding in the PDF. */
+/** The logo as a data URI (the .png variant), for embedding in the PDF. */
 export async function tickerLogoDataUri(symbol?: string): Promise<string | null> {
-  const url = await tickerLogoUrl(symbol);
-  if (!url) return null;
+  const p = resolve(symbol);
+  if (!p) return null;
+  if (p.ind && !(await tickerLogoUrl(symbol))) return null; // placeholder = miss
+  const res = await get(p.png);
+  if (!res) return null;
+  const type = String(res.headers.get("content-type") || "");
+  if (!type.startsWith("image/")) return null;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-    const type = String(res.headers.get("content-type") || "");
-    if (!res.ok || !type.startsWith("image/")) return null;
     const buf = Buffer.from(await res.arrayBuffer());
     return `data:${type};base64,${buf.toString("base64")}`;
   } catch {
