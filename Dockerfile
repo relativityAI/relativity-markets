@@ -11,6 +11,8 @@
 FROM --platform=$BUILDPLATFORM node:22-alpine AS client
 WORKDIR /src/client
 COPY client/package*.json ./
+# npm 10's strict peer resolver crashes ("edgesOut") without the repo .npmrc.
+COPY .npmrc ./
 RUN --mount=type=cache,target=/root/.npm npm ci
 COPY client/ ./
 RUN npm run build
@@ -18,6 +20,7 @@ RUN npm run build
 FROM --platform=$BUILDPLATFORM node:22-alpine AS api
 WORKDIR /src/services
 COPY services/package*.json ./
+COPY .npmrc ./
 RUN --mount=type=cache,target=/root/.npm npm ci
 COPY services/ ./
 RUN npm run build
@@ -33,6 +36,7 @@ COPY --from=api /src/services/assets ./assets
 COPY --from=api /src/services/harness/assets ./harness/assets
 COPY --from=api /src/services/harness/agent-defaults ./harness/agent-defaults
 COPY services/package*.json ./
+COPY .npmrc ./
 RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
 # Container cwd is /app, so the client build sits one level *down* (dev runs
 # from services/ and uses the ../client/dist default instead).
