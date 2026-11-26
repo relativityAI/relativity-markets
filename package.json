@@ -19,6 +19,7 @@
     "node": ">=22.13"
   },
   "dependencies": {
+    "@langchain/core": "^1.5.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },
