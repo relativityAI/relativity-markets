@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.17.0...relativity-markets-v0.17.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* **deps:** hoist @langchain/langgraph to the workspace root too ([74ad744](https://github.com/relativityAI/relativity-markets/commit/74ad74449453351cb09bc02e9e685d924a3e562b))
+
 ## [0.17.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.16.1...relativity-markets-v0.17.0) (2026-11-26)
 
 
