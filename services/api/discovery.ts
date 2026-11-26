@@ -82,6 +82,14 @@ function sources(): Record<string, string>[] {
   return sourceRows;
 }
 
+let nseSymbols: Set<string> | null = null;
+
+/** True when the bare symbol is listed on the NSE (India) equity list. */
+export function isNseSymbol(symbol: string): boolean {
+  if (!nseSymbols) nseSymbols = new Set(nse().map((r) => (r.SYMBOL || r.ticker || "").toUpperCase()));
+  return nseSymbols.has(String(symbol || "").trim().toUpperCase());
+}
+
 export function getSources(): { SYMBOL: string; NAME: string }[] {
   return sources().map((r) => ({
     SYMBOL: r.SYMBOL || r.ticker || "",

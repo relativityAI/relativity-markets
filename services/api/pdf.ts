@@ -1353,7 +1353,7 @@ export async function buildReportPdf(run: any): Promise<Buffer> {
     : run.agent_name || "";
   const tokensLine = tokensMeta(run);
   const traceCount = Array.isArray(run.trace) ? run.trace.length : 0;
-  // Subject's own logo, hotlinked from the Ticker Logos CDN — never stored.
+  // Subject's own logo, hotlinked from the free logo APIs — never stored.
   // A miss just means the title renders without it.
   const tickerLogo = await tickerLogoDataUri(run.symbol);
 

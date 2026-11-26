@@ -10,6 +10,7 @@
     "start": "node --disable-warning=ExperimentalWarning dist/api/index.js",
     "test": "vitest run --passWithNoTests",
     "cli": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx harness/cli.ts",
+    "refresh:tickers": "tsx scripts/refresh-tickers.ts",
     "export-legacy-store": "tsx scripts/export-legacy-store.ts",
     "smoke:mcp": "tsx scripts/mcp-smoke.ts",
     "searxng": "docker compose -f ../docker-compose.yml up -d searxng",
