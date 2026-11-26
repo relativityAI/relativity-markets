@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.1](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.16.0...relativity-markets-v0.16.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* **ci:** pin test clock, ship .npmrc to docker, point dependabot at workspace root ([fe7cc39](https://github.com/relativityAI/relativity-markets/commit/fe7cc39530ed4da6043fd34e8c3a6e612137c7c4))
+
 ## [0.16.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.15.0...relativity-markets-v0.16.0) (2026-11-25)
 
 
