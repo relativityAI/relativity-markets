@@ -32,6 +32,10 @@ describe("custom OpenAI-compatible providers", () => {
   it("routes to the declared base URL, not the built-in gateway map", () => {
     const model = buildModel("myprov/llama3.2", keys(["llama3.2"])) as any;
     expect(model.lc_kwargs?.configuration?.baseURL).toContain("localhost:11434");
+    // Keyless providers must not hand the OpenAI client an empty apiKey —
+    // configuration.apiKey spreads over the top-level "not-required" and
+    // the client then dies with "Missing credentials" on first invoke.
+    expect(model.lc_kwargs?.configuration?.apiKey).toBeUndefined();
     // An unknown id still falls through to the fixed gateway map and dies there.
     expect(() => buildModel("nope/test", { ...keys([]), nope: "k" } as unknown as LlmKeys)).toThrow(/Unknown model provider/);
     expect(() => buildModel("nope/test", keys([]))).toThrow(/No API key configured/);

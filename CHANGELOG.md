@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.15.0...relativity-markets-v0.16.0) (2026-11-25)
+
+
+### Features
+
+* local Ollama providers end-to-end, MCP status, drop Tavily ([#217](https://github.com/relativityAI/relativity-markets/issues/217)) ([c6fcd30](https://github.com/relativityAI/relativity-markets/commit/c6fcd308bb95c8954f10f54cfa36728db1233586))
+
 ## [0.15.0](https://github.com/relativityAI/relativity-markets/compare/relativity-markets-v0.14.0...relativity-markets-v0.15.0) (2026-11-24)
 
 

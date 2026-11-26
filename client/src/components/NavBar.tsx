@@ -4,18 +4,24 @@ import { Search, Moon, Sun, Check, TriangleAlert, ArrowRight, Settings as Settin
 import { useAuth } from "@/auth/useAuth";
 import { useColorMode } from "@/components/ui/color-mode";
 import AlertBell from "@/components/AlertBell";
-import { AnalysisService, API_BASE, PluginService, SettingsService, type PluginSummary } from "@/db";
+import { AnalysisService, API_BASE, PluginService, type PluginSummary } from "@/db";
 import { FlagLogo, TickerLogo } from "@/lib/sourceLogos";
+import { MCP_LOGOS } from "@/lib/mcp";
 import { cn } from "@/lib/utils";
-import searxngLogo from "@/assets/searxng.svg";
-import yahooLogo from "@/assets/yahoo_finance.png";
-import tavilyLogo from "@/assets/tavily-color.svg";
-import tradingviewLogo from "@/assets/tradingview.svg";
 
-// Navbar data-source chips. SearXNG/Yahoo/TradingView status comes from GET
-// /health/sources — a real probe per source, cached server-side for a minute.
-// Tavily is optional; connected = the user's Tavily API key is set.
-type SourceStatus = { ok?: boolean; href?: string };
+// Navbar data-source chips — rendered from GET /health/sources, which the
+// server derives from harness config (one probe per configured MCP server,
+// cached a minute; key-gated sources are skipped there).
+type SourceStatus = { ok?: boolean; href?: string; label?: string };
+
+// Logos are chrome, keyed by server name (shared with the Settings cards);
+// unknown servers get an initial.
+// Stable chip order regardless of fetch/merge order.
+const CHIP_ORDER = ["searxng", "tradingview", "yfinance"];
+const chipRank = (id: string) => {
+  const i = CHIP_ORDER.indexOf(id);
+  return i === -1 ? 99 : i;
+};
 
 type StockRow = {
   ticker?: string;
@@ -31,44 +37,26 @@ export default function NavBar() {
   const navigate = useNavigate();
   const [sources, setSources] = useState<Record<string, SourceStatus>>({});
 
-  const dataSources = useMemo<{ id: string; name: string; img: string }[]>(
-    () => [
-      { id: "searxng", name: "SearXNG", img: searxngLogo },
-      { id: "tradingview", name: "TradingView", img: tradingviewLogo },
-      { id: "tavily", name: "Tavily", img: tavilyLogo },
-      { id: "yahoo", name: "Yahoo Finance (yfinance MCP)", img: yahooLogo },
-    ],
-    [],
+  const dataSources = useMemo<{ id: string; name: string; img?: string }[]>(
+    () =>
+      Object.entries(sources)
+        .sort(([a], [b]) => chipRank(a) - chipRank(b))
+        .map(([id, s]) => ({ id, name: s.label ?? id, img: MCP_LOGOS[id] })),
+    [sources],
   );
 
   useEffect(() => {
     let alive = true;
-    // Tavily chip: connected iff the user's API key is set (not a live probe).
-    // Default to not-connected; only the settings response can flip it on.
-    setSources((prev) => ({ ...prev, tavily: { ok: false, href: "https://app.tavily.com" } }));
     fetch(`${API_BASE}/health/sources`)
       .then((r) => r.json())
       .then((d) => {
-        // Merge, don't replace: the probe payload has no tavily entry and
-        // clobbering the map here reset the chip to its ambiguous "checking" look.
-        if (alive && d?.sources) setSources((prev) => ({ ...prev, ...d.sources }));
+        if (alive && d?.sources) setSources(d.sources);
       })
       .catch(() => {});
-    if (user) {
-      SettingsService.getSettings()
-        .then((d) => {
-          if (alive)
-            setSources((prev) => ({
-              ...prev,
-              tavily: { ok: !!d?.llm_keys?.tavily, href: "https://app.tavily.com" },
-            }));
-        })
-        .catch(() => {});
-    }
     return () => {
       alive = false;
     };
-  }, [user]);
+  }, []);
 
   // Global search — stocks, plugins and runs in one listbox; ⌘K/Ctrl-K
   // focuses it from anywhere. 300ms debounce: stocks stream from
@@ -335,17 +323,27 @@ export default function NavBar() {
                 );
                 const inner = (
                   <>
-                    <img
-                      src={s.img}
-                      alt=""
-                      aria-hidden="true"
-                      className={cn(
-                        "h-full w-full object-contain",
-                        down && "grayscale opacity-40",
-                        // The TradingView SVG is solid black — invert on dark so it stays visible.
-                        s.id === "tradingview" && colorMode === "dark" && "invert",
-                      )}
-                    />
+                    {s.img ? (
+                      <img
+                        src={s.img}
+                        alt=""
+                        aria-hidden="true"
+                        className={cn(
+                          "h-full w-full object-contain",
+                          down && "grayscale opacity-40",
+                          // The TradingView SVG is solid black — invert on dark so it stays visible.
+                          s.id === "tradingview" && colorMode === "dark" && "invert",
+                        )}
+                      />
+                    ) : (
+                      // No logo for this server name — an honest initial beats a broken img.
+                      <span
+                        aria-hidden="true"
+                        className="flex h-full w-full items-center justify-center font-[family-name:var(--font-body)] text-[10px] font-medium text-[var(--ink-secondary)]"
+                      >
+                        {s.name.slice(0, 1).toUpperCase()}
+                      </span>
+                    )}
                     {/* Reveal on hover, keyboard focus and press (touch never
                         fires :hover on iOS, so the tap has to work too). */}
                     <span className="pointer-events-none invisible absolute left-1/2 top-full z-40 mt-1.5 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-[4px] border border-[var(--hairline)] bg-[var(--surface-canvas)] px-2 py-1 font-[family-name:var(--font-body)] text-xs text-[var(--ink-primary)] opacity-0 shadow-[0_8px_24px_rgba(0,0,0,0.12)] transition-all duration-150 group-hover/src:delay-300 group-hover/src:visible group-hover/src:opacity-100 group-focus-within/src:visible group-focus-within/src:opacity-100 group-focus-within/src:delay-0 group-active/src:visible group-active/src:opacity-100">

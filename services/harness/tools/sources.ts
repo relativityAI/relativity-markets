@@ -6,9 +6,9 @@
  *   mcp: [ {name, url|urlEnv, allow, keyFrom, required} ]
  *
  * `keyFrom` binds a per-run credential into the connection's Authorization
- * header (e.g. the user's Tavily key) — never into the url or this config
- * file. When keyFrom is set and the run has no such key, the source is
- * skipped instead of connected keyless.
+ * header (e.g. a custom server's API key) — never into the url or this
+ * config file. When keyFrom is set and the run has no such key, the source
+ * is skipped instead of connected keyless.
  *
  * URLs stay in env: the config holds the env var NAME (urlEnv), not the url.
  * All transports are streamable HTTP — compose overrides stdio entrypoints
@@ -31,11 +31,8 @@ export const McpSourceSchema = z
     urlEnv: z.string().min(1).optional(),
     /** Server tool names to expose (null/absent = all). */
     allow: z.array(z.string()).nullable().optional(),
-    /** Run-context key (e.g. "tavily") → Authorization: Bearer <key> header. */
+    /** Run-context key → Authorization: Bearer <key> header. */
     keyFrom: z.string().min(1).optional(),
-    /** Web-search provider this source belongs to ("searxng" | "tavily");
-     *  the source only connects when the run's provider matches. */
-    webProvider: z.enum(["searxng", "tavily"]).optional(),
     /** true → logged loudly when unreachable; the run proceeds without it. */
     required: z.boolean().optional(),
   })
@@ -52,12 +49,11 @@ export type ToolSourcesConfig = z.infer<typeof ToolSourcesSchema>;
 export interface RunToolContext {
   symbol: string;
   source: string;
-  tavilyKey?: string;
-  /** Which web-search source set to connect: "searxng" (default) | "tavily". */
-  webSearchProvider?: "searxng" | "tavily";
   /** Per-run MCP allowlist (server names). Absent = every configured source
    *  connects (CLI/back-compat); a list = only those names are considered. */
   mcpEnabled?: string[];
+  /** keyFrom credentials are spread in as extra fields (e.g. mcpkey_notes). */
+  [key: string]: unknown;
 }
 
 export interface RunTools {
@@ -111,7 +107,6 @@ export async function buildRunTools(
     // Per-run toggle: a disabled server never connects — explicitly disabled
     // beats the config's `required` flag (the user chose to turn it off).
     if (ctx.mcpEnabled && !ctx.mcpEnabled.includes(entry.name)) continue;
-    if (entry.webProvider && entry.webProvider !== (ctx.webSearchProvider ?? "searxng")) continue;
     const url = entry.url ?? env[entry.urlEnv ?? ""];
     const required = entry.required ?? true;
     if (!url) {

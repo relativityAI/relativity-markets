@@ -4,17 +4,20 @@ import { Check, X, Trash2, Plus, Pencil, Wrench, ChevronRight, Search } from "lu
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button as UIButton } from "@/components/ui/button";
 import { toaster } from "@/components/ui/toaster";
-import { PluginService, type McpSource } from "@/db";
+import { PluginService, SettingsService, type McpSource } from "@/db";
+import { mcpServerState, MCP_STATE_DOT, MCP_STATE_LABEL, MCP_LOGOS } from "@/lib/mcp";
+import { useColorMode } from "@/components/ui/color-mode";
 import { motion } from "motion/react";
 import { dur, ease } from "@/lib/motion";
 
 /** One entry of prefs.mcp_servers: a preconfigured server's on/off state,
- *  or a user-added remote server (custom + url). */
+ *  or a user-added remote server (custom + url + optional key name). */
 interface McpPref {
     name: string;
     url?: string;
     enabled?: boolean;
     custom?: boolean;
+    keyName?: string;
 }
 
 function parseMcpPrefs(prefs: Record<string, string>): McpPref[] {
@@ -27,9 +30,10 @@ function parseMcpPrefs(prefs: Record<string, string>): McpPref[] {
 }
 
 /**
- * Add/edit a remote MCP server - the custom-connector form: name + url only,
- * validated the way custom providers are (http(s), unique, no shadowing a
- * preconfigured server).
+ * Add/edit a remote MCP server - the custom-connector form: name, url and
+ * an optional API key (sent as the standard static `Authorization: Bearer`
+ * credential), validated the way custom providers are (http(s), unique, no
+ * shadowing a preconfigured server).
  */
 function McpServerDialog({
     open, onOpenChange, initial, existing, onSave, onDelete,
@@ -39,18 +43,22 @@ function McpServerDialog({
     /** Server being edited, or null to add one. */
     initial: McpSource | null;
     existing: string[];
-    onSave: (name: string, url: string) => Promise<void>;
+    onSave: (name: string, url: string, key: string) => Promise<void>;
     onDelete: (name: string) => Promise<void>;
 }) {
     const [name, setName] = useState(initial?.name || "");
     const [url, setUrl] = useState(initial?.url || "");
+    const [apiKey, setApiKey] = useState("");
     const [busy, setBusy] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState(false);
+    const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
     const reset = () => {
         setName(initial?.name || "");
         setUrl(initial?.url || "");
+        setApiKey("");
         setConfirmDelete(false);
+        setTestResult(null);
     };
     const close = () => {
         reset();
@@ -73,8 +81,34 @@ function McpServerDialog({
         if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return fail("URL must be http:// or https://");
         setBusy(true);
         try {
-            await onSave(id, target);
+            await onSave(id, target, apiKey.trim());
             close();
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    /** One fresh probe of the url being saved — same validation, honest result. */
+    const runTest = async () => {
+        const target = url.trim();
+        try {
+            const parsed = new URL(target);
+            if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return fail("URL must be http:// or https://");
+        } catch {
+            return fail("URL must be a full URL, e.g. https://example.com/mcp");
+        }
+        setTestResult(null);
+        setBusy(true);
+        try {
+            const r = await PluginService.testMcpSource(target, apiKey.trim() || undefined);
+            setTestResult(
+                r.status === "up"
+                    ? { ok: true, msg: `Connected — ${r.tools.length} tool${r.tools.length === 1 ? "" : "s"}` }
+                    : { ok: false, msg: r.error || "Connection failed" },
+            );
+        } catch (e) {
+            const err = e as { response?: { data?: { error?: string } }; message?: string };
+            setTestResult({ ok: false, msg: err?.response?.data?.error || err?.message || "Connection failed" });
         } finally {
             setBusy(false);
         }
@@ -148,6 +182,40 @@ function McpServerDialog({
                             <span className="text-[11.5px] text-console-ink-4">
                                 Streamable HTTP endpoint - http:// or https://.
                             </span>
+                            <div className="flex items-center gap-2">
+                                <UIButton size="sm" variant="ghost" onClick={runTest} disabled={busy || !url.trim()}>
+                                    Test connection
+                                </UIButton>
+                            </div>
+                            {/* Own line, wraps anywhere: a nowrap result would
+                                inflate the dialog's intrinsic width and spill
+                                out of it (min-w-0 can't help — width here is
+                                content-derived, not definite). */}
+                            {testResult && (
+                                <p
+                                    className="text-[11.5px] [overflow-wrap:anywhere]"
+                                    style={{ color: testResult.ok ? "var(--signal-positive)" : "var(--signal-negative)" }}
+                                    role={testResult.ok ? undefined : "alert"}
+                                >
+                                    {testResult.msg}
+                                </p>
+                            )}
+                        </div>
+
+                        <div className="flex flex-col gap-1.5">
+                            <label className={legend} htmlFor="mcp-key">API key (optional)</label>
+                            <input
+                                id="mcp-key"
+                                type="password"
+                                value={apiKey}
+                                onChange={(e) => setApiKey(e.target.value)}
+                                placeholder={initial?.hasKey ? "Key saved — type to replace" : "Bearer token, if the server needs one"}
+                                autoComplete="off"
+                                className={field}
+                            />
+                            <span className="text-[11.5px] text-console-ink-4">
+                                Sent as Authorization: Bearer — leave blank for open servers.
+                            </span>
                         </div>
 
                         <div className="flex items-center gap-2">
@@ -192,11 +260,14 @@ export function McpPanel({ prefs, savePrefs }: {
     const [dlg, setDlg] = useState<{ open: boolean; initial: McpSource | null }>({ open: false, initial: null });
     /** Tool lists start collapsed — a 15-tool server would drown the card. */
     const [openTools, setOpenTools] = useState<Record<string, boolean>>({});
+    /** Per-server key drafts (blank = nothing typed). */
+    const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
+    const { colorMode } = useColorMode();
 
-    const load = useCallback(() => {
-        PluginService.mcpSources()
-            .then((list) => {
-                setServers(list);
+    const load = useCallback((refresh = false) => {
+        PluginService.mcpSources(refresh)
+            .then((c) => {
+                setServers(c.servers);
                 setFailed(false);
             })
             .catch(() => {
@@ -229,12 +300,32 @@ export function McpPanel({ prefs, savePrefs }: {
         );
     };
 
-    const saveCustom = async (initial: McpSource | null, name: string, url: string) => {
+    /** Store/remove a server's API key in llm_keys (encrypted at rest),
+     *  then re-probe with a cache bust — the new key changes the status. */
+    const persistKey = async (keyName: string, key: string | null) => {
+        try {
+            if (key) await SettingsService.updateSettings({ llm_keys: { [keyName]: key } });
+            else await SettingsService.deleteLLMKey(keyName);
+            load(true);
+        } catch {
+            toaster.create({ title: key ? "Key not saved" : "Key not removed", type: "error" });
+        }
+    };
+
+    const removeKey = async (s: McpSource) => {
+        if (!s.keyName) return;
+        await persistKey(s.keyName, null);
+    };
+
+    const saveCustom = async (initial: McpSource | null, name: string, url: string, key: string) => {
         const before = parseMcpPrefs(prefs);
         const kept = initial ? before.filter((e) => e.name !== initial.name) : before;
         const was = before.find((e) => e.name === name);
-        kept.push({ name, url, custom: true, enabled: was?.enabled ?? initial?.enabled ?? true });
+        // keyName is minted once and survives renames — llm_keys hold the secret.
+        const keyName = was?.keyName ?? initial?.keyName ?? `mcpkey_${name}`;
+        kept.push({ name, url, custom: true, enabled: was?.enabled ?? initial?.enabled ?? true, keyName });
         await write(kept);
+        if (key) await persistKey(keyName, key);
     };
 
     const removeCustom = async (name: string) => {
@@ -297,7 +388,7 @@ export function McpPanel({ prefs, savePrefs }: {
                     </span>
                     <button
                         type="button"
-                        onClick={load}
+                        onClick={() => load(true)}
                         className="font-app-body ml-auto cursor-pointer text-[13px] font-light text-[var(--ink-primary)] underline underline-offset-2"
                     >
                         Retry
@@ -316,13 +407,30 @@ export function McpPanel({ prefs, savePrefs }: {
 
             {visible.length > 0 && (
                 <div className="flex flex-col gap-3">
-                    {visible.map((s) => (
+                    {visible.map((s) => {
+                        const state = mcpServerState(s);
+                        return (
                         <div key={s.name} className="rounded-[8px] border border-[var(--hairline)] px-4 py-3.5">
                             <div className="flex items-center gap-2.5">
+                                {MCP_LOGOS[s.name] ? (
+                                    <img
+                                        src={MCP_LOGOS[s.name]}
+                                        alt=""
+                                        aria-hidden="true"
+                                        className={`size-5 shrink-0 object-contain${s.name === "tradingview" && colorMode === "dark" ? " invert" : ""}`}
+                                    />
+                                ) : (
+                                    <span
+                                        aria-hidden="true"
+                                        className="flex size-5 shrink-0 items-center justify-center rounded-full border border-[var(--hairline)] font-app-body text-[10px] text-[var(--ink-tertiary)]"
+                                    >
+                                        {s.name.slice(0, 1).toUpperCase()}
+                                    </span>
+                                )}
                                 <span
                                     aria-hidden
                                     className="size-2 shrink-0 rounded-full"
-                                    style={{ background: s.enabled ? "var(--signal-positive)" : "var(--ink-tertiary)" }}
+                                    style={{ background: MCP_STATE_DOT[state] }}
                                 />
                                 <span className="truncate font-app-body text-[14.5px] font-light text-[var(--ink-primary)]">
                                     {s.name}
@@ -330,8 +438,20 @@ export function McpPanel({ prefs, savePrefs }: {
                                 <span className="shrink-0 rounded-full border border-[var(--hairline)] px-1.5 py-px font-app-body text-[10px] leading-[1.4] text-[var(--ink-tertiary)]">
                                     {s.custom ? "Custom" : "Preconfigured"}
                                 </span>
+                                <span className="shrink-0 font-app-body text-[11px] font-light" style={{ color: MCP_STATE_DOT[state] }}>
+                                    {MCP_STATE_LABEL[state]}
+                                </span>
 
                                 <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                                    {state === "down" && (
+                                        <button
+                                            type="button"
+                                            onClick={() => load(true)}
+                                            className="rounded-[6px] px-2 py-1 font-app-body text-[12.5px] text-[var(--ink-tertiary)] transition-colors hover:bg-[var(--surface-recessed)] hover:text-[var(--ink-primary)]"
+                                        >
+                                            Retry
+                                        </button>
+                                    )}
                                     <button
                                         type="button"
                                         role="switch"
@@ -339,10 +459,12 @@ export function McpPanel({ prefs, savePrefs }: {
                                         aria-label={`${s.enabled ? "Disable" : "Enable"} ${s.name}`}
                                         onClick={() => toggle(s)}
                                         className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 font-app-body text-[12.5px] transition-colors hover:bg-[var(--surface-recessed)]"
-                                        style={{ color: s.enabled ? "var(--signal-positive)" : "var(--ink-tertiary)" }}
+                                        // Icon + state color only: the words live in
+                                        // the state label, so a not-connected server
+                                        // never claims "Enabled" next to "Needs key".
+                                        style={{ color: MCP_STATE_DOT[state] }}
                                     >
                                         {s.enabled ? <Check size={13} /> : <X size={13} />}
-                                        {s.enabled ? "Enabled" : "Disabled"}
                                     </button>
                                     {s.custom && (
                                         <>
@@ -404,8 +526,56 @@ export function McpPanel({ prefs, savePrefs }: {
                                     {s.url || (s.urlEnv ? `$${s.urlEnv}` : "-")}
                                 </span>
                             </div>
+
+                            {s.keyName && (
+                                <div className="mt-3 flex flex-wrap items-center gap-2 text-[11.5px]">
+                                    <span className="shrink-0 tracking-[0.08em] uppercase text-[var(--ink-tertiary)]">API key</span>
+                                    <input
+                                        type="password"
+                                        aria-label={`API key for ${s.name}`}
+                                        value={keyDrafts[s.name] ?? ""}
+                                        onChange={(e) => setKeyDrafts((prev) => ({ ...prev, [s.name]: e.target.value }))}
+                                        placeholder={s.hasKey ? "Saved — type to replace" : "Enter key"}
+                                        autoComplete="off"
+                                        className="h-7 w-[190px] min-w-0 rounded-[6px] border-[0.5px] border-[color:var(--hairline)] bg-transparent px-2 text-[12.5px] text-[var(--ink-primary)] shadow-none placeholder:text-[var(--ink-tertiary)] focus-visible:ring-1 focus-visible:ring-console-accent/40"
+                                    />
+                                    <button
+                                        type="button"
+                                        disabled={!(keyDrafts[s.name] ?? "").trim()}
+                                        onClick={async () => {
+                                            const v = (keyDrafts[s.name] ?? "").trim();
+                                            if (!v || !s.keyName) return;
+                                            await persistKey(s.keyName, v);
+                                            setKeyDrafts((prev) => {
+                                                const next = { ...prev };
+                                                delete next[s.name];
+                                                return next;
+                                            });
+                                        }}
+                                        className="rounded-[6px] px-2 py-1 font-app-body text-[12.5px] text-[var(--ink-primary)] transition-colors hover:bg-[var(--surface-recessed)] disabled:cursor-default disabled:text-[var(--ink-tertiary)] disabled:opacity-60"
+                                    >
+                                        Save
+                                    </button>
+                                    {s.hasKey && (
+                                        <button
+                                            type="button"
+                                            onClick={() => removeKey(s)}
+                                            className="rounded-[6px] px-2 py-1 font-app-body text-[12.5px] text-[var(--ink-tertiary)] transition-colors hover:bg-[var(--surface-recessed)] hover:text-[var(--signal-negative)]"
+                                        >
+                                            Remove
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+
+                            {s.error && state !== "active" && state !== "disabled" && (
+                                <div className="mt-2 font-app-mono text-[11.5px] [overflow-wrap:anywhere]" style={{ color: MCP_STATE_DOT[state] }}>
+                                    {s.error}
+                                </div>
+                            )}
                         </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
 
@@ -415,7 +585,7 @@ export function McpPanel({ prefs, savePrefs }: {
                 onOpenChange={(o) => setDlg((s) => ({ ...s, open: o }))}
                 initial={dlg.initial}
                 existing={(servers ?? []).map((s) => s.name)}
-                onSave={(name, url) => saveCustom(dlg.initial, name, url)}
+                onSave={(name, url, key) => saveCustom(dlg.initial, name, url, key)}
                 onDelete={removeCustom}
             />
         </Box>

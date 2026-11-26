@@ -18,8 +18,8 @@ export default function ApiKeySetupDialog({ user }: { user: any }) {
   useEffect(() => {
     if (!user || dismissed) return;
 
-    // Check if keys are set — LLM key is the only hard requirement;
-    // web search works without Tavily (SearXNG), Tavily is an upgrade.
+    // Check if keys are set — the LLM key is the only hard requirement;
+    // web search runs on local SearXNG and needs no key.
     SettingsService.getSettings()
       .then((settings) => {
         const missing = !hasRequiredKeys(settings).hasLlm;
@@ -58,7 +58,7 @@ export default function ApiKeySetupDialog({ user }: { user: any }) {
         </DialogTitle>
 
         <DialogDescription className="font-app-body text-[13px] leading-relaxed font-light text-console-ink-2">
-          Runs execute on this machine. Adding your own LLM key lets you use a preferred model and unlocks provider-specific models. Web search works without any key (local SearXNG); a Tavily key upgrades it when you want one.
+          Runs execute on this machine. Adding your own LLM key lets you use a preferred model and unlocks provider-specific models. Web search needs no key — it runs on local SearXNG.
         </DialogDescription>
 
         <div className="flex items-center justify-end gap-2 pt-2">
