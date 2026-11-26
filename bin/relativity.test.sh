@@ -11,6 +11,7 @@ FAKE=$(mktemp -d)
 
 cleanup() {
   docker compose -f "$ROOT/docker-compose.yml" down >/dev/null 2>&1 || true
+  [ -n "${dummy:-}" ] && kill "$dummy" 2>/dev/null || true
   rm -rf "$FAKE"
 }
 trap cleanup EXIT
@@ -239,5 +240,19 @@ grep -q recreated "$FAKE/recreate.log" || fail "app container was not recreated 
 "$FAKE/home/.local/bin/relativity" stop >/dev/null ||
   fail "relativity stop failed"
 wait_port_free || fail "port 8501 still serving after stop"
+
+# 10. a local app already owns :8501 (npm run dev): `relativity` must start the
+#     toolbox only — no second app container fighting for the port.
+node -e 'require("http").createServer((q,s)=>s.end("ok")).listen(8501,"127.0.0.1")' &
+dummy=$!
+sleep 1
+out=$("$FAKE/home/.local/bin/relativity" 2>&1)
+echo "$out" | grep -q "toolbox only" || fail "start did not detect local dev on :8501"
+[ -z "$(docker compose -f "$ROOT/docker-compose.yml" ps -q app)" ] ||
+  fail "app container was started while local dev owns :8501"
+docker compose -f "$ROOT/docker-compose.yml" ps -q searxng | grep -q . ||
+  fail "toolbox (searxng) was not started for local dev"
+kill $dummy
+"$FAKE/home/.local/bin/relativity" stop >/dev/null || fail "final stop failed"
 
 echo "relativity install/run: all checks passed"
