@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { DateTimePicker, type DateTimeValue } from "@/pages/shared/DateTimePicker";
 
@@ -10,6 +10,14 @@ function openPicker(initial: DateTimeValue = { date: "2026-11-22", time: "09:00"
 }
 
 describe("DateTimePicker", () => {
+  // The picker disables days before today (DateTimePicker.tsx: `key < todayKey`),
+  // so pin "today" to the date these assertions were written against.
+  beforeAll(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-22T09:00:00"));
+  });
+  afterAll(() => vi.useRealTimers());
+
   it("commits the clicked day, not the month cursor", () => {
     const onChange = openPicker();
     // Month cursor sits on 11/22 (today); pick the 25th, keep the time.
