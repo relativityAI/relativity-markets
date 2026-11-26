@@ -1331,11 +1331,11 @@ app.get("/stocks/:symbol/overview", async (req, res) => {
   }
 });
 
-// Company logo for a ticker: resolve symbol → domain (search API), then
-// redirect to the CDN. No logo bytes are stored here. Open on purpose — an
-// <img> tag carries no Authorization header, like /stocks/search above.
-// The redirect target is always under the fixed CDN host, so the symbol
-// can never aim it anywhere else.
+// Company logo for a ticker: route to the right free API (symbol-keyed —
+// no search step) and redirect. No logo bytes are stored here. Open on
+// purpose — an <img> tag carries no Authorization header, like
+// /stocks/search above. The redirect target is always under one of the two
+// fixed logo hosts, so the symbol can never aim it anywhere else.
 app.get("/logo/:symbol", async (req, res) => {
   try {
     const url = await tickerLogoUrl(String(req.params.symbol || ""));
