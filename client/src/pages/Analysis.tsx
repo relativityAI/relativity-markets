@@ -2,7 +2,7 @@ import { Flex, Text, Spinner, Box } from "@/compat/ui";
 import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode, type CSSProperties } from "react";
 import { MdCheck, MdClose } from "react-icons/md";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { AnalysisService, API_BASE, PluginService, listCategories, runPluginLabel, type AlertRuleRow, type McpSource, type PluginSummary, type SkillSummary } from "@/db";
+import { AnalysisService, API_BASE, PluginService, TaxonomyService, runPluginLabel, type AlertRuleRow, type GroupDetail, type McpSource, type PluginSummary, type SkillSummary } from "@/db";
 import { formatSeconds } from "@/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { type RunStep, runProgressPct } from "./shared/RunStatus";
@@ -13,9 +13,14 @@ import { dur, ease } from "@/lib/motion";
 import { FlagLogo, TickerLogo } from "@/lib/sourceLogos";
 import { mcpServerState, MCP_STATE_DOT, requiredIssue } from "@/lib/mcp";
 import PluginAvatar from "@/components/shared/PluginAvatar";
+import EntitySearch, { GroupMark, type EntityPick } from "@/components/search/EntitySearch";
 import { ModelLogo, providerDisplayName } from "@/lib/modelLogos";
-import { Play, CalendarDays, Check, Clock, ChevronDown, Pause, Square, X } from "lucide-react";
+import { Play, CalendarDays, Check, Clock, ChevronDown, MoreHorizontal, Pause, Search, Trash2, X } from "lucide-react";
 import { toaster } from "@/compat/ui";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
+import { runVerdict, verdictInk } from "@/lib/analysisFormat";
+import { timeUntil } from "@/lib/relativeTime";
 import {
     MenuDropdown,
     DropdownItem,
@@ -25,7 +30,7 @@ import {
 } from "./shared/AnalysisControls";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn, errorCopy } from "@/lib/utils";
 import ScheduleCalendar from "@/components/ScheduleCalendar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { DateTimePicker, type DateTimeValue, toDateKey } from "./shared/DateTimePicker";
@@ -79,15 +84,7 @@ function humanTime(hhmm: string): string {
     return `${h % 12 || 12}:${String(m || 0).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
 }
 
-function elapsed(from?: string | null): string {
-    const start = from ? +new Date(from) : NaN;
-    if (Number.isNaN(start)) return "";
-    const s = Math.max(0, Math.floor((Date.now() - start) / 1000));
-    if (s < 60) return `${s}s`;
-    return `${Math.floor(s / 60)}m ${s % 60}s`;
-}
-
-/** The rows /api/analysis returns for the "running right now" cards. */
+/** The rows /api/analysis returns for a schedule's last-run verdict. */
 interface ActiveRunRow {
     id: string;
     status?: string | null;
@@ -95,15 +92,221 @@ interface ActiveRunRow {
     share_name?: string;
     plugin_ids?: string[] | null;
     agent_name?: string;
+    verdict?: string | null;
+    total_score?: number | null;
     started_at?: string | null;
     created_at?: string;
 }
 
-/** Field input in the filled-box style: recessed surface, no hairline, 40px tall. */
-const FIELD_INPUT =
-    "h-10 w-full min-w-0 rounded-[8px] border border-transparent bg-[var(--surface-recessed)] px-3.5 text-sm text-console-ink shadow-none placeholder:text-console-ink-4 focus-visible:border-[color:var(--hairline)] focus-visible:ring-1 focus-visible:ring-console-accent/40 dark:bg-[var(--surface-recessed)]";
-const SELECT_CLS =
-    "h-10 w-full cursor-pointer rounded-[8px] border border-transparent bg-[var(--surface-recessed)] px-3.5 text-sm text-console-ink shadow-none outline-none focus-visible:ring-1 focus-visible:ring-console-accent/40 dark:bg-[var(--surface-recessed)] [&>option]:bg-[var(--surface-recessed)] [&>option]:text-console-ink";
+/** The header menu on a schedule card — same rounding the watchlist uses. */
+const MENU_CLS = "rounded-[12px] [&_[data-slot=dropdown-menu-item]]:rounded-[8px]";
+
+/** "Europe/Berlin" → "CET": the zone's short name as the browser reports it in
+ *  this locale, so "Every Sunday at 9:00 AM" can carry its timezone. */
+function tzLabel(tz: string): string {
+    try {
+        const part = new Intl.DateTimeFormat(undefined, { timeZone: tz, timeZoneName: "short" })
+            .formatToParts(new Date())
+            .find((p) => p.type === "timeZoneName");
+        return part?.value || tz;
+    } catch {
+        return tz; // not a valid IANA zone — show it verbatim rather than hide it
+    }
+}
+
+/** One schedule card: logo + name · ticker + state badge + ⋯ menu, the agent
+ *  label, the cadence with its timezone, last/next run as relative times, then
+ *  the two actions (pause/resume is the primary, delete lives in the menu).
+ *  The title link stretches over the whole card, so a click anywhere opens the
+ *  run history — buttons and menu sit above it (z-10) and stop at their own
+ *  click. `busy` is this rule's action in flight (disabled + aria-busy). */
+function ScheduleCard({
+    rule,
+    plugins,
+    runs,
+    occs,
+    now,
+    busy,
+    onToggle,
+    onRunNow,
+    onDelete,
+}: {
+    rule: AlertRuleRow;
+    plugins: PluginSummary[];
+    runs: ActiveRunRow[];
+    occs: { rule_id: string; at: number }[];
+    now: number;
+    busy: boolean;
+    onToggle: () => void;
+    onRunNow: () => void;
+    onDelete: () => void;
+}) {
+    const name = rule.share_name || rule.symbol;
+    const label = runPluginLabel(rule.plugin_ids, plugins, null) || "Scheduled run";
+    const paused = !rule.enabled;
+
+    // Next / last fire: the occurrence instants the calendars already fetch,
+    // split on now — exact on the rule's own clock, no timezone math here.
+    const times = occs.filter((o) => o.rule_id === rule.id).map((o) => o.at).sort((a, b) => a - b);
+    const nextAt = times.find((t) => t > now);
+    const past = times.filter((t) => t <= now);
+    const lastAt = past[past.length - 1];
+    const fired = Boolean(rule.last_fired_date || rule.last_run_id);
+    const lastRun = rule.last_run_id ? runs.find((r) => r.id === rule.last_run_id) : undefined;
+    const lastWord = lastRun
+        ? runVerdict(lastRun)?.label ||
+          ((lastRun.status || "").toUpperCase() === "ERROR" ? "Failed" : null)
+        : null;
+
+    // This rule's symbol + plugins running right now = the Running state.
+    const running = runs.some(
+        (r) =>
+            (r.status || "").toUpperCase() === "RUNNING" &&
+            r.symbol === rule.symbol &&
+            (!rule.plugin_ids?.length || (r.plugin_ids || []).some((p) => rule.plugin_ids?.includes(p))),
+    );
+    const state = running
+        ? { word: "Running", dot: "var(--signal-live)" }
+        : paused
+          ? { word: "Paused", dot: "var(--ink-tertiary)" }
+          : { word: "Active", dot: "var(--signal-positive)" };
+
+    return (
+        <div
+            data-state={state.word.toLowerCase()}
+            className={cn(
+                "group relative cursor-pointer rounded-xl border border-[color:var(--hairline)] p-4 transition-colors",
+                "hover:bg-[color-mix(in_srgb,var(--ink-primary)_4%,transparent)]",
+                "active:bg-[color-mix(in_srgb,var(--ink-primary)_7%,transparent)]",
+                "has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-console-accent/50",
+                paused && "opacity-70",
+            )}
+        >
+            <div className="flex items-start gap-2.5">
+                <TickerLogo symbol={rule.symbol} size={26} />
+                <div className="min-w-0 flex-1">
+                    <Link
+                        to={`/analysis?q=${encodeURIComponent(rule.symbol)}`}
+                        className="block truncate font-app-body text-[15px] leading-tight font-normal text-console-ink after:absolute after:inset-0 after:content-[''] hover:text-console-ink"
+                    >
+                        {name}
+                        {rule.symbol && rule.symbol !== name && (
+                            <span className="text-console-ink-3"> · {rule.symbol}</span>
+                        )}
+                    </Link>
+                    <p className="mt-1 flex min-w-0 items-center gap-1.5 font-app-body text-[12.5px] font-normal text-console-ink-2">
+                        <PluginAvatar plugin={rule.plugin_ids?.[0] || label} size={16} />
+                        <span className="truncate">{label}</span>
+                    </p>
+                </div>
+                <Badge
+                    variant="secondary"
+                    className={cn(
+                        "relative z-10",
+                        // Docs' own custom-colour recipes (ui.shadcn.com Badge →
+                        // Custom Colors): sky = running, green = active, the
+                        // stock secondary = paused.
+                        running && "bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300",
+                        !running && !paused && "bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300",
+                    )}
+                >
+                    <span className="size-[6px] shrink-0 rounded-full" style={{ background: state.dot }} aria-hidden />
+                    {state.word}
+                </Badge>
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label={`Schedule actions for ${name}`}
+                            className="relative z-10 text-console-ink-3 hover:text-console-ink"
+                        >
+                            <MoreHorizontal aria-hidden />
+                        </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className={`min-w-[190px] ${MENU_CLS}`}>
+                        <DropdownMenuItem
+                            variant="destructive"
+                            className="gap-2.5"
+                            onSelect={(e) => { e.preventDefault(); onDelete(); }}
+                        >
+                            <Trash2 aria-hidden /> Delete schedule
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
+            </div>
+
+            <Badge className="mt-2.5 max-w-full justify-start bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                <CalendarDays aria-hidden />
+                <span className="truncate">{schedulePhrase(rule)} ({tzLabel(rule.timezone)})</span>
+            </Badge>
+
+            <p className="mt-1 flex flex-wrap items-center gap-x-1.5 font-app-body text-[12.5px] font-normal text-console-ink-2">
+                {fired ? (
+                    <>
+                        <span>Last run {lastAt ? timeUntil(lastAt, now) : "—"}</span>
+                        {lastWord && (
+                            <span style={{ color: verdictInk(lastWord) }} className="font-normal">
+                                {lastWord}
+                            </span>
+                        )}
+                    </>
+                ) : (
+                    <span>Never run</span>
+                )}
+                {!paused && nextAt ? (
+                    <>
+                        <span aria-hidden className="text-console-ink-3">·</span>
+                        <span>Next {timeUntil(nextAt, now)}</span>
+                    </>
+                ) : null}
+            </p>
+
+            <div className="relative z-10 mt-3 flex items-center justify-end gap-1.5">
+                <Button
+                    type="button"
+                    size="xs"
+                    variant="default"
+                    onClick={onToggle}
+                    disabled={busy}
+                    aria-busy={busy || undefined}
+                >
+                    {paused ? <Play aria-hidden /> : <Pause aria-hidden />}
+                    {paused ? "Resume" : "Pause"}
+                </Button>
+                <Button
+                    type="button"
+                    size="xs"
+                    variant="ghost"
+                    className="text-console-ink-2"
+                    onClick={onRunNow}
+                    disabled={busy || running}
+                    aria-busy={busy || undefined}
+                    title={running ? "This schedule is already running" : "Run it once, now"}
+                >
+                    {busy ? <Spinner size="sm" borderWidth="2px" /> : null}
+                    {busy ? "Starting…" : "Run now"}
+                </Button>
+            </div>
+        </div>
+    );
+}
+
+/** Every field bar wears the entity search bar's chrome: a raised pill with a
+ *  soft drop shadow that deepens on focus. `pl-8` leaves room for a leading
+ *  icon, matching EntitySearch's icon slot. */
+const FIELD_BAR =
+    // `!` because Input's own dark:bg-input/30 would otherwise out-rank the
+    // raised shade — the bars must read as the entity search bar's colour.
+    "h-8 w-full min-w-0 rounded-full border border-transparent bg-[var(--surface-raised)]! text-sm text-console-ink shadow-[0_8px_24px_rgba(0,0,0,0.14)] outline-none transition-shadow placeholder:text-console-ink-4 focus-visible:ring-0 focus-visible:shadow-[0_8px_24px_rgba(0,0,0,0.3)]";
+const FIELD_INPUT = `${FIELD_BAR} px-3.5`;
+const SELECT_CLS = `${FIELD_BAR} cursor-pointer appearance-none pl-3.5 pr-8 [option]:bg-[var(--surface-raised)] [option]:text-console-ink`;
+/** The skill search bar: the same pill, with the magnifier in EntitySearch's slot. */
+const SKILL_INPUT = `${FIELD_BAR} pr-14 pl-8`;
+/** Panel under a bar — EntitySearch's floating card. */
+const BAR_PANEL =
+    "rounded-[12px] border border-[var(--hairline)] bg-[var(--surface-canvas)] shadow-[0_16px_40px_rgba(0,0,0,0.18)]";
 
 /** Field label sitting above its control (label → filled box). */
 function FieldLabel({ children }: { children: ReactNode }) {
@@ -116,6 +319,7 @@ function FormSection({ title, children, collapsible = false }: { title?: string;
     const [open, setOpen] = useState(true);
     return (
         <Box pt={6}>
+            {title && (
             <div className="px-4">
                 {collapsible ? (
                     <h2 className="m-0">
@@ -138,6 +342,7 @@ function FormSection({ title, children, collapsible = false }: { title?: string;
                     </h2>
                 )}
             </div>
+            )}
             {open && <Box mt={3}>{children}</Box>}
         </Box>
     );
@@ -155,11 +360,14 @@ function FormRow({ label, children }: { label?: ReactNode; children: ReactNode }
     );
 }
 
-/** Skill picker: search-only results — the dropdown opens on focus/typing and
- *  closes when you click elsewhere. Circular checkboxes; picks render as
- *  avatar badges under the box. */
+/** Skill picker: the full list is offered on open — like the model dropdown's
+ *  default options — and typing just narrows it. Skills that don't serve the
+ *  picked entity stay listed, greyed with a caution badge, instead of vanishing.
+ *  With no entity yet the whole bar sits closed. */
 function SkillPicker({
     skills,
+    category,
+    disabled,
     loading,
     error,
     onRetry,
@@ -167,6 +375,9 @@ function SkillPicker({
     onToggle,
 }: {
     skills: { skill: SkillSummary; plugin: PluginSummary }[];
+    /** "equity" | "industry" once an entity is picked, null before that. */
+    category: "equity" | "industry" | null;
+    disabled: boolean;
     loading: boolean;
     error: boolean;
     onRetry: () => void;
@@ -175,6 +386,8 @@ function SkillPicker({
 }) {
     const [query, setQuery] = useState("");
     const [open, setOpen] = useState(false);
+    // Only nag about a missing skill once the user has actually been here.
+    const [touched, setTouched] = useState(false);
     const rootRef = useRef<HTMLDivElement>(null);
     // Click anywhere outside → the dropdown drops.
     useEffect(() => {
@@ -186,16 +399,27 @@ function SkillPicker({
         return () => document.removeEventListener("mousedown", onDown);
     }, [open]);
     const lower = query.trim().toLowerCase();
+    // A skill serves the entity when it's untagged or tagged with its kind —
+    // nothing is unavailable until an entity pins the category down.
+    const servesEntity = ({ plugin }: { skill: SkillSummary; plugin: PluginSummary }) =>
+        !category || !plugin.agent_category || plugin.agent_category === category;
+    // The open list is the whole menu — typing only narrows it.
     const visible = lower
         ? skills.filter(({ skill, plugin }) =>
               `${skill.id} ${skill.name} ${skill.description} ${plugin.display_name}`.toLowerCase().includes(lower),
           )
-        : [];
+        : skills;
+    // No entity → the bar stays shut and forgets what was typed.
+    useEffect(() => {
+        if (!disabled) return;
+        setOpen(false);
+        setQuery("");
+    }, [disabled]);
 
     if (error) {
         return (
             <div className="flex flex-col items-start gap-2">
-                <p className="font-app-body text-[12px] text-[var(--signal-negative)]">Couldn&apos;t load plugins.</p>
+                <p className="font-app-body text-[12px] text-[var(--signal-negative-text)]">Couldn&apos;t load plugins.</p>
                 <button
                     type="button"
                     onClick={onRetry}
@@ -210,24 +434,41 @@ function SkillPicker({
     return (
         <div data-testid="skill-picker" ref={rootRef}>
             <div className="pb-2">
-                <Input
-                    value={query}
-                    onChange={(e) => {
-                        setQuery(e.target.value);
-                        setOpen(true);
-                    }}
-                    onFocus={() => setOpen(true)}
-                    placeholder="Search skills…"
-                    aria-label="Search skills"
-                    className={FIELD_INPUT}
-                />
-                {!lower && (
+                <div className="relative">
+                    <Search
+                        className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-[var(--ink-tertiary)]"
+                        aria-hidden
+                    />
+                    <Input
+                        value={query}
+                        disabled={disabled}
+                        onChange={(e) => {
+                            setQuery(e.target.value);
+                            setOpen(true);
+                            setTouched(true);
+                        }}
+                        onFocus={() => {
+                            if (disabled) return;
+                            setOpen(true);
+                            setTouched(true);
+                        }}
+                        placeholder={disabled ? "Pick an entity first…" : "Search skills…"}
+                        aria-label="Search skills"
+                        aria-expanded={open}
+                        className={SKILL_INPUT}
+                    />
+                </div>
+                {!lower && !open && (
                     <p className="mt-2 font-app-body text-[12px] font-light text-console-ink-3">
-                        {loading ? "Loading skills…" : "Type to search every plugin's skills."}
+                        {disabled
+                            ? "Choose an entity first — skills depend on what you're analysing."
+                            : loading
+                              ? "Loading skills…"
+                              : "Every plugin's skills — ones this entity can't run stay marked."}
                     </p>
                 )}
-                {lower && open && (
-                    <div className="mt-2 max-h-[300px] divide-y divide-[color:var(--hairline)] overflow-y-auto overflow-x-hidden rounded-[10px] border border-[color:var(--hairline)]">
+                {!disabled && open && (
+                    <div className={`mt-2 max-h-[300px] divide-y divide-[color:var(--hairline)] overflow-y-auto overflow-x-hidden ${BAR_PANEL}`}>
                         {visible.length === 0 && (
                             <p className="px-2 py-3 font-app-body text-[12px] font-light text-console-ink-3">
                                 Nothing matches “{query}”.
@@ -235,30 +476,53 @@ function SkillPicker({
                         )}
                         {visible.map(({ skill, plugin }) => {
                             const on = selected.has(skill.id);
+                            const ok = servesEntity({ skill, plugin });
                             return (
                                 <label
                                     key={skill.id}
                                     className={cn(
-                                        "flex w-full cursor-pointer items-center gap-3 px-2 py-2 transition-colors hover:bg-[color-mix(in_srgb,var(--ink-primary)_4%,transparent)]",
-                                        on && "bg-[color-mix(in_srgb,var(--signal-positive)_8%,transparent)]",
+                                        "flex w-full items-center gap-3 px-2 py-2 transition-colors",
+                                        ok
+                                            ? "cursor-pointer hover:bg-[color-mix(in_srgb,var(--ink-primary)_4%,transparent)]"
+                                            : "cursor-not-allowed",
+                                        on && ok && "bg-[color-mix(in_srgb,var(--signal-positive)_8%,transparent)]",
                                     )}
                                 >
                                     <input
                                         type="checkbox"
                                         checked={on}
-                                        onChange={() => onToggle(skill.id)}
+                                        disabled={!ok}
+                                        onChange={() => ok && onToggle(skill.id)}
                                         data-testid={`skill-check-${skill.id}`}
                                         aria-label={`Skill ${skill.id}`}
-                                        className="size-4 shrink-0 appearance-none rounded-full border border-[color:var(--hairline)] bg-[var(--surface-recessed)] transition-colors checked:border-[var(--signal-positive)] checked:bg-[var(--signal-positive)]"
+                                        className={cn(
+                                            "size-4 shrink-0 appearance-none rounded-full border border-[color:var(--hairline)] bg-[var(--surface-recessed)] transition-colors checked:border-[var(--signal-positive)] checked:bg-[var(--signal-positive)]",
+                                            !ok && "opacity-30",
+                                        )}
                                     />
-                                    <span className="min-w-0 flex-1 truncate font-app-mono text-[12.5px] text-console-ink">
+                                    <span
+                                        className={cn(
+                                            "min-w-0 flex-1 truncate font-app-mono text-[12.5px]",
+                                            ok ? "text-console-ink" : "text-console-ink-4",
+                                        )}
+                                    >
                                         {skill.id}
                                     </span>
-                                    {/* The owning plugin, as a badge on the row's right edge. */}
-                                    <span className="flex max-w-[45%] shrink-0 items-center gap-1.5 rounded-full bg-[var(--surface-recessed)] py-1 pl-1 pr-2.5">
-                                        <PluginAvatar plugin={plugin.id} size={24} />
-                                        <span className="truncate font-app-body text-[11px] text-console-ink-2">{plugin.display_name}</span>
-                                    </span>
+                                    {/* The owning plugin rides the right edge; skills the entity can't use
+                                        swap it for the caution chip. */}
+                                    {ok ? (
+                                        <span className="flex max-w-[45%] shrink-0 items-center gap-1.5 rounded-full bg-[var(--surface-recessed)] py-1 pl-1 pr-2.5">
+                                            <PluginAvatar plugin={plugin.id} size={24} />
+                                            <span className="truncate font-app-body text-[11px] text-console-ink-2">{plugin.display_name}</span>
+                                        </span>
+                                    ) : (
+                                        <span
+                                            data-testid={`skill-unavailable-${skill.id}`}
+                                            className="shrink-0 rounded-full bg-[color-mix(in_srgb,var(--signal-warning)_20%,transparent)] px-2 py-0.5 font-app-body text-[10.5px] font-medium tracking-[0.04em] uppercase text-[color-mix(in_srgb,var(--signal-warning)_55%,black)] dark:text-[color-mix(in_srgb,var(--signal-warning)_85%,white)]"
+                                        >
+                                            Not available for this entity
+                                        </span>
+                                    )}
                                 </label>
                             );
                         })}
@@ -290,8 +554,8 @@ function SkillPicker({
                     </div>
                 )}
             </div>
-            {!loading && selected.size === 0 && (
-                <p role="alert" className="font-app-body text-[12px] text-[var(--signal-negative)]">
+            {!disabled && touched && !loading && selected.size === 0 && (
+                <p role="alert" className="font-app-body text-[12px] text-[var(--signal-negative-text)]">
                     Pick at least one skill for this run.
                 </p>
             )}
@@ -419,7 +683,7 @@ function RunFooter({
                         </ResumingButton>
                     ) : (
                         <PrimaryButton onClick={onRun} disabled={!canRun} style={runAction}>
-                            {scheduled ? <><CalendarDays size={16} /> Schedule agent</> : <><Play size={16} /> Run analysis</>}
+                            {scheduled ? <><CalendarDays size={16} /> Create schedule</> : <><Play size={16} /> Run analysis</>}
                         </PrimaryButton>
                     ))}
                 {status === "PENDING" && (
@@ -484,56 +748,9 @@ export default function Analysis() {
         shareName: "",
     });
 
-    const [stockQuery, setStockQuery] = useState("");
-    const [stockItems, setStockItems] = useState<any[]>([]);
-    const [stockLoading, setStockLoading] = useState(false);
-    // A failed search must not read as a genuinely empty result.
-    const [stockError, setStockError] = useState(false);
-    // Bumped by the Retry link to re-run the current query.
-    const [stockRetry, setStockRetry] = useState(0);
-    // The picked search row — carries the metadata the card shows (exchange…).
-    const [pickedStock, setPickedStock] = useState<any>(null);
-    const stockAbortRef = useRef<AbortController | null>(null);
-    const stockDebounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-    useEffect(() => {
-        if (stockDebounceRef.current) clearTimeout(stockDebounceRef.current);
-        if (stockAbortRef.current) stockAbortRef.current.abort();
-        const query = stockQuery.trim();
-        stockDebounceRef.current = setTimeout(async () => {
-            if (!query) {
-                setStockItems([]);
-                setStockError(false);
-                setStockLoading(false);
-                return;
-            }
-            setStockLoading(true);
-            const controller = new AbortController();
-            stockAbortRef.current = controller;
-            try {
-                // One search across BOTH markets — the picked row decides the source.
-                const params = new URLSearchParams({ query });
-                const response = await fetch(`${API_BASE}/stocks/search?${params}`, {
-                    signal: controller.signal,
-                });
-                if (!response.ok) throw new Error(`search failed (${response.status})`);
-                const data = await response.json();
-                if (!controller.signal.aborted) {
-                    setStockItems(Array.isArray(data) ? data : []);
-                    setStockError(false);
-                }
-            } catch (err: any) {
-                if (err?.name !== "AbortError") {
-                    setStockItems([]);
-                    setStockError(true);
-                }
-            } finally {
-                if (!controller.signal.aborted) setStockLoading(false);
-            }
-        }, 300);
-        return () => {
-            if (stockDebounceRef.current) clearTimeout(stockDebounceRef.current);
-        };
-    }, [stockQuery, stockRetry]);
+    // Entity picker dropdown state + the picked stock row's display metadata.
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const [pickedStock, setPickedStock] = useState<{ symbol: string; exchange?: string } | null>(null);
 
     const [model, setModel] = useState("");
     const [availableModels, setAvailableModels] = useState<string[]>([]);
@@ -550,6 +767,18 @@ export default function Analysis() {
     const [pluginSkills, setPluginSkills] = useState<Record<string, SkillSummary[]>>({});
     // The run's skills, picked directly — the owning plugins follow the skills.
     const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
+    // The picked entity — a stock (config.share = ticker) or a group
+    // (config.share = taxonomy key). `pickedGroup` drives the badge, the
+    // icon line and the industry-category skill filter; category is inferred.
+    const [pickedGroup, setPickedGroup] = useState<GroupDetail | null>(null);
+    // The picked entity picks the category — a stock is equity, a sector or
+    // industry is industry. Nothing picked yet → no category: the badge stays
+    // empty and every skill is on offer (disabled ones marked, not hidden).
+    const category: "equity" | "industry" | null = pickedGroup
+        ? "industry"
+        : config.share
+          ? "equity"
+          : null;
 
     // skill id → owning plugin: the picker shows it, the run payload derives from it.
     const skillOwner = useMemo(() => {
@@ -565,12 +794,11 @@ export default function Analysis() {
         () => [...new Set([...selectedSkills].map((id) => skillOwner.get(id)?.id).filter((id): id is string => !!id))],
         [selectedSkills, skillOwner],
     );
+    // Every skill stays listed; SkillPicker greys the ones the picked entity
+    // can't run instead of filtering them out of the menu.
     // Per-run MCP toggles; default = every configured server enabled.
     const [mcpSources, setMcpSources] = useState<McpSource[]>([]);
     const [mcpEnabled, setMcpEnabled] = useState<string[]>([]);
-    // Category narrows the company picker (equity is the runnable class).
-    const [categories, setCategories] = useState<string[]>([]);
-    const [category, setCategory] = useState("");
 
     const loadPlugins = useCallback(() => {
         setPluginsError(false);
@@ -586,9 +814,6 @@ export default function Analysis() {
 
     useEffect(() => {
         loadPlugins();
-        listCategories()
-            .then((data) => { if (Array.isArray(data)) setCategories(data); })
-            .catch(() => {});
         PluginService.mcpSources()
             .then(({ servers }) => {
                 setMcpSources(servers);
@@ -634,27 +859,65 @@ export default function Analysis() {
         setSelectedSkills((prev) => new Set([...prev, ...skills.map((s) => s.id)]));
     }, [searchParams, pluginSkills]);
 
-    const handleCategoryChange = (next: string) => {
-        setCategory(next);
-        // Only equity supports a company pick; leaving equity drops it.
-        if (next !== "equity") {
-            setPickedStock(null);
-            setConfig((prev) => ({ ...prev, share: "", shareName: "" }));
-        }
-    };
+    /** The picked entity — a stock (config.share = ticker) or a group
+     *  (config.share = taxonomy key). `pickedGroup` drives the badge, the
+     *  icon line and the industry-category skill filter. */
+    const pickEntity = useCallback(
+        (pick: EntityPick) => {
+            if (pick.kind === "group") {
+                // Group details (constituents, path) fetch for the display line;
+                // the run payload needs key/name/market — market lands with the fetch.
+                setPickedGroup({ key: pick.key, name: pick.name } as GroupDetail);
+                TaxonomyService.group(pick.key)
+                    .then((g) => {
+                        setPickedGroup(g);
+                        setConfig((prev) => ({ ...prev, share: g.key, shareName: g.name, source: g.market }));
+                    })
+                    .catch(() => {});
+                setPickedStock(null);
+                setConfig((prev) => ({ ...prev, share: pick.key, shareName: pick.name }));
+                return;
+            }
+            // Rows from /entities/search always carry the source (NSE/SEC).
+            setPickedGroup(null);
+            setPickedStock({ symbol: pick.symbol, exchange: pick.exchange });
+            setConfig((prev) => ({
+                ...prev,
+                source: pick.source,
+                share: pick.symbol || "",
+                shareName: pick.name || pick.symbol || "",
+            }));
+        },
+        [],
+    );
 
-    const handleStockPick = useCallback((stock: any) => {
-        // Rows from /stocks/search always carry both key styles; pick from the
-        // row itself so NSE/SEC rows resolve correctly regardless of prior config.
-        const src = String(stock.source || "").toUpperCase() === "NSE" ? "NSE" : "SEC";
-        setPickedStock(stock);
-        setConfig(prev => ({
-            ...prev,
-            source: src,
-            share: stock.ticker || stock.SYMBOL || "",
-            shareName: stock.name || stock.NAME || stock.ticker || stock.SYMBOL || "",
-        }));
-    }, []);
+    // ?group=<key> preselects a group — the group page's "Run analysis" button.
+    const groupPresetApplied = useRef(false);
+    useEffect(() => {
+        const preset = searchParams.get("group");
+        if (!preset || groupPresetApplied.current) return;
+        groupPresetApplied.current = true;
+        TaxonomyService.group(preset)
+            .then((g) => {
+                setPickedGroup(g);
+                setConfig((prev) => ({ ...prev, share: g.key, shareName: g.name, source: g.market }));
+            })
+            .catch(() => {});
+    }, [searchParams]);
+
+    // Category changed (stock ↔ group): drop skills whose plugin serves the
+    // other category so a stale selection can't ride along. Before an entity is
+    // picked there's no category to prune against — nothing gets dropped.
+    useEffect(() => {
+        if (!category) return;
+        setSelectedSkills((prev) => {
+            const next = new Set([...prev].filter((id) => {
+                const owner = skillOwner.get(id);
+                return !owner?.agent_category || owner.agent_category === category;
+            }));
+            return next.size === prev.size ? prev : next;
+        });
+    }, [category, skillOwner]);
 
     // /models is already filtered by the user's added API keys.
     useEffect(() => {
@@ -716,16 +979,54 @@ export default function Analysis() {
         return () => window.removeEventListener("alert-rules-changed", loadAlertRules);
     }, [loadAlertRules]);
 
+    /** The rule whose pause / run-now is in flight — its card shows the
+     *  spinner and both of its buttons go disabled. */
+    const [busyId, setBusyId] = useState<string | null>(null);
+
     const toggleRule = async (rule: AlertRuleRow) => {
+        setBusyId(rule.id);
         try {
             await AnalysisService.setAlertRuleEnabled(rule.id, !rule.enabled);
         } catch {
-            toaster.create({ title: "Couldn't update the alert", type: "error" });
+            toaster.create({ title: "Couldn't update the schedule", type: "error" });
+        } finally {
+            setBusyId(null);
         }
     };
 
-    // Active runs — poll fast while something runs, lazily otherwise.
-    const [activeRuns, setActiveRuns] = useState<ActiveRunRow[]>([]);
+    /** Run Now: the same POST /analysis the form posts, with the rule's stored
+     *  config — no new endpoint, and the run page opens like any other run. */
+    const runNow = async (rule: AlertRuleRow) => {
+        setBusyId(rule.id);
+        try {
+            const result = await AnalysisService.runAnalysis({
+                symbol: rule.symbol,
+                source: rule.source,
+                plugin_ids: rule.plugin_ids || [],
+                skills: rule.skill_ids?.length ? rule.skill_ids : undefined,
+                model: rule.model || undefined,
+                system_prompt: rule.system_prompt || undefined,
+                max_steps: rule.max_steps ?? undefined,
+                max_tokens: rule.max_tokens ?? undefined,
+            });
+            if (result?.id) navigate(`/runs/${result.id}`);
+            else toaster.create({ title: "The run could not be started", type: "error" });
+        } catch (error) {
+            toaster.create({
+                title: "Couldn't run it now",
+                description:
+                    (error as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+                    (error as Error)?.message,
+                type: "error",
+            });
+        } finally {
+            setBusyId(null);
+        }
+    };
+
+    // Runs — every row (a schedule's last-run verdict needs them), polled fast
+    // while something runs and lazily otherwise.
+    const [runRows, setRunRows] = useState<ActiveRunRow[]>([]);
     useEffect(() => {
         let alive = true;
         let timer: ReturnType<typeof setTimeout>;
@@ -733,10 +1034,9 @@ export default function Analysis() {
             try {
                 const rows = await AnalysisService.listAnalyses();
                 if (!alive) return;
-                const active = (Array.isArray(rows) ? rows : []).filter(
-                    (r: ActiveRunRow) => (r.status || "").toUpperCase() === "RUNNING",
-                );
-                setActiveRuns(active);
+                const all: ActiveRunRow[] = Array.isArray(rows) ? rows : [];
+                setRunRows(all);
+                const active = all.filter((r) => (r.status || "").toUpperCase() === "RUNNING");
                 timer = setTimeout(tick, active.length ? 5000 : 30_000);
             } catch {
                 if (alive) timer = setTimeout(tick, 15_000);
@@ -744,6 +1044,32 @@ export default function Analysis() {
         };
         void tick();
         return () => { alive = false; clearTimeout(timer); };
+    }, []);
+
+    // Occurrence instants (last/next fire per rule) for a padded window either
+    // side of today — biweekly is the widest cadence, so 14 days back.
+    const [occs, setOccs] = useState<{ rule_id: string; at: number }[]>([]);
+    useEffect(() => {
+        let alive = true;
+        const fmt = (d: Date) =>
+            `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        const load = () => {
+            const from = fmt(new Date(Date.now() - 14 * 86_400_000));
+            const to = fmt(new Date(Date.now() + 60 * 86_400_000));
+            AnalysisService.listOccurrences(from, to)
+                .then((rows) => { if (alive && Array.isArray(rows)) setOccs(rows); })
+                .catch(() => {});
+        };
+        load();
+        window.addEventListener("alert-rules-changed", load);
+        return () => { alive = false; window.removeEventListener("alert-rules-changed", load); };
+    }, []);
+
+    // "now" for the relative labels: re-render every 30s so "in 5m" stays true.
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        const t = setInterval(() => setNow(Date.now()), 30_000);
+        return () => clearInterval(t);
     }, []);
 
     const runAnalysis = async () => {
@@ -775,11 +1101,7 @@ export default function Analysis() {
             }
         } catch (error: any) {
             console.error("Run analysis error:", error);
-            failRun(
-                error?.response?.data?.error ||
-                error?.message ||
-                "The run could not be started. Check your selection and try again."
-            );
+            failRun(errorCopy(error, "The run could not be started. Check your selection and try again."));
         } finally {
             setStarting(false);
         }
@@ -807,18 +1129,18 @@ export default function Analysis() {
                 timezone,
             });
             toaster.create({
-                title: `${FREQ_LABEL[frequency]} alert set`,
+                title: `${FREQ_LABEL[frequency]} schedule created`,
                 description: `${config.shareName || config.share} · from ${scheduleAt.date} at ${scheduleAt.time} (${timezone})`,
                 type: "success",
             });
+            // Clear the skills so the button disables — a second click
+            // can't silently create a duplicate schedule.
+            setSelectedSkills(new Set());
         } catch (error) {
             console.error("Alert error:", error);
             toaster.create({
-                title: "Couldn't set the alert",
-                description:
-                    (error as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-                    (error as Error)?.message ||
-                    "The alert could not be created.",
+                title: "Couldn't set the schedule",
+                description: errorCopy(error, "The schedule could not be created."),
                 type: "error",
             });
         } finally {
@@ -918,7 +1240,6 @@ export default function Analysis() {
     const selectedSkillIds = [...selectedSkills];
     const skillsLoading = plugins.some((p) => pluginSkills[p.id] === undefined);
     const canRunAnalysis =
-        category === "equity" &&
         isConfigComplete &&
         selectedSkillIds.length > 0 &&
         !skillsLoading &&
@@ -926,19 +1247,15 @@ export default function Analysis() {
     // One line naming what's still missing while the run button is disabled.
     const runHint = canRunAnalysis
         ? ""
-        : !category
-            ? "Pick a category first"
-            : category !== "equity"
-                ? "Only equity runs are available"
-                : !config.share
-                    ? "Pick a company first"
-                    : !model.trim()
-                        ? "Choose a model"
-                        : skillsLoading
-                            ? "Loading skills…"
-                            : "Choose at least one skill";
+        : !config.share
+            ? "Pick a company, sector or industry first"
+            : !model.trim()
+                ? "Choose a model"
+                : skillsLoading
+                    ? "Loading skills…"
+                    : "Choose at least one skill";
     const statusLine = config.share
-        ? `${config.share} · ${config.source} · ${runMode === "scheduled" ? `${FREQ_LABEL[frequency]} from ${scheduleAt.date} at ${scheduleAt.time}` : "Single run"}`
+        ? `${config.shareName || config.share} · ${config.source} · ${runMode === "scheduled" ? `${FREQ_LABEL[frequency]} from ${scheduleAt.date} at ${scheduleAt.time}` : "Single run"}`
         : "";
 
     return (
@@ -961,7 +1278,7 @@ export default function Analysis() {
                     <Flex direction="column" align="center" gap={3}>
                         <Spinner size="lg" borderWidth="2px" color="var(--accent-primary)" />
                         <Text fontSize="13px" fontFamily="var(--font-body)" color="var(--ink-secondary)">
-                            Running analysis…
+                            {runMode === "scheduled" ? "Creating schedule…" : "Running analysis…"}
                         </Text>
                     </Flex>
                 </Box>
@@ -1015,7 +1332,7 @@ export default function Analysis() {
                                         onClick={() => setRunMode(m)}
                                         testId={m === "scheduled" ? "mode-alert" : undefined}
                                     >
-                                        {m === "once" ? "Single" : <><Clock className="size-3.5" aria-hidden /> Alert</>}
+                                        {m === "once" ? "Single" : <><Clock className="size-3.5" aria-hidden /> Scheduled</>}
                                     </ModeButton>
                                 ))}
                             </div>
@@ -1024,10 +1341,11 @@ export default function Analysis() {
                             <FormRow label="Schedule">
                                 {/* Frequency + first check side by side, like the modal's two-up schedule. */}
                                 <div className="grid gap-3 sm:grid-cols-2">
+                                <div className="relative">
                                     <select
                                         value={frequency}
                                         onChange={(e) => setFrequency(e.target.value as Frequency)}
-                                        aria-label="Checks"
+                                        aria-label="Frequency"
                                         data-testid="run-frequency"
                                         className={SELECT_CLS}
                                     >
@@ -1035,6 +1353,11 @@ export default function Analysis() {
                                             <option key={f} value={f}>{FREQ_LABEL[f]}</option>
                                         ))}
                                     </select>
+                                    <ChevronDown
+                                        className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-[var(--ink-tertiary)]"
+                                        aria-hidden
+                                    />
+                                </div>
                                     <DateTimePicker value={scheduleAt} onChange={setScheduleAt} />
                                 </div>
                             </FormRow>
@@ -1042,110 +1365,71 @@ export default function Analysis() {
                     </FormSection>
 
                     <FormSection>
-                        {/* Category gates the ticker: only equity has a stock search. */}
+                        {/* Category is inferred from the picked entity — no select.
+                            A stock runs equity, a sector or industry runs
+                            industry; before any pick the badge has nothing to
+                            say. */}
                         <FormRow>
-                            <div className="grid gap-3 sm:grid-cols-2">
-                                <div>
-                                    <FieldLabel>Category</FieldLabel>
-                                    <select
-                                value={category}
-                                onChange={(e) => handleCategoryChange(e.target.value)}
-                                aria-label="Agent category filter"
-                                data-testid="run-category"
-                                className={SELECT_CLS}
-                            >
-                                <option value="">Select category…</option>
-                                {categories.map((c) => (
-                                    <option key={c} value={c}>{c}</option>
-                                ))}
-                            </select>
-                                </div>
-                                {/* Same cell shape as Category: label + control, no extra gap. */}
-                                <div>
-                                    <FieldLabel>Ticker</FieldLabel>
-                                    <MenuDropdown
-                                        value={null}
-                                        disabled={category !== "equity"}
-                                        placeholder={category !== "equity" ? "Pick a category first" : config.share ? "Change company…" : "Search company or symbol…"}
-                                        search={{
-                                            value: stockQuery,
-                                            onChange: setStockQuery,
-                                            placeholder: "Search by company name or symbol…",
-                                        }}
-                                    >
-                                    {(close) => (
-                                        <Box>
-                                            {stockLoading && (
-                                                <Text px={3} py={2.5} fontSize="12px" fontFamily="var(--font-body)" color="var(--ink-tertiary)">
-                                                    Searching…
-                                                </Text>
-                                            )}
-                                            {!stockLoading && stockItems.length === 0 && (
-                                                <Text px={3} py={2.5} fontSize="12px" fontFamily="var(--font-body)" color="var(--ink-tertiary)">
-                                                    {stockError ? (
-                                                        <>
-                                                            Couldn&apos;t search — the lookup failed.{" "}
-                                                            <button
-                                                                type="button"
-                                                                className="font-inherit text-[var(--accent-primary)] underline underline-offset-2"
-                                                                onClick={() => setStockRetry((n) => n + 1)}
-                                                            >
-                                                                Retry
-                                                            </button>
-                                                        </>
-                                                    ) : stockQuery ? `Nothing matches “${stockQuery}”.` : "Start typing to search."}
-                                                </Text>
-                                            )}
-                                            {stockItems.map((stock: any) => {
-                                                const sym = stock.ticker || stock.SYMBOL || "";
-                                                const nm = stock.name || stock.NAME || sym;
-                                                const india = String(stock.source || "").toLowerCase() === "nse";
-                                                const market = india ? "NSE" : "SEC";
-                                                return (
-                                                    <DropdownItem
-                                                        key={`${market}-${sym}`}
-                                                        label={nm}
-                                                        sub={
-                                                            <span className="flex items-center gap-1">
-                                                                <FlagLogo source={stock.source} size={11} />
-                                                                {market}:{sym}
-                                                            </span>
-                                                        }
-                                                        selected={sym === config.share && market === config.source}
-                                                        logo={<TickerLogo symbol={sym} size={18} />}
-                                                        onClick={() => {
-                                                            handleStockPick(stock);
-                                                            close();
-                                                        }}
-                                                    />
-                                                );
-                                            })}
-                                        </Box>
+                            <div>
+                                <div className="mb-1.5 flex items-center justify-between">
+                                    <FieldLabel>Entity</FieldLabel>
+                                    {category && (
+                                        <span
+                                            data-testid="run-category-badge"
+                                            className="rounded-full bg-[var(--surface-recessed)] px-2 py-0.5 font-app-body text-[10.5px] font-medium tracking-[0.06em] text-console-ink-2 uppercase"
+                                        >
+                                            {pickedGroup ? "Industry" : "Equity"}
+                                        </span>
                                     )}
-                                    </MenuDropdown>
-                                    {/* The picked company — plain line under the picker. */}
+                                </div>
+                                {/* Picker + picked entity. No wrapper box: the
+                                    input's raised shade is the only surface, the
+                                    entity hangs off it under a hairline. */}
+                                <>
+                                    <EntitySearch
+                                        open={pickerOpen}
+                                        onOpenChange={setPickerOpen}
+                                        onPick={pickEntity}
+                                        placeholder={config.share ? "Change company, sector or industry…" : "Search company, sector, industry…"}
+                                        showTabs={false}
+                                    />
                                     {config.share && (
-                                        <div className="mt-2.5 flex items-center gap-3 px-1 py-1">
-                                            <TickerLogo symbol={config.share} size={40} />
-                                            <div className="min-w-0">
-                                                <div className="truncate font-app-body text-[15px] font-light leading-tight text-[var(--ink-primary)]">
-                                                    {config.shareName || config.share}
-                                                </div>
-                                                <div className="mt-1 flex items-center gap-1.5 font-app-body text-[12px] font-normal text-[var(--ink-tertiary)]">
-                                                    <span className="text-[14px] leading-none">
-                                                        <FlagLogo source={config.source} size={14} />
-                                                    </span>
-                                                    <span className="truncate">
-                                                        {config.source}
-                                                        {" · "}
-                                                        {config.share}
-                                                        {pickedStock?.exchange ? ` · ${pickedStock.exchange}` : ""}
-                                                    </span>
+                                        <>
+                                            <div className="mx-3 my-1.5 h-px bg-[var(--hairline)]" />
+                                            <div className="flex items-center gap-3 px-3">
+                                                {pickedGroup ? (
+                                                    <GroupMark level={pickedGroup.level} market={pickedGroup.market} size={40} />
+                                                ) : (
+                                                    <TickerLogo symbol={pickedStock?.symbol || config.share} size={40} />
+                                                )}
+                                                <div className="min-w-0">
+                                                    <div className="truncate font-app-body text-[15px] font-light leading-tight text-[var(--ink-primary)]">
+                                                        {config.shareName || config.share}
+                                                    </div>
+                                                    <div className="mt-1 flex items-center gap-1.5 font-app-body text-[12px] font-normal text-[var(--ink-tertiary)]">
+                                                        {pickedGroup ? (
+                                                            <span className="truncate">
+                                                                {pickedGroup.market} · {pickedGroup.count ?? "—"} stocks
+                                                            </span>
+                                                        ) : (
+                                                            <>
+                                                                <span className="text-[14px] leading-none">
+                                                                    <FlagLogo source={config.source} size={14} />
+                                                                </span>
+                                                                <span className="truncate">
+                                                                    {config.source}
+                                                                    {" · "}
+                                                                    {config.share}
+                                                                    {pickedStock?.exchange ? ` · ${pickedStock.exchange}` : ""}
+                                                                </span>
+                                                            </>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </div>
+                                        </>
                                     )}
-                                </div>
+                                </>
                             </div>
                         </FormRow>
                     </FormSection>
@@ -1169,6 +1453,8 @@ export default function Analysis() {
                         >
                             <SkillPicker
                                 skills={allSkills}
+                                category={category}
+                                disabled={!config.share}
                                 loading={pluginsLoading || skillsLoading}
                                 error={pluginsError}
                                 onRetry={loadPlugins}
@@ -1250,6 +1536,9 @@ export default function Analysis() {
                         </FormRow>
                     </FormSection>
 
+                    {/* Schedules don't carry mcp_enabled (alert_rules has no
+                        column), so don't show toggles that would be ignored. */}
+                    {runMode === "once" && (
                     <FormSection title="MCP tools">
                         <FormRow label="Servers">
                             {/* Same shape, side by side; the warning spans both. */}
@@ -1296,8 +1585,11 @@ export default function Analysis() {
                                                     <span className="font-app-body text-[13px] text-console-ink">{m.label}</span>
                                                 </span>
                                                 {state === "down" && m.error && (
-                                                    <span className="mt-0.5 block text-[11px] text-[var(--signal-negative)] [overflow-wrap:anywhere]" title={m.error}>
-                                                        {m.error}
+                                                    <span
+                                                        className="mt-0.5 block text-[11px] text-[var(--signal-negative-text)] [overflow-wrap:anywhere]"
+                                                        title={m.error}
+                                                    >
+                                                        {errorCopy(new Error(m.error), "Not responding — it's off for this run.")}
                                                     </span>
                                                 )}
                                             </span>
@@ -1310,6 +1602,7 @@ export default function Analysis() {
                             </div>
                         </FormRow>
                     </FormSection>
+                    )}
 
                     <RunFooter
                         status={status}
@@ -1346,7 +1639,7 @@ export default function Analysis() {
                             <Flex justify="space-between" align="center" mb={4}>
                                 <Flex align="center" gap={2.5}>
                                     <Spinner size="sm" borderWidth="2px" color="var(--accent-primary)" />
-                                    <Text fontSize="13px" fontFamily="var(--font-body)" fontWeight={400} color="var(--ink-secondary)">
+                                    <Text fontSize="13px" fontFamily="var(--font-body)" fontWeight={400} color="var(--ink-secondary)" role="status" aria-live="polite">
                                         Analysis in progress.
                                     </Text>
                                 </Flex>
@@ -1392,95 +1685,36 @@ export default function Analysis() {
                     schedules lives here now (the workspace's old rail). ── */}
                 <aside className="w-full lg:w-[560px] lg:shrink-0">
                     <h2 className="font-app-body text-[30px] leading-none font-light tracking-tight text-console-ink">
-                        Scheduled Agents
+                        Scheduled runs
                     </h2>
                     <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                        {activeRuns.map((r) => (
-                            <Link
-                                key={r.id}
-                                to={`/runs/${encodeURIComponent(r.id)}`}
-                                className="group rounded-xl border border-[color:var(--hairline)] p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--ink-primary)_4%,transparent)] focus-visible:outline-none focus-visible:[outline-offset:-2px]"
-                            >
-                                <div className="flex items-center gap-2.5">
-                                    <TickerLogo symbol={r.symbol || ""} size={26} />
-                                    <p className="min-w-0 flex-1 truncate font-app-body text-[15px] leading-tight font-light text-console-ink">
-                                        {r.share_name || r.symbol}
-                                    </p>
-                                </div>
-                                <p className="mt-1 flex items-center gap-1.5 truncate font-app-body text-[12.5px] font-light text-console-ink-3">
-                                    <PluginAvatar plugin={r.plugin_ids?.[0] || r.agent_name || "run"} size={16} />
-                                    <span className="truncate">{runPluginLabel(r.plugin_ids, plugins, r.agent_name) || "Run"}</span>
-                                </p>
-                                <span className="mt-2.5 inline-flex max-w-full items-center gap-1.5 rounded-full bg-[color-mix(in_srgb,var(--gh-blue)_14%,transparent)] px-2.5 py-1 font-app-body text-[11.5px] font-light text-[var(--gh-blue)]">
-                                    <Clock size={12} aria-hidden className="shrink-0" />
-                                    <span className="truncate">Running · {elapsed(r.started_at || r.created_at)}</span>
-                                </span>
-                            </Link>
+                        {alertRules.map((s) => (
+                            <ScheduleCard
+                                key={s.id}
+                                rule={s}
+                                plugins={plugins}
+                                runs={runRows}
+                                occs={occs}
+                                now={now}
+                                busy={busyId === s.id}
+                                onToggle={() => void toggleRule(s)}
+                                onRunNow={() => void runNow(s)}
+                                onDelete={() => setRuleToStop(s)}
+                            />
                         ))}
 
-                        {alertRules.map((s) => {
-                            const label = runPluginLabel(s.plugin_ids, plugins, null) || "Scheduled run";
-                            const paused = !s.enabled;
-                            return (
-                                <div
-                                    key={s.id}
-                                    className={cn(
-                                        "rounded-xl border border-[color:var(--hairline)] p-4",
-                                        paused && "opacity-60",
-                                    )}
-                                >
-                                    <div className="flex items-start gap-2.5">
-                                        <TickerLogo symbol={s.symbol} size={26} />
-                                        <p className="min-w-0 flex-1 truncate font-app-body text-[15px] leading-tight font-light text-console-ink">
-                                            {s.share_name || s.symbol}
-                                        </p>
-                                        <span className="ml-auto flex shrink-0 gap-1">
-                                            <button
-                                                type="button"
-                                                aria-label={`${paused ? "Resume" : "Pause"} schedule for ${s.share_name || s.symbol}`}
-                                                onClick={() => void toggleRule(s)}
-                                                className="rounded-[6px] p-1.5 text-[var(--gh-blue)] transition hover:bg-[color-mix(in_srgb,var(--gh-blue)_12%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/40"
-                                            >
-                                                {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
-                                            </button>
-                                            <button
-                                                type="button"
-                                                aria-label={`Stop schedule for ${s.share_name || s.symbol}`}
-                                                onClick={() => setRuleToStop(s)}
-                                                className="rounded-[6px] p-1.5 text-[var(--signal-negative)] transition hover:bg-[color-mix(in_srgb,var(--signal-negative)_12%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-console-accent/40"
-                                            >
-                                                <Square className="size-3.5" />
-                                            </button>
-                                        </span>
-                                    </div>
-                                    <p className="mt-1 flex items-center gap-1.5 truncate font-app-body text-[12.5px] font-light text-console-ink-3">
-                                        <PluginAvatar plugin={s.plugin_ids?.[0] || label} size={16} />
-                                        <span className="truncate">
-                                            {label}{paused && <span className="text-console-ink-4"> · Paused</span>}
-                                        </span>
-                                    </p>
-                                    <span className="mt-2.5 inline-flex max-w-full items-center gap-1.5 rounded-full bg-[color-mix(in_srgb,var(--signal-positive)_14%,transparent)] px-2.5 py-1 font-app-body text-[11.5px] font-light text-[var(--signal-positive)]">
-                                        <Clock size={12} aria-hidden className="shrink-0" />
-                                        <span className="truncate">
-                                            {schedulePhrase(s)}
-                                        </span>
-                                    </span>
-                                </div>
-                            );
-                        })}
-
-                        {activeRuns.length === 0 && alertRules.length === 0 && (
+                        {alertRules.length === 0 && (
                             <p className="col-span-full rounded-xl border border-dashed border-[color:var(--hairline)] px-4 py-6 text-center font-app-body text-[13px] font-light text-console-ink-3">
-                                Nothing scheduled yet — set the mode to Alert and create one from the form.
+                                Nothing scheduled yet — set the mode to Scheduled and create one from the form.
                             </p>
                         )}
                     </div>
 
                     <ConfirmDialog
                         open={!!ruleToStop}
-                        title="Stop this schedule?"
+                        title="Delete schedule?"
                         message={`The ${FREQ_LABEL[ruleToStop?.frequency ?? "daily"].toLowerCase()} check for ${ruleToStop?.share_name || ruleToStop?.symbol || ""} will stop. This can't be undone.`}
-                        confirmLabel="Stop"
+                        confirmLabel="Delete"
                         onCancel={() => setRuleToStop(null)}
                         onConfirm={() => {
                             const target = ruleToStop;

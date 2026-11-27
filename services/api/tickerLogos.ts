@@ -6,10 +6,12 @@
 //
 // Market routing comes from the saved NSE equity list (discovery.ts): a
 // symbol listed there goes to dharun, everything else to logoapi.sh —
-// which 404s honestly on unknown tickers, so the UI's letter fallback takes
-// over. dharun never 404s: a miss comes back as a blue "NO" placeholder
-// square, so its SVG is fetched once and that known placeholder is treated
-// as a miss too (no "NO" square in the UI or the PDF report).
+// which 404s honestly on tickers it doesn't have (RDGT, GRDN, YI…), so the
+// UI retries once with ?alt=1 to flip the host and pick up dharun's copy.
+// dharun never 404s: a miss comes back as an 18×18 square with the
+// symbol's initials, so its SVG is fetched once here and that known
+// placeholder is treated as a miss (no initials square in the UI or the
+// PDF report).
 //
 // Logos are never downloaded or stored here — only a URL (or, for the PDF,
 // the bytes of one image) moves around. Both APIs serve a .png variant,
@@ -20,12 +22,16 @@ import { isNseSymbol } from "./discovery.js";
 const IN = "https://api.dharun.dev/v1/logos";
 const US = "https://logoapi.sh/ticker";
 
-// dharun's "not found" payload: an 18×18 blue square with <text>NO</text>.
-const NOT_FOUND = /<text[^>]*>NO<\/text>/;
+// dharun's "not found" payload: an 18×18 flat square with a <text> label —
+// the symbol's initials (it used to be a fixed "NO"). No real logo carries a
+// <text> node, so any of them reads as a miss.
+const NOT_FOUND = /<text[\s\S]*?<\/text>/;
 
 type Paths = { svg: string; png: string; ind: boolean };
 
-function resolve(symbol?: string): Paths | null {
+/** `alt` flips the host: the UI retries `/logo/:sym?alt=1` when the first
+ *  one 404s, so logoapi.sh's gaps (RDGT, GRDN, YI…) land on dharun. */
+function resolve(symbol?: string, alt = false): Paths | null {
   // Tolerate Yahoo-style suffixes; both APIs want the bare symbol.
   const key = String(symbol || "")
     .trim()
@@ -33,7 +39,7 @@ function resolve(symbol?: string): Paths | null {
     .replace(/\.(NS|BO)$/, "");
   if (!key) return null;
   const enc = encodeURIComponent(key);
-  return isNseSymbol(key)
+  return isNseSymbol(key) !== alt
     ? { svg: `${IN}/${enc}`, png: `${IN}/${enc}.png`, ind: true }
     : { svg: `${US}/${enc}.svg`, png: `${US}/${enc}.png`, ind: false };
 }
@@ -55,8 +61,8 @@ async function get(url: string): Promise<Response | null> {
  * letter avatar. dharun can't signal a miss, so its SVG is checked once
  * here; the response itself is browser-cached for a day by the route.
  */
-export async function tickerLogoUrl(symbol?: string): Promise<string | null> {
-  const p = resolve(symbol);
+export async function tickerLogoUrl(symbol?: string, alt = false): Promise<string | null> {
+  const p = resolve(symbol, alt);
   if (!p) return null;
   if (!p.ind) return p.svg;
   const res = await get(p.svg);

@@ -1390,10 +1390,14 @@ app.get("/stocks/:symbol/overview", async (req, res) => {
 // purpose — an <img> tag carries no Authorization header, like
 // /stocks/search above. The redirect target is always under one of the two
 // fixed logo hosts, so the symbol can never aim it anywhere else.
+// ?alt=1 flips the host — the UI retries with it when the first one 404s,
+// so a ticker logoapi.sh doesn't have still resolves via dharun.
 app.get("/logo/:symbol", async (req, res) => {
   try {
-    const url = await tickerLogoUrl(String(req.params.symbol || ""));
-    res.setHeader("Cache-Control", url ? "public, max-age=86400" : "public, max-age=600");
+    const url = await tickerLogoUrl(String(req.params.symbol || ""), req.query.alt === "1");
+    // Short cache on purpose: this is a redirect to a third-party logo host —
+    // holding it for a day kept stale logos on screen after a source swap.
+    res.setHeader("Cache-Control", url ? "public, max-age=600" : "public, max-age=600");
     if (!url) return res.status(404).end();
     res.redirect(url);
   } catch {
