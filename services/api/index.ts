@@ -33,6 +33,7 @@ import type { McpSourceConfig } from "../harness/tools/sources.js";
 import { getModels, getModelIds, getAvailableModelsForUser } from "./models.js";
 import { getAgentCategories } from "./categories.js";
 import { getSources, searchStocks } from "./discovery.js";
+import { searchEntities, listLevel, getGroup, type GroupLevel } from "./taxonomy.js";
 import { tickerLogoUrl } from "./tickerLogos.js";
 import { getPriceHistory, toYahooSymbol } from "../harness/marketdata.js";
 import { yf } from "./yf-client.js";
@@ -1242,6 +1243,59 @@ app.get("/stocks/search", (req, res) => {
   const q = String(req.query.query || "");
   const source = String(req.query.source || "");
   res.json(searchStocks(q, source || undefined));
+});
+
+// ── Sector/industry groups (services/api/taxonomy.ts) ──────────────────────
+// Open like /stocks/search: public market data.
+
+app.get("/entities/search", (req, res) => {
+  const q = String(req.query.query || "");
+  const market = String(req.query.market || "");
+  res.json(searchEntities(q, market || undefined));
+});
+
+app.get("/sectors", (req, res) => {
+  const market = String(req.query.market || "") || undefined;
+  const level = String(req.query.level || "sector");
+  if (!["sector", "industry_group", "industry", "basic_industry", "sub_industry"].includes(level)) {
+    return res.status(400).json({ error: "unknown level" });
+  }
+  res.json(listLevel(market, level as GroupLevel));
+});
+
+app.get("/groups/:key", (req, res) => {
+  const g = getGroup(String(req.params.key || ""));
+  if (!g) return res.status(404).json({ error: "Group not found" });
+  res.json(g);
+});
+
+// Batched change-pct for search rows — ?symbols=RELIANCE.NS,AAPL (≤30).
+// 60s cache; missing/failed symbols come back absent, not errored.
+const quoteCache = new Map<string, { at: number; pct: number }>();
+const QUOTE_TTL_MS = 60_000;
+
+app.get("/market/quotes", async (req, res) => {
+  const symbols = String(req.query.symbols || "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 30);
+  if (!symbols.length) return res.json({});
+  const out: Record<string, number> = {};
+  const missing: string[] = [];
+  const now = Date.now();
+  for (const s of symbols) {
+    const hit = quoteCache.get(s);
+    if (hit && now - hit.at < QUOTE_TTL_MS) out[s] = hit.pct;
+    else missing.push(s);
+  }
+  await Promise.allSettled(missing.map(async (s) => {
+    try {
+      const q = await yf.quote(s);
+      const pct = Number(q.regularMarketChangePercent);
+      if (Number.isFinite(pct)) {
+        quoteCache.set(s, { at: now, pct });
+        out[s] = pct;
+      }
+    } catch { /* absent */ }
+  }));
+  res.json(out);
 });
 
 // Intraday chart closes for a sparkline — /market/chart/^NSEI?range=1d&interval=5m.

@@ -1,0 +1,24 @@
+{
+  "name": "sectoral-rotation",
+  "displayName": "Sectoral Rotation",
+  "description": "SOIC sector-rotation framework \u2014 where a sector sits in its cycle (early, mid, peak, decline), the four cycle drivers behind the rotation, and whether a cycle is long, medium or short. Works for any equity market.",
+  "version": "v1.0.0",
+  "versionDate": "Nov 27",
+  "listed": "November 2026",
+  "license": "MIT",
+  "verified": true,
+  "safety": "Relativity scans every plugin for safety and security, but can't guarantee this plugin will work as intended or won't change.",
+  "sources": [
+    {
+      "label": "github.com/relativityAI/relativity-markets",
+      "url": "https://github.com/relativityAI/relativity-markets"
+    }
+  ],
+  "categories": [
+    "Sector rotation",
+    "Equities",
+    "Department: Investing"
+  ],
+  "avatar": "/soic_logo.png",
+  "agentCategory": "industry"
+}
