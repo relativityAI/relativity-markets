@@ -107,9 +107,8 @@ export function DateTimePicker({ value, onChange }: { value: DateTimeValue; onCh
             <PopoverTrigger asChild>
                 <button
                     type="button"
-                    aria-label="Pick date and time"
                     data-testid="schedule-datetime"
-                    className="flex h-10 w-full cursor-pointer items-center justify-between gap-2 rounded-[8px] border border-transparent bg-[var(--surface-recessed)] px-3.5 text-sm text-console-ink shadow-none outline-none focus-visible:ring-1 focus-visible:ring-console-accent/40"
+                    className="flex h-8 w-full cursor-pointer items-center justify-between gap-2 rounded-full border border-transparent bg-[var(--surface-raised)] px-3.5 text-sm text-console-ink shadow-[0_8px_24px_rgba(0,0,0,0.14)] outline-none transition-shadow focus-visible:shadow-[0_8px_24px_rgba(0,0,0,0.3)]"
                 >
                     <Calendar className="size-4 shrink-0 text-[var(--ink-tertiary)]" aria-hidden />
                     <span className="min-w-0 flex-1 truncate text-left">{summary}</span>

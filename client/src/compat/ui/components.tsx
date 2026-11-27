@@ -8,12 +8,7 @@ import {
     Children, cloneElement, createContext, useContext, useEffect, useId,
     useRef, useState, type ReactNode, type CSSProperties, isValidElement,
 } from "react";
-import * as RDialog from "@radix-ui/react-dialog";
-import * as RMenu from "@radix-ui/react-dropdown-menu";
-import * as RPopover from "@radix-ui/react-popover";
-import * as RSlider from "@radix-ui/react-slider";
-import * as RSwitch from "@radix-ui/react-switch";
-import * as RSlot from "@radix-ui/react-slot";
+import { Dialog as RDialog, DropdownMenu as RMenu, Popover as RPopover, Slider as RSlider, Switch as RSwitch, Slot as RSlot } from "radix-ui";
 import { createPortal } from "react-dom";
 import { pseudoProps, Spinner } from "./primitives";
 
@@ -518,7 +513,9 @@ const MenuRoot = function MenuRoot(props: AnyProps) {
     const placement = positioning?.placement ?? "bottom-start";
     return (
         <MenuPlacementCtx.Provider value={placement}>
-            <RMenu.Root {...rest}>{children}</RMenu.Root>
+            {/* modal={false}: a modal menu aria-hides the whole page and a stuck
+                exit animation leaves <main>/<nav> hidden from screen readers. */}
+            <RMenu.Root modal={false} {...rest}>{children}</RMenu.Root>
         </MenuPlacementCtx.Provider>
     );
 };

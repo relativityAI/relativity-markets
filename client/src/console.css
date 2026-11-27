@@ -244,6 +244,9 @@ html.dark .console-shell [data-slot="sheet-content"] {
  ---break---
  */
 @custom-variant data-open (&:where([data-state="open"], [data-open]:not([data-open="false"])));
+/* App theme is class-driven (html.dark), so `dark:` must key off the class —
+   Tailwind's default is prefers-color-scheme, which drifts from the toggle. */
+@custom-variant dark (&:where(.dark, .dark *));
 /*
  ---break---
  */

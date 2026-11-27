@@ -109,18 +109,16 @@ html.dark {
   --signal-down: #EF4444;
 }
 
-/* Watchlist verdict badge — the fill rides --vb (set inline per band); the
-   ink flips with the mode, and dark mode deepens the fill so light text
-   keeps ≥4.5:1 on it. */
-.verdict-badge {
-  background: var(--vb);
-  color: #0b1220;
+/* Dark mode only: monochrome-black symbol logos (AAPL & co) invert to white.
+   The filter sits on the <img> alone — its plate wrapper carries the
+   background, so inverting can never flip the plate itself. Colored logos
+   are untouched (they never get data-mono-dark). */
+html.dark img[data-mono-dark] {
+  filter: invert(1);
 }
 
-html.dark .verdict-badge {
-  background: color-mix(in srgb, var(--vb) 55%, #000);
-  color: #f8fafc;
-}
+/* Watchlist verdict badge colours come from the docs' custom-color recipes
+   (see VerdictBadge in WatchlistPanel) — no per-badge CSS needed here. */
 
 /* ── GitHub Primer accents ──────────────────────────────────────────────────
    Used by the runs page (insights cards + runs table). Flat and borderless —

@@ -204,6 +204,8 @@ CREATE TABLE IF NOT EXISTS plugins (
   categories     TEXT NOT NULL DEFAULT '[]',
   developer_url  TEXT,
   install_source TEXT,
+  country        TEXT,
+  avatar         TEXT,
   created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -228,7 +230,7 @@ function ensureSchema(d: DatabaseSync): void {
  * When the schema changes: append a {version, sql} entry (never edit old
  * ones), bump SCHEMA_VERSION to match, and cover it in db/tests.
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 // v2: scheduled-run frequencies (daily/weekly/biweekly/monthly) — frequency
 // plus the first-run date the recurrence is anchored to. Existing rows keep
@@ -306,6 +308,12 @@ CREATE INDEX IF NOT EXISTS alerts_user_idx ON alerts (user_id, created_at);`,
 ALTER TABLE analysis_runs ADD COLUMN plugin_ids TEXT;
 ALTER TABLE analysis_runs ADD COLUMN mcp_enabled TEXT;
 ALTER TABLE alert_rules ADD COLUMN plugin_ids TEXT;`,
+  },
+  // v7: plugin identity extras — `country` (optional ISO-2 code; empty = any)
+  // and `avatar` (custom image URL; empty = the generated DiceBear mark).
+  {
+    version: 7,
+    sql: "ALTER TABLE plugins ADD COLUMN country TEXT;\nALTER TABLE plugins ADD COLUMN avatar TEXT;",
   },
 ];
 

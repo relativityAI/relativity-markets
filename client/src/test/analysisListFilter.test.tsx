@@ -96,7 +96,7 @@ describe("analysis list stock deep link", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete" })); // confirm
 
     // Optimistically removed; the request is still deferred.
-    expect(screen.getByText("1 runs")).toBeTruthy();
+    expect(screen.getByText("1 run")).toBeTruthy();
     expect(vi.mocked(AnalysisService.deleteAnalysis)).not.toHaveBeenCalled();
     expect(toastCreate).toHaveBeenCalledWith(
       expect.objectContaining({

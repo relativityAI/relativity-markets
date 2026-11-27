@@ -28,6 +28,11 @@ describe("plugins store", () => {
     expect(chartist.safety).toMatch(/Relativity scans every plugin/);
     expect(chartist.skill_count).toBeGreaterThan(0);
     expect(chartist.sources[0]?.url).toMatch(/^https:\/\//);
+    // Country: Nifty is India-only, Chartist ships without one (all countries).
+    expect(getPlugin("nifty-indices")?.country).toBe("IN");
+    expect(chartist.country ?? "").toBe("");
+    // Neither ships a custom image → the generated avatar stands.
+    expect(chartist.avatar ?? "").toBe("");
   });
 
   it("parses every skill of a plugin and indexes skill → plugin", () => {
@@ -104,6 +109,22 @@ describe("plugins store", () => {
       expect(existsSync(join(workdir, "data/plugins/demo/notes.md"))).toBe(false);
       // Relativity plugins refuse writes.
       expect(writePluginFiles("chartist", { "x.md": "y" }, [])).toBe(false);
+    });
+
+    it("normalizes country and custom image on a custom plugin", async () => {
+      // Not a 2-letter code / not an http(s) URL → both clear to "" (any/generated).
+      const bad = await updatePluginMeta("demo", { country: "India", avatar: "javascript:alert(1)" });
+      expect(bad?.country).toBe("");
+      expect(bad?.avatar).toBe("");
+
+      const ok = await updatePluginMeta("demo", { country: "in", avatar: " https://example.com/icon.png " });
+      expect(ok?.country).toBe("IN");
+      expect(ok?.avatar).toBe("https://example.com/icon.png");
+
+      // Clearing wins over anything plugin.json declares.
+      const cleared = await updatePluginMeta("demo", { country: null, avatar: null });
+      expect(cleared?.country).toBe("");
+      expect(cleared?.avatar).toBe("");
     });
   });
 });

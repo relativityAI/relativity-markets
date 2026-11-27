@@ -475,7 +475,7 @@ function ArtifactCard({ artifact, analysisId }: { artifact: SkillArtifact; analy
             )}
 
             {error && (
-                <span role="alert" className="shrink-0 text-[11px] text-[var(--signal-negative)]">
+                <span role="alert" className="shrink-0 text-[11px] text-[var(--signal-negative-text)]">
                     {error}
                 </span>
             )}

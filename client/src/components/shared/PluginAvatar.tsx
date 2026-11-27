@@ -1,5 +1,6 @@
-import { useMemo, type CSSProperties } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { Box } from "@/compat/ui";
+import { cn } from "@/lib/utils";
 import { pluginAvatarSvg, pluginSeed, type PluginSeedLike } from "@/lib/pluginIdentity";
 
 export interface PluginAvatarProps {
@@ -19,12 +20,19 @@ export interface PluginAvatarProps {
 }
 
 /**
- * A plugin's identity chip: a DiceBear Slice mark on the bare surface
- * (no background). Deterministic — same plugin, same chip, everywhere.
+ * A plugin's identity chip: the DiceBear Slice mark on the bare surface (no
+ * background), deterministic — same plugin, same chip, everywhere. When the
+ * plugin carries a custom image it sits behind the mark and fans out beside
+ * it on hover (transform/width only — the chip's box never grows, so nothing
+ * around it moves).
  */
 export default function PluginAvatar({ plugin, size = 24, label, className }: PluginAvatarProps) {
     const seed = useMemo(() => pluginSeed(plugin), [plugin]);
     const svg = useMemo(() => pluginAvatarSvg(seed), [seed]);
+    const custom = typeof plugin === "object" ? plugin?.avatar?.trim() : "";
+    // A dead image URL falls back to the generated mark instead of a broken box.
+    const [imgFailed, setImgFailed] = useState(false);
+    const opened = !!custom && !imgFailed;
 
     return (
         <Box
@@ -36,15 +44,36 @@ export default function PluginAvatar({ plugin, size = 24, label, className }: Pl
             w={className ? undefined : `${size}px`}
             h={className ? undefined : `${size}px`}
             overflow="hidden"
-            className={className}
+            className={cn(className, opened && "group/av")}
             role={label ? "img" : undefined}
             aria-label={label}
             aria-hidden={label ? undefined : true}
         >
-            <span
-                style={{ width: "90%", height: "90%", display: "block" } as CSSProperties}
-                dangerouslySetInnerHTML={{ __html: svg }}
-            />
+            {opened ? (
+                <span className="flex h-full w-full items-center justify-center transition-[gap] duration-300 ease-out group-hover/av:gap-[8%]">
+                    {/* The mark stays in front; it makes room as the logo opens out. */}
+                    <span className="flex h-full w-full shrink-0 items-center justify-center transition-[width] duration-300 ease-out group-hover/av:w-[46%]">
+                        <span
+                            style={{ width: "90%", height: "90%", display: "block" } as CSSProperties}
+                            dangerouslySetInnerHTML={{ __html: svg }}
+                        />
+                    </span>
+                    {/* The custom logo — hidden behind the mark until hover opens it. */}
+                    <img
+                        src={custom}
+                        alt=""
+                        aria-hidden="true"
+                        loading="lazy"
+                        onError={() => setImgFailed(true)}
+                        className="h-full w-0 shrink-0 rounded-full object-cover opacity-0 transition-all duration-300 ease-out group-hover/av:w-[46%] group-hover/av:opacity-100"
+                    />
+                </span>
+            ) : (
+                <span
+                    style={{ width: "90%", height: "90%", display: "block" } as CSSProperties}
+                    dangerouslySetInnerHTML={{ __html: svg }}
+                />
+            )}
         </Box>
     );
 }

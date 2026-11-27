@@ -120,6 +120,15 @@ function StatusGlyph({ status }: { status: string }) {
             </svg>
         );
     }
+    // Canceled/paused aren't "Running" — name them, same ring, honest label.
+    const label =
+        status === "canceled" || status === "cancelled"
+            ? "Canceled"
+            : status === "paused"
+              ? "Paused"
+              : status === "pending"
+                ? "Pending"
+                : "Running";
     return (
         <svg
             width="16"
@@ -127,7 +136,7 @@ function StatusGlyph({ status }: { status: string }) {
             viewBox="0 0 16 16"
             className="text-[var(--gh-amber)]"
             role="img"
-            aria-label="Running"
+            aria-label={label}
         >
             <circle
                 cx="8"
@@ -649,7 +658,7 @@ export default function AnalysisList() {
                                                 <div className="flex flex-wrap items-center justify-between gap-2 py-2">
                                                     <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
                                                         <span className="text-[15px] font-light text-[var(--gh-fg)] tabular-nums">
-                                                            {sorted.length} runs
+                                                            {sorted.length} run{sorted.length === 1 ? "" : "s"}
                                                         </span>
                                                         <MenuButton
                                                             label="Sort"
@@ -740,7 +749,25 @@ export default function AnalysisList() {
                                                     colSpan={colSpan}
                                                     className="py-12 text-center text-[15px] font-light text-[var(--gh-muted)]"
                                                 >
-                                                    No runs found.
+                                                    {uniqueAnalysis.length === 0 ? (
+                                                        "No runs yet — start one from New Run."
+                                                    ) : (
+                                                        <span>
+                                                            No runs match your filters.{" "}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setQuery("");
+                                                                    setAgentFilter(ALL);
+                                                                    setVerdictFilter(ALL);
+                                                                    setStatusFilter(ALL);
+                                                                }}
+                                                                className="cursor-pointer text-[var(--gh-blue)] underline underline-offset-2"
+                                                            >
+                                                                Clear filters
+                                                            </button>
+                                                        </span>
+                                                    )}
                                                 </td>
                                             </motion.tr>
                                         ) : (
@@ -982,6 +1009,26 @@ export default function AnalysisList() {
                                                                     >
                                                                         Copy link
                                                                     </DropdownMenuItem>
+                                                                    {(itemStatus === "pending" ||
+                                                                        itemStatus === "running" ||
+                                                                        itemStatus === "processing") && (
+                                                                        <DropdownMenuItem
+                                                                            className="text-[14px]"
+                                                                            variant="destructive"
+                                                                            onSelect={() => {
+                                                                                AnalysisService.cancelAnalysis(id)
+                                                                                    .then(() => toaster.create({ title: "Run canceled", type: "info" }))
+                                                                                    .catch(() =>
+                                                                                        toaster.create({
+                                                                                            title: "Couldn't cancel the run",
+                                                                                            type: "error",
+                                                                                        }),
+                                                                                    );
+                                                                            }}
+                                                                        >
+                                                                            Cancel run
+                                                                        </DropdownMenuItem>
+                                                                    )}
                                                                     <DropdownMenuSeparator />
                                                                     <DropdownMenuItem
                                                                         variant="destructive"

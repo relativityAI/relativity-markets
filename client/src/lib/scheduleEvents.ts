@@ -47,6 +47,7 @@ export function buildEvents(
     now: number = Date.now(),
 ): EventInput[] {
     const out: EventInput[] = [];
+    const claimed = new Set<string>();
     for (const o of occurrences) {
         const rule = rules.find((r) => r.id === o.rule_id);
         if (!rule) continue;
@@ -61,6 +62,7 @@ export function buildEvents(
                 )
                 .sort((x, y) => +new Date(y.created_at) - +new Date(x.created_at))[0] || null;
         const verdict = run ? run.verdict || (run.status === "ERROR" ? "Failed" : "") : "";
+        if (run) claimed.add(run.id || run.analysis_id || "");
         const props: EventProps = {
             at: o.at,
             past: o.at < now,
@@ -80,6 +82,35 @@ export function buildEvents(
             allDay: false,
             title: runPluginLabel(rule.plugin_ids, plugins, null) || "Scheduled run",
             extendedProps: props,
+        });
+    }
+
+    // Runs no occurrence claims — manual runs and runs from before the window,
+    // so the calendar shows every run (past), not only scheduled fires.
+    const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    for (const r of runs) {
+        const rid = r.id || r.analysis_id || "";
+        if (!rid || claimed.has(rid)) continue;
+        claimed.add(rid);
+        const at = +new Date(r.created_at);
+        if (!Number.isFinite(at)) continue;
+        const d = new Date(at);
+        out.push({
+            id: `run:${rid}`,
+            start: d.toISOString(),
+            allDay: false,
+            title: runPluginLabel(r.plugin_ids, plugins, null) || "Run",
+            extendedProps: {
+                at,
+                past: at < now,
+                verdict: r.verdict || (r.status === "ERROR" ? "Failed" : ""),
+                runId: rid,
+                symbol: r.symbol || "",
+                plugin: r.plugin_ids?.[0] || null,
+                frequency: "manual",
+                time: `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`,
+                tz: localTz,
+            } satisfies EventProps,
         });
     }
     return out;

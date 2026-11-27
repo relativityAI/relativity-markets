@@ -32,7 +32,7 @@ export default function ConfirmDialog({
                 <DialogTitle className="font-app-body text-[14px] font-normal text-console-ink">
                     {title}
                 </DialogTitle>
-                <DialogDescription className="font-app-body text-[13px] leading-relaxed font-light text-console-ink-2">
+                <DialogDescription className="font-app-body text-[13px] leading-relaxed font-normal text-console-ink-2">
                     {message}
                 </DialogDescription>
                 <div className="flex items-center justify-end gap-2 pt-2">

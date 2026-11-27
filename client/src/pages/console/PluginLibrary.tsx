@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { ArrowRight, BadgeCheck, ChevronRight, Plus, Search, Upload, Link2 } from "lucide-react";
 import { PluginService, type PluginSummary } from "@/db";
 import PluginAvatar from "@/components/shared/PluginAvatar";
+import { MarketFlags } from "@/lib/sourceLogos";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -37,13 +38,14 @@ const FILTERS: { value: Filter; label: string }[] = [
     { value: "custom", label: "Custom" },
 ];
 
-/** The muted source line: `Skills · ⌓ github.com/owner/repo`. */
+/** The muted source line: `Skills · 🇮🇳 🇺🇸 · ⌓ github.com/owner/repo`.
+ *  Relativity plugins carry no source word — the flags say where they apply. */
 function SourceLine({ plugin }: { plugin: PluginSummary }) {
     const src =
-        plugin.install_source?.startsWith("http")
-            ? plugin.install_source.replace(/^https?:\/\//, "").replace(/\.git$/, "")
-            : plugin.origin === "relativity"
-                ? "Relativity"
+        plugin.origin === "relativity"
+            ? ""
+            : plugin.install_source?.startsWith("http")
+                ? plugin.install_source.replace(/^https?:\/\//, "").replace(/\.git$/, "")
                 : plugin.install_source === "upload"
                     ? "Uploaded zip"
                     : "Custom";
@@ -51,8 +53,14 @@ function SourceLine({ plugin }: { plugin: PluginSummary }) {
         <span className="flex min-w-0 items-center gap-1.5 font-app-body text-[13px] font-light text-console-ink-3">
             <span className="shrink-0">{plugin.skill_count} skill{plugin.skill_count === 1 ? "" : "s"}</span>
             <span aria-hidden className="shrink-0">·</span>
-            <span aria-hidden className="shrink-0 text-console-ink-4">⌓</span>
-            <span className="truncate">{src}</span>
+            <MarketFlags country={plugin.country} />
+            {src && (
+                <>
+                    <span aria-hidden className="shrink-0">·</span>
+                    <span aria-hidden className="shrink-0 text-console-ink-4">⌓</span>
+                    <span className="truncate">{src}</span>
+                </>
+            )}
         </span>
     );
 }
@@ -174,7 +182,7 @@ export default function PluginLibrary() {
                     to={`/plugins/${encodeURIComponent(p.id)}`}
                     className="flex w-full min-w-0 items-center gap-3.5 px-1 py-3.5 transition-colors hover:bg-[color-mix(in_srgb,var(--ink-primary)_4%,transparent)] focus-visible:outline-none focus-visible:[outline-offset:-2px]"
                 >
-                    <PluginAvatar plugin={p.id} size={40} />
+                    <PluginAvatar plugin={p} size={40} />
                     <span className="min-w-0 flex-1">
                         <PluginNameLine plugin={p} />
                         <span className="mt-0.5 block">
@@ -324,9 +332,11 @@ export default function PluginLibrary() {
                                                         to={`/plugins/${encodeURIComponent(p.id)}`}
                                                         className="flex min-w-0 items-start gap-3.5 p-4 focus-visible:outline-none focus-visible:[outline-offset:-2px]"
                                                     >
-                                                        <PluginAvatar plugin={p.id} className="size-16 sm:size-20 xl:size-24" />
+                                                        <PluginAvatar plugin={p} className="size-16 sm:size-20 xl:size-24" />
                                                         <span className="min-w-0 flex-1">
-                                                            <span className="font-[family-name:var(--font-display)]">
+                                                            {/* Newsreader regular — the display face never drops to the
+                                                                app's light (300) body weight on this page. */}
+                                                            <span className="font-[family-name:var(--font-display)] font-normal">
                                                                 <PluginNameLine plugin={p} size="lg" />
                                                             </span>
                                                             {/* Fades out where the copy runs past the card instead of a hard clamp line. */}

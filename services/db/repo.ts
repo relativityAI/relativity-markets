@@ -172,6 +172,10 @@ export interface PluginRow {
   categories: string[];
   developer_url: string | null;
   install_source: string | null;
+  /** Optional ISO-2 country the plugin targets (""/null = all countries). */
+  country: string | null;
+  /** Custom image URL (""/null = the generated avatar). */
+  avatar: string | null;
   created_at?: string;
   updated_at?: string;
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
 import { Avatar, Style } from "@dicebear/core";
@@ -14,7 +14,7 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { toaster } from "@/compat/ui";
-import * as Tooltip from "@radix-ui/react-tooltip";
+import { Tooltip } from "radix-ui";
 
 /** TradingView-style watchlist table: list switcher + add/options in the
  *  header, one hairline row per symbol (logo, ticker, status dot, tiny chart,
@@ -178,25 +178,34 @@ function SparkSvg({ pts, color }: { pts: string; color: string }) {
 function VerdictBadge({ agent }: { agent: Agent }) {
     const Icons = badgeIcons(agent.verdict);
     const age = badgeAge(agent.createdAt);
+    // Docs' own custom-colour recipes (ui.shadcn.com Badge → Custom Colors):
+    // pale tint + dark tint in light, deep tint + light tint in dark.
+    const tone = verdictTone(agent.verdict);
+    const toneCls =
+        tone === "good"
+            ? "bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300"
+            : tone === "bad"
+                ? "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300"
+                : tone === "caution"
+                    ? "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+                    : "bg-secondary text-secondary-foreground";
     return (
         // Hover tooltip (Radix — the compat Tooltip is click-triggered):
         // instant, leads with when the last run happened. The badge itself
         // is the link to that run; the age sits on the badge so "old
-        // verdict" reads without hovering. The fill rides --vb; .verdict-badge
-        // (index.css) flips the ink with the mode.
+        // verdict" reads without hovering.
         <Tooltip.Root>
             <Tooltip.Trigger asChild>
                 <Link
                     to={`/runs/${agent.runId}`}
                     target="_blank" rel="noreferrer"
-                    className="verdict-badge inline-flex max-w-[190px] shrink-0 items-center gap-1.5 truncate rounded-full px-3 py-1.5 font-app-body text-[14px] font-medium leading-none"
-                    style={{ "--vb": badgeFill(agent.verdict) } as CSSProperties}
+                    className={`verdict-badge inline-flex max-w-[190px] shrink-0 items-center gap-1.5 truncate rounded-full px-2 py-0.5 text-xs font-medium leading-none ${toneCls}`}
                 >
                     {Icons.map((Glyph, i) => (
                         <Glyph key={i} size={15} className="shrink-0" aria-hidden="true" />
                     ))}
                     <span className="min-w-0 truncate">{agent.verdict || "Run"}</span>
-                    {age && <span className="shrink-0 text-[11px] font-light leading-none opacity-70" aria-hidden="true">{age}</span>}
+                    {age && <span className="shrink-0 text-[11px] font-normal leading-none opacity-70" aria-hidden="true">{age}</span>}
                     {/* Screen readers get the hover-only info as text. */}
                     <span className="sr-only"> — last run {agent.when}{agent.dur ? ` · ${agent.dur}` : ""}</span>
                 </Link>
