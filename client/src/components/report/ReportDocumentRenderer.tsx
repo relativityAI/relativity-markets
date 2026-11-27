@@ -26,6 +26,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { MarketChart } from "@/components/builder/MarketChart";
 import { downloadSvg, downloadCsv, downloadPng } from "@/lib/figureExport";
 import { isV2, type ChartSpec, type DiagramSpec, type Highlight, type ReportDocument, type ReportSection, type Section, type Source } from "@/lib/reportContract";
+import { FaviconMark } from "@/lib/sourceLogos";
 import "@/styles/almanac-report.css";
 
 // Chakra's `--chakra-colors-*-fg` vars died with the runtime — map to the
@@ -304,7 +305,7 @@ function SourceNote({ sourceId, sources }: { sourceId?: string; sources: Source[
       Source:{" "}
       {src.url ? (
         <a href={src.url} target="_blank" rel="noreferrer">
-          {src.label}
+          <FaviconMark url={src.url} size={11} /> {src.label}
         </a>
       ) : (
         src.label
@@ -341,13 +342,11 @@ function FigureBlock({
       ))}
       {section.caption && <Text className="fig-cap">{section.caption}</Text>}
       <Flex className="fig-foot">
-        {src ? (
+        {src?.url || src?.label ? (
           <a href={src.url || undefined} target="_blank" rel="noreferrer">
             Source: {src.label}
           </a>
-        ) : (
-          <span>No source attached</span>
-        )}
+        ) : null}
         <span className="fig-exports">
           <button type="button" onClick={() => downloadSvg(svgs[0], name)}>SVG</button>
           <button type="button" onClick={() => downloadCsv(section.spec, name)}>CSV</button>
@@ -378,13 +377,11 @@ function CardBlock({ section, sources }: { section: Extract<Section, { type: "ch
       )}
       {section.caption && <Text className="fig-cap">{section.caption}</Text>}
       <Flex className="fig-foot">
-        {src ? (
+        {src?.url || src?.label ? (
           <a href={src.url || undefined} target="_blank" rel="noreferrer">
             Source: {src.label}
           </a>
-        ) : (
-          <span>No source attached</span>
-        )}
+        ) : null}
       </Flex>
     </Box>
   );
@@ -444,7 +441,7 @@ function SectionView({
               {section.title}
             </Text>
           )}
-          <Text fontFamily="var(--font-display)" fontWeight={300} fontSize={{ base: "20px", md: "26px" }} lineHeight="1.5" color={ink}>
+          <Text fontFamily="var(--font-display)" fontWeight={400} fontSize={{ base: "20px", md: "26px" }} lineHeight="1.5" color={ink}>
             {section.highlights?.length ? (
               <HighlightParts text={section.text} highlights={section.highlights} footnotes={footnotes} />
             ) : (
@@ -581,9 +578,9 @@ function SectionView({
       );
     case "citations": {
       // Legacy: refs are source ids (order from doc.footnotes, resolved via the
-      // registry). Current: refs are the agent-written { source, url } pairs.
-      // The cast widens the flat-Section string[] — v2 blocks flow through
-      // flattenSections and may carry objects.
+      // registry). Current: refs are the agent-written { source, url } pairs,
+      // validated against the run's verified source ledger. The cast widens the
+      // flat-Section string[] — v2 blocks flow through flattenSections.
       const ordered = (footnotes ?? section.refs) as (string | { source: string; url?: string })[];
       type CitationNote = { key: string; src: { label: string; url?: string; value?: string } };
       const notes = ordered
@@ -599,7 +596,12 @@ function SectionView({
           {notes.map((n, i) => (
             <Box key={n.key} data-testid="report-footnote" data-source-id={n.key} className="fn">
               <sup>{i + 1}</sup>
-              <span>
+              <span className="fn-main">
+                {n.src.url && (
+                  <span className="fn-ico">
+                    <FaviconMark url={n.src.url} size={13} />
+                  </span>
+                )}
                 {n.src.url ? (
                   <a href={n.src.url} target="_blank" rel="noreferrer">
                     {n.src.label}

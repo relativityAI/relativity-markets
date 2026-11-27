@@ -71,6 +71,7 @@ import {
   importPluginFromUrl,
   importPluginFromZip,
   initPlugins,
+  renderFigures, // re-render stored figures on read — old runs pick up figure-kit style changes
   type PluginRecord,
   type ReportDocument,
   type Verdict,
@@ -1048,11 +1049,29 @@ app.post("/analysis/:id/cancel", requireAuth, async (req, res) => {
   }
 });
 
+/**
+ * Re-render a stored report's figure SVGs on read. Assembly bakes `svgs`
+ * into `report_document` at run time, so a figure-kit style change would
+ * otherwise only appear on new runs — this rebuilds them from the stored
+ * specs (pure string build, nothing persisted) so every run shows the
+ * current figure style.
+ */
+function refreshReportFigures(row: Record<string, any>): void {
+  const doc = row?.report;
+  if (doc?.schema !== "relativity/report.v1" && doc?.schema !== "relativity/report.v2") return;
+  try {
+    renderFigures(doc as ReportDocument);
+  } catch (e: any) {
+    log.error("[figures]", `on-read re-render failed: ${e?.message}`);
+  }
+}
+
 app.get("/analysis/:id", apiOnly, requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
     const data = await getRunRow(userId, String(req.params.id));
     if (!data) return res.status(404).json({ error: "Analysis not found" });
+    refreshReportFigures(data as Record<string, any>);
     // Harness runs store their typed ReportDocument in `report`; the result
     // view reads `report_document`, so surface it under that name.
     if ((data as any).report?.schema === "relativity/report.v1" || (data as any).report?.schema === "relativity/report.v2") (data as any).report_document = (data as any).report;
@@ -1081,6 +1100,7 @@ app.get("/analysis/:id/pdf", requireAuth, async (req, res) => {
     if (!data.quantitative_analysis && !data.qualitative_analysis && !data.report) {
       return res.status(409).json({ error: "No analysis to export" });
     }
+    refreshReportFigures(data as Record<string, any>); // same figures as the UI
     // Legacy runs stored the agent's UUID in agent_name. Resolve it to the real
     // agent name for the report header/footer (and fall back to the masked
     // label inside the PDF builder if the agent no longer exists).
@@ -1445,6 +1465,7 @@ app.get("/harness/runs/:id", requireAuth, async (req, res) => {
   try {
     const data = await getRunRow((req as AuthedRequest).user.id, String(req.params.id));
     if (!data) return res.status(404).json({ error: "Run not found" });
+    refreshReportFigures(data as Record<string, any>);
     res.json({ ...data, report_document: data.report });
   } catch (e: any) {
     res.status(503).json({ error: e.message });

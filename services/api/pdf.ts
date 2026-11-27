@@ -1,296 +1,29 @@
 // Server-side PDF report generation.
 //
-// Report plots are drawn to static SVG (mirroring the UI's chart styling and
-// colour palette), rasterized to PNG (resvg), and embedded in a pdfmake
-// document — so the PDF carries the same charts the UI shows, as vector-first
-// images, not a screen capture. Recharts itself cannot run under SSR, so the
-// plot primitives are drawn natively here.
+// Report figures are the harness's own figure-kit SVGs — the exact drawings
+// the UI shows — rasterized to PNG with the vendored brand fonts and set in
+// the same two faces the app ships: Newsreader (display) + Anek Latin (body).
 
-import { Resvg } from "@resvg/resvg-js";
 import { createRequire } from "node:module";
 import type { ReportBlock } from "../harness/report/legacy-blocks.js";
 import type { ChartSpec, ReportDocument } from "../harness/index.js";
 import { log } from "./logger.js";
 import { agentChipPng, agentSeed } from "../harness/identity.js";
-import { LOGO_PNG_DATA_URI } from "./reportLogo.js";
 import { NSE_LOGO_DATA_URI, SEC_LOGO_DATA_URI } from "./exchangeLogos.js";
 import { tickerLogoDataUri } from "./tickerLogos.js";
+import { PDF_FONTS, pdfFontVfs } from "./pdfFonts.js";
+import { figurePng } from "./pdfFigures.js";
 
 // pdfmake ships a CJS browser build that Vite's transformer breaks. Load it via
 // Node's native require (identical in tsc-runtime and vitest).
 const nodeRequire = createRequire(import.meta.url);
 const pdfMakeModule: any = nodeRequire("pdfmake/build/pdfmake.js");
-const pdfFontsModule: any = nodeRequire("pdfmake/build/vfs_fonts.js");
 const pdfMake: any = pdfMakeModule;
-const pdfFonts: any = pdfFontsModule;
 
 type PdfNode = any;
 type PdfContent = PdfNode[];
 
 type ChartBlock = Extract<ReportBlock, { type: "chart" }>;
-type Datum = Record<string, number | string>;
-
-// Mirrors the palette/labels ReportBlockRenderer.tsx uses in the UI.
-const CHART_COLORS = ["#5B7FDE", "#4C8B6B", "#B8935A", "#8FA0C8", "#B85C5C"];
-const GRID = "#D9D9D5";
-const AXIS = "#9CA3AF";
-const AXIS_S = "#6B7280";
-const W = 620;
-const H = 320;
-const M = { top: 34, right: 14, bottom: 44, left: 52 };
-const PW = W - M.left - M.right;
-const PH = H - M.top - M.bottom;
-
-function esc(s: string): string {
-  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
-function nice(max: number): number {
-  const raw = max * 1.05;
-  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
-  const norm = raw / mag;
-  const step = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10;
-  return step * mag;
-}
-
-function fmtTick(v: number): string {
-  if (Math.abs(v) >= 1000) return String(Math.round(v));
-  if (Number.isInteger(Math.round(v * 100) / 100)) return String(Math.round(v));
-  return String(Math.round(v * 100) / 100);
-}
-
-function legendSvg(items: { key: string; color: string; kind: "rect" | "line" }[]): string {
-  let px = 14; // recharts legend sits at the top of the wrapper
-  const parts = items.map((it, i) => {
-    const x = px;
-    const y = 18;
-    px += (it.kind === "line" ? 4 : 2) + it.key.length * 6.2 + 14;
-    const marker = it.kind === "line" ? `<line x1="${x}" y1="${y + 1}" x2="${x + 12}" y2="${y + 1}" stroke="${it.color}" stroke-width="2"/><circle cx="${x + 6}" cy="${y + 1}" r="3" fill="${it.color}"/>` : `<rect x="${x}" y="${y - 5}" width="10" height="10" rx="2" fill="${it.color}"/>`;
-    return `${marker}<text x="${x + 16}" y="${y + 3}" font-size="11" fill="${AXIS_S}">${esc(it.key)}</text>`;
-  });
-  return `<g>${parts.join("")}</g>`;
-}
-
-function getData(block: ChartBlock): { data: Datum[]; keys: string[]; xKey: string } {
-  const data = (block.data || []) as Datum[];
-  const first = data[0] || {};
-  const keys = Object.keys(first).filter((k) => k !== "name" && k !== "label");
-  const xKey = Object.prototype.hasOwnProperty.call(first, "name") ? "name" : Object.prototype.hasOwnProperty.call(first, "label") ? "label" : Object.keys(first)[0] || "name";
-  return { data, keys, xKey };
-}
-
-/** Daily close line for candlestick data (candles don't fit a static A4 SVG). */
-function candlestickSvg(block: ChartBlock): string {
-  const data = (block.data || []).filter((d: any) => Number.isFinite(Number(d.close)));
-  if (data.length < 2) return "";
-  // Downsample to keep the SVG bounded, mirroring the UI's ~120-point cap.
-  const step = Math.max(1, Math.ceil(data.length / 120));
-  const pts = data.filter((_: Datum, i: number) => i % step === 0);
-  const closes = pts.map((d: any) => Number(d.close));
-  const maxV = Math.max(...closes);
-  const minV = Math.min(...closes);
-  const y = (v: number) => M.top + PH - ((v - minV) / Math.max(maxV - minV, 1e-9)) * PH;
-  const band = PW / Math.max(pts.length, 1);
-  const line = pts
-    .map((d: any, i: number) => `${i === 0 ? "M" : "L"}${(M.left + band * i + band / 2).toFixed(1)},${y(Number(d.close)).toFixed(1)}`)
-    .join(" ");
-  const area = `${line} L${(M.left + PW).toFixed(1)},${y(minV)} L${(M.left + band / 2).toFixed(1)},${y(minV)} Z`;
-  const xLabels = pts
-    .filter((_: Datum, i: number) => i % Math.max(1, Math.floor(pts.length / 5)) === 0)
-    .map((d: any) => {
-      const i = pts.indexOf(d);
-      return `<text x="${(M.left + band * i + band / 2).toFixed(1)}" y="${H - 30}" font-size="11" fill="${AXIS}" text-anchor="middle">${esc(String(d.date ?? ""))}</text>`;
-    })
-    .join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="Helvetica, Arial, sans-serif"><g>${legendSvg([{ key: "close", color: CHART_COLORS[0], kind: "line" }])}</g><path d="${area}" fill="${CHART_COLORS[0]}" opacity="0.08"/><path d="${line}" fill="none" stroke="${CHART_COLORS[0]}" stroke-width="2"/>${xLabels}</svg>`;
-}
-
-function barLineAreaSvg(block: ChartBlock): string {
-  const { data, keys, xKey } = getData(block);
-  const values = data.flatMap((d) => keys.map((k) => Number(d[k] ?? NaN))).filter((v) => Number.isFinite(v));
-  const maxV = values.length ? Math.max(...values) : 1;
-  const minV = values.length && Math.min(...values) <= 0 ? Math.min(...values) : 0;
-  const yMax = nice(maxV - minV) + minV;
-  const y = (v: number) => M.top + PH - ((v - minV) / (yMax - minV)) * PH;
-  const ticks = Array.from({ length: 5 }, (_, i) => minV + ((yMax - minV) / 4) * i);
-  const grid = ticks
-    .map((t) => {
-      const yy = y(t);
-      return `<line x1="${M.left}" y1="${yy}" x2="${W - M.right}" y2="${yy}" stroke="${GRID}" stroke-dasharray="3 3"/><text x="${M.left - 8}" y="${yy + 3}" font-size="11" fill="${AXIS}" text-anchor="end">${fmtTick(t)}</text>`;
-    })
-    .join("");
-  const band = PW / Math.max(data.length, 1);
-  const xLabels = data
-    .map((d, i) => `<text x="${M.left + band * i + band / 2}" y="${H - 30}" font-size="11" fill="${AXIS}" text-anchor="middle">${esc(String(d[xKey]))}</text>`)
-    .join("");
-
-  let series = "";
-  if (block.chartType === "bar") {
-    const groupW = Math.min(band * 0.62, 56);
-    const barW = groupW / keys.length;
-    for (let i = 0; i < keys.length; i++) {
-      const color = CHART_COLORS[i % CHART_COLORS.length];
-      series += data
-        .map((d, j) => {
-          const v = Number(d[keys[i]] ?? NaN);
-          if (!Number.isFinite(v)) return "";
-          const cx = M.left + band * j + band / 2 - groupW / 2 + barW * i;
-          const bH = Math.max(1, Math.abs(y(v) - y(minV)));
-          const top = v >= minV ? y(v) : y(minV);
-          return `<path d="M${cx},${top + bH} V${top + 2} Q${cx},${top} ${cx + 2},${top} H${cx + barW - 2} Q${cx + barW},${top} ${cx + barW},${top + 2} V${top + bH} Z" fill="${color}"/>`;
-        })
-        .join("");
-    }
-  } else {
-    const smooth = (pts: { x: number; y: number }[]) => {
-      let d = `M${pts[0].x},${pts[0].y}`;
-      for (let i = 0; i < pts.length - 1; i++) {
-        const xm = (pts[i].x + pts[i + 1].x) / 2;
-        d += ` Q${pts[i].x},${pts[i].y} ${xm},${(pts[i].y + pts[i + 1].y) / 2}`;
-        d += ` T${pts[i + 1].x},${pts[i + 1].y}`;
-      }
-      return d;
-    };
-    for (let i = 0; i < keys.length; i++) {
-      const color = CHART_COLORS[i % CHART_COLORS.length];
-      const pts = data
-        .map((d, j) => ({ x: M.left + band * j + band / 2, y: y(Number(d[keys[i]])) }))
-        .filter((p) => Number.isFinite(p.y));
-      if (pts.length < 2) continue;
-      const line = smooth(pts);
-      const area = block.chartType === "area" ? `${line} L${pts[pts.length - 1].x},${y(minV)} L${pts[0].x},${y(minV)} Z` : "";
-      if (area) series += `<path d="${area}" fill="${color}" fill-opacity="0.3"/>`;
-      series += `<path d="${line}" fill="none" stroke="${color}" stroke-width="2"/>`;
-      series += pts.map((p) => `<circle cx="${p.x}" cy="${p.y}" r="3" fill="${color}"/>`).join("");
-    }
-  }
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="Helvetica, Arial, sans-serif"><g>${legendSvg(keys.map((k, i) => ({ key: k, color: CHART_COLORS[i % CHART_COLORS.length], kind: block.chartType === "bar" ? "rect" : "line" })))}</g>${grid}${xLabels}${series}</svg>`;
-}
-
-function scatterSvg(block: ChartBlock): string {
-  const { data, keys, xKey } = getData(block);
-  const yKey = keys[0] || "value";
-  const xs = data.map((d) => Number(d[xKey])).filter(Number.isFinite);
-  const ys = data.map((d) => Number(d[yKey])).filter(Number.isFinite);
-  const minX = Math.min(0, ...xs);
-  const maxX = nice(Math.max(...xs, 1));
-  const minY = Math.min(0, ...ys);
-  const maxY = nice(Math.max(...ys, 1));
-  const x = (v: number) => M.left + ((v - minX) / (maxX - minX)) * PW;
-  const y = (v: number) => M.top + PH - ((v - minY) / (maxY - minY)) * PH;
-  const ticksX = Array.from({ length: 5 }, (_, i) => minX + ((maxX - minX) / 4) * i);
-  const ticksY = Array.from({ length: 5 }, (_, i) => minY + ((maxY - minY) / 4) * i);
-  const grid =
-    ticksY.map((t) => `<line x1="${M.left}" y1="${y(t)}" x2="${W - M.right}" y2="${y(t)}" stroke="${GRID}" stroke-dasharray="3 3"/><text x="${M.left - 8}" y="${y(t) + 3}" font-size="11" fill="${AXIS}" text-anchor="end">${fmtTick(t)}</text>`).join("") +
-    ticksX.map((t) => `<text x="${x(t)}" y="${H - 30}" font-size="11" fill="${AXIS}" text-anchor="middle">${fmtTick(t)}</text>`).join("");
-  const dots = data
-    .map((d) => {
-      const dx = Number(d[xKey]);
-      const dy = Number(d[yKey]);
-      if (!Number.isFinite(dx) || !Number.isFinite(dy)) return "";
-      return `<circle cx="${x(dx)}" cy="${y(dy)}" r="5" fill="${CHART_COLORS[0]}"/>`;
-    })
-    .join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="Helvetica, Arial, sans-serif"><g>${legendSvg([{ key: "Data", color: CHART_COLORS[0], kind: "line" }])}</g>${grid}${dots}</svg>`;
-}
-
-function radarSvg(block: ChartBlock): string {
-  const { data, keys, xKey } = getData(block);
-  const values = data.flatMap((d) => keys.map((k) => Number(d[k] ?? NaN))).filter(Number.isFinite);
-  const maxV = nice(values.length ? Math.max(...values) : 1);
-  const cx = M.left + PW / 2;
-  const cy = M.top + PH / 2;
-  const R = Math.min(PW, PH) / 2 - 30;
-  const angle = (i: number) => ((Math.PI * 2 * i) / data.length) - Math.PI / 2;
-  const px = (i: number, r: number) => cx + Math.cos(angle(i)) * r;
-  const py = (i: number, r: number) => cy + Math.sin(angle(i)) * r;
-  const ring = (r: number) => data.map((_, i) => `${px(i, r)},${py(i, r)}`).join(" ");
-  const grid =
-    Array.from({ length: 4 }, (_, idx) => `<polygon points="${ring(R * ((idx + 1) / 4))}" fill="none" stroke="${GRID}" stroke-dasharray="${idx === 3 ? "" : "3 3"}"/>`).join("") +
-    data.map((_, i) => `<line x1="${cx}" y1="${cy}" x2="${px(i, R)}" y2="${py(i, R)}" stroke="${GRID}"/>`).join("") +
-    data.map((d, i) => {
-      const tx = px(i, R + 20);
-      const ty = py(i, R + 20);
-      return `<text x="${tx}" y="${ty + 3}" font-size="10" fill="${AXIS_S}" text-anchor="middle">${esc(String(d[xKey]))}</text>`;
-    }).join("") +
-    [0.25, 0.5, 0.75, 1].map((f) => `<text x="${cx + Math.cos(angle(0)) * R * f + 4}" y="${cy + Math.sin(angle(0)) * R * f + 3}" font-size="9" fill="${AXIS}">${fmtTick(maxV * f)}</text>`).join("");
-
-  const polys = keys
-    .map((k, i) => {
-      const color = CHART_COLORS[i % CHART_COLORS.length];
-      const pts = data
-        .map((d, j) => `${px(j, (Number(d[k]) / maxV) * R)},${py(j, (Number(d[k]) / maxV) * R)}`)
-        .join(" ");
-      return `<polygon points="${pts}" fill="${color}" fill-opacity="0.4" stroke="${color}"/>`;
-    })
-    .join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="Helvetica, Arial, sans-serif"><g>${legendSvg(keys.map((k, i) => ({ key: k, color: CHART_COLORS[i % CHART_COLORS.length], kind: "line" })))}</g>${grid}${polys}</svg>`;
-}
-
-function pieSvg(block: ChartBlock): string {
-  const { data, keys, xKey } = getData(block);
-  const key = keys[0] ?? "value";
-  const slices = data
-    .map((d) => ({ name: String(d[xKey] ?? ""), value: Number(d[key]) }))
-    .filter((s) => Number.isFinite(s.value) && s.value > 0);
-  const total = slices.reduce((s, x) => s + x.value, 0);
-  if (!total) return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"></svg>`;
-  const cx = 180;
-  const cy = M.top + PH / 2 + 8;
-  const r = Math.min(PH / 2 - 14, 116);
-  let a0 = 0;
-  const arcs = slices.map((s, i) => {
-    const a1 = a0 + (s.value / total) * 2 * Math.PI;
-    const p0 = a0 - Math.PI / 2;
-    const p1 = a1 - Math.PI / 2;
-    const x0 = cx + r * Math.cos(p0);
-    const y0 = cy + r * Math.sin(p0);
-    const x1 = cx + r * Math.cos(p1);
-    const y1 = cy + r * Math.sin(p1);
-    const large = a1 - a0 > Math.PI ? 1 : 0;
-    const color = CHART_COLORS[i % CHART_COLORS.length];
-    const path = `M${cx},${cy} L${x0},${y0} A${r},${r} 0 ${large} 1 ${x1},${y1} Z`;
-    a0 = a1;
-    return `<path d="${path}" fill="${color}" stroke="#FFFFFF" stroke-width="2"/>`;
-  }).join("");
-  const legend = slices
-    .map((s, i) => {
-      const y = M.top + 12 + i * 20;
-      const pct = Math.round((s.value / total) * 100);
-      return `<rect x="330" y="${y - 8}" width="10" height="10" rx="2" fill="${CHART_COLORS[i % CHART_COLORS.length]}"/><text x="348" y="${y}" font-size="11" fill="${AXIS_S}">${esc(`${s.name} — ${pct}%`)}</text>`;
-    })
-    .join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="Helvetica, Arial, sans-serif">${arcs}${legend}</svg>`;
-}
-
-/** Draw a chart report block as SVG, mirroring the UI's chart styling. */
-export function renderChartSvg(block: ChartBlock): string {
-  switch (block.chartType) {
-    case "candlestick":
-      return candlestickSvg(block);
-    case "bar":
-    case "line":
-    case "area":
-      return barLineAreaSvg(block);
-    case "scatter":
-      return scatterSvg(block);
-    case "radar":
-      return radarSvg(block);
-    case "pie":
-      return pieSvg(block);
-    default:
-      return "";
-  }
-}
-
-/** Render a chart report block to a PNG buffer (2x for print sharpness). */
-export function chartBlockToPng(block: ChartBlock): Buffer {
-  const svg = renderChartSvg(block);
-  const resvg = new Resvg(svg, { fitTo: { mode: "width", value: 1400 } });
-  return Buffer.from(resvg.render().asPng());
-}
-
 /** Strip the light markdown the model uses (###, **, bullets) to plain PDF text. */
 const UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 // Stateless checker: a /g/ regex's .test() carries lastIndex between calls,
@@ -345,8 +78,22 @@ const CARD_LAYOUT = {
 };
 
 /** Wrap content in a CARD_LAYOUT card. */
-function card(nodes: PdfNode[], margin: number[] = [0, 4, 0, 4]): PdfNode {
-  return { table: { widths: ["*"], body: [[{ stack: nodes }]] }, layout: CARD_LAYOUT, margin } as PdfNode;
+function card(nodes: PdfNode[], margin: number[] = [0, 4, 0, 4], fill = "#FAFAF9"): PdfNode {
+  return { table: { widths: ["*"], body: [[{ stack: nodes }]] }, layout: { ...CARD_LAYOUT, fillColor: () => fill }, margin } as PdfNode;
+}
+
+/** Tinted callout card — pdfmake ignores `background` on a bare text node,
+ *  so the tone lives in the card's fill instead. */
+const CALLOUT_TONE: Record<string, { bg: string; ink: string }> = {
+  positive: { bg: "#E9F2EC", ink: "#2F6B47" },
+  caution: { bg: "#F6EFDC", ink: "#7A5A1F" },
+  negative: { bg: "#F7E9E9", ink: "#943F3F" },
+  neutral: { bg: "#F4F4F3", ink: "#4B5563" },
+};
+
+function callout(text: string, tone = "neutral", margin: number[] = [0, 4, 0, 8]): PdfNode {
+  const t = CALLOUT_TONE[tone] || CALLOUT_TONE.neutral;
+  return card([{ text, style: "callout", color: t.ink, margin: [0, 0, 0, 0] }], margin, t.bg);
 }
 
 function markdownText(md: string): string[] {
@@ -417,10 +164,46 @@ function evidenceLine(keys: string[] | undefined, lookup: Record<string, string>
   ];
 }
 
+/**
+ * Legacy chart block → the nearest figure-kit spec, so old blocks draw with
+ * the same labels/scales as everything else: bar→vbar (or gbar when keyed),
+ * dated series→line, and any categorical shape (pie/scatter/radar/non-date x)
+ * →hbar — figure-kit's own honest fallback for a categorical shape.
+ */
+export function legacySpec(block: ChartBlock): ChartSpec | null {
+  const data = (block.data || []) as Record<string, string | number>[];
+  if (!data.length) return null;
+  const first = data[0];
+  const xKey = (["name", "label", "date"] as const).find((k) => k in first) || Object.keys(first)[0];
+  const keys = Object.keys(first).filter((k) => k !== xKey);
+  if (!keys.length) return null;
+  const cats = data.map((d) => String(d[xKey] ?? ""));
+  const asBars = (values: number[]): ChartSpec => ({ kind: "hbar", categories: cats, values });
+  if (block.chartType === "bar") {
+    if (keys.length === 1) return { kind: "vbar", categories: cats, values: data.map((d) => Number(d[keys[0]])) };
+    return { kind: "gbar", categories: cats, groups: keys.map((k) => ({ name: k, values: data.map((d) => Number(d[k])) })) };
+  }
+  const epochs = cats.map((c) => Date.parse(c));
+  if (epochs.some((n) => !Number.isFinite(n) || n <= 0)) return asBars(data.map((d) => Number(d[keys[0]])));
+  const ts = epochs.map((n) => Math.round(n / 1000));
+  return {
+    kind: "line",
+    series: keys.map((k) => ({ label: k, points: data.map((d, i) => ({ t: ts[i], v: Number(d[k]) })) })),
+  };
+}
+
+function legacyFigurePng(block: ChartBlock): Buffer | null {
+  const spec = legacySpec(block);
+  return spec ? figurePng(spec, { label: block.title }) : null;
+}
+
 async function blockToPdfContent(block: ReportBlock, lookup: Record<string, string>): Promise<PdfContent> {
   switch (block.type) {
     case "heading":
-      return [{ text: plain(block.text), style: block.level === 2 ? "h2" : "h3" }];
+      return [
+        { text: plain(block.text), style: block.level === 2 ? "h2" : "h3" },
+        ...(block.tagline ? [{ text: plain(block.tagline), style: "tagline" }] : []),
+      ];
     case "paragraph": {
       // Strip citation litter the older synthesizer baked into prose — the
       // PDF renders structured citations itself (never "(Source: tool: url)").
@@ -432,18 +215,8 @@ async function blockToPdfContent(block: ReportBlock, lookup: Record<string, stri
         ...evidenceLine(block.citedKeys, lookup),
       ];
     }
-    case "callout": {
-      const colors: Record<string, string> = { positive: "#E9F2EC", caution: "#F6EFDC", negative: "#F7E9E9", neutral: "#F4F4F3" };
-      const textColors: Record<string, string> = { positive: "#2F6B47", caution: "#7A5A1F", negative: "#943F3F", neutral: "#4B5563" };
-      return [
-        {
-          text: plain(block.text),
-          style: "callout",
-          background: colors[block.tone] || colors.neutral,
-          color: textColors[block.tone] || textColors.neutral,
-        },
-      ];
-    }
+    case "callout":
+      return [callout(plain(block.text), block.tone, [0, 4, 0, 8])];
     case "quote":
       return [{ text: `“${plain(block.text)}”${block.attribution ? `  — ${plain(block.attribution)}` : ""}`, style: "quote" }];
     case "table": {
@@ -467,7 +240,11 @@ async function blockToPdfContent(block: ReportBlock, lookup: Record<string, stri
     }
     case "chart": {
       try {
-        const png = chartBlockToPng(block);
+        // v2 blocks carry their spec — the UI's own figure; legacy blocks are
+        // mapped to the nearest figure-kit shape so every plot reads the same.
+        const spec = (block as any).spec as ChartSpec | undefined;
+        const png = spec ? figurePng(spec, { label: block.title, unit: (block as any).measure }) : legacyFigurePng(block);
+        if (!png) return [{ text: `[No plottable data in: ${block.title || "plot"}]`, style: "cell" }];
         return [
           block.title ? { text: plain(block.title), style: "tableTitle" } : {},
           { image: `data:image/png;base64,${png.toString("base64")}`, width: 500, margin: [0, 4, 0, 12], alignment: "center" },
@@ -725,19 +502,126 @@ function bandLabel(score: number | null | undefined): string {
   return "Pass";
 }
 
-/** Token-use line shown in the UI's sub-header. */
-function tokensMeta(run: any): string {
+/* ─── Page-1 run info (the app's Run Info tab, as print) ──────────────── */
+
+const kfmt = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n));
+
+/** Tone behind each verdict word — same signal palette as the score bands. */
+const VERDICT_TONE: Record<string, string> = {
+  Outstanding: "#4C8B6B",
+  Strong: "#4C8B6B",
+  Fair: "#B8935A",
+  Underwhelming: "#B8935A",
+  Subpar: "#B85C5C",
+};
+
+/** The UI's five verdict bands on the 0–100 scale — same words. */
+function verdictLabel(score: number | null | undefined): string {
+  if (score == null || !Number.isFinite(score)) return "Unscored";
+  if (score >= 90) return "Outstanding";
+  if (score >= 70) return "Strong";
+  if (score >= 55) return "Fair";
+  if (score >= 40) return "Underwhelming";
+  return "Subpar";
+}
+
+const TERMINAL = ["complete", "completed", "success", "error", "failed", "budget_exhausted"];
+
+/** Wall-clock length of a run: recorded seconds, else start→updated. */
+function runDuration(run: any): string | null {
+  if (typeof run?.duration === "number" && run.duration > 0) {
+    const s = Math.round(run.duration);
+    return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+  }
+  const started = run?.started_at || run?.created_at;
+  if (!started) return null;
+  const end = TERMINAL.includes(String(run?.status || "").toLowerCase())
+    ? +new Date(run?.updated_at || started)
+    : Date.now();
+  const ms = end - +new Date(started);
+  if (!(ms >= 0)) return null;
+  const s = Math.round(ms / 1000);
+  return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+}
+
+/** Tokens: harness rows carry a final `usage` trace event; legacy rows tally
+ *  per-section tokens. Same two sources the UI's cost meter reads. */
+function runTokens(run: any): { input: number; output: number } | null {
+  const trace: any[] = Array.isArray(run?.trace) ? run.trace : [];
+  for (let i = trace.length - 1; i >= 0; i--) {
+    const ev = trace[i];
+    if (ev?.type === "usage" && ev.value) {
+      const input = Number(ev.value.tokens_in ?? 0);
+      const output = Number(ev.value.tokens_out ?? 0);
+      if (input + output > 0) return { input, output };
+    }
+  }
   let input = 0;
   let output = 0;
-  for (const entry of Object.values((run.qualitative_analysis || {}) as Record<string, any>)) {
+  for (const entry of Object.values((run?.qualitative_analysis || {}) as Record<string, any>)) {
     const t = entry?.tokens;
     if (!t) continue;
     input += typeof t.input === "number" ? t.input : 0;
     output += typeof t.output === "number" ? t.output : 0;
   }
-  if (input + output === 0) return "";
-  const k = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n));
-  return `Tokens · ${k(input + output)} net  (${k(input)} in / ${k(output)} out)`;
+  return input + output > 0 ? { input, output } : null;
+}
+
+const ts = (v: any) =>
+  typeof v === "string" && v
+    ? new Date(v).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
+    : "—";
+
+/**
+ * The Run Info card: verdict word (signal-coloured), stock identity, coverage,
+ * agent, model, timing and tokens — everything the header implies, printed.
+ */
+function runInfoPanel(run: any, covText: string, reportVerdict: string | null): PdfNode {
+  const total = run.total_score;
+  const tokens = runTokens(run);
+  const trace: any[] = Array.isArray(run?.trace) ? run.trace : [];
+  const toolCalls = trace.filter((e) => e?.type === "tool_call").length;
+  const agent = isUuid(run.agent_name) ? run.agent_display_name || "—" : run.agent_name || "—";
+  const word = reportVerdict ?? verdictLabel(total);
+
+  const row = (label: string, value: string, color?: string): PdfNode => ({
+    columns: [
+      { text: label, style: "infoLabel", width: 62 },
+      { text: value, style: "infoValue", width: "*", ...(color ? { color } : {}) },
+    ],
+    columnGap: 8,
+    margin: [0, 1.5, 0, 1.5],
+  });
+
+  const left = [
+    row(
+      "Verdict",
+      total != null ? `${word} · ${total}` : word,
+      total != null ? signalColor(total) : (reportVerdict ? VERDICT_TONE[reportVerdict] : undefined) ?? "#9CA3AF",
+    ),
+    row("Stock", run.share_name && run.share_name !== run.symbol ? `${run.symbol} · ${run.share_name}` : run.symbol || "—"),
+    row("Coverage", covText),
+    row("Agent", agent),
+    row("Model", run.model || "—"),
+  ];
+  const right = [
+    row("Started", ts(run.started_at || run.created_at)),
+    row("Duration", runDuration(run) || "—"),
+    row("Tool calls", toolCalls ? String(toolCalls) : "—"),
+    row(
+      "Tokens",
+      tokens ? `${kfmt(tokens.input + tokens.output)} net (${kfmt(tokens.input)} in / ${kfmt(tokens.output)} out)` : "—",
+    ),
+    row("Source", run.source ? String(run.source).toUpperCase() : "—"),
+  ];
+
+  return card(
+    [
+      { text: "Run info", style: "tableTitle", margin: [0, 0, 0, 5] },
+      { columns: [{ stack: left }, { stack: right }], columnGap: 18 },
+    ],
+    [0, 6, 0, 8],
+  );
 }
 
 /**
@@ -828,12 +712,7 @@ function skillSectionBlocks(output: any, index: number, total: number): PdfConte
   });
 
   if (output.error) {
-    out.push({
-      text: `No real data reached this skill — ${plain(String(output.error)).slice(0, 300)}`,
-      style: "callout",
-      background: "#F6EFDC",
-      color: "#7A5A1F",
-    });
+    out.push(callout(`No real data reached this skill — ${plain(String(output.error)).slice(0, 300)}`, "caution"));
     return out;
   }
 
@@ -910,12 +789,12 @@ function skillSectionBlocks(output: any, index: number, total: number): PdfConte
     !output.analysis &&
     !(output.blocks || []).length
   ) {
-    out.push({
-      text: "This skill completed but returned no findings or verdicts — nothing was assessable in the data available.",
-      style: "callout",
-      background: "#F6EFDC",
-      color: "#7A5A1F",
-    });
+    out.push(
+      callout(
+        "This skill completed but returned no findings or verdicts — nothing was assessable in the data available.",
+        "caution",
+      ),
+    );
   }
 
   const citations: any[] = output.citations || [];
@@ -1083,12 +962,7 @@ function reasoningBlocks(run: any): PdfContent {
   const out: PdfContent = [];
   const rows = buildTraceRows(run, run.run_mode === "skill");
   if (!rows.length) {
-    out.push({
-      text: "No reasoning trace was stored for this run.",
-      style: "callout",
-      background: "#F4F4F3",
-      color: "#4B5563",
-    });
+    out.push(callout("No reasoning trace was stored for this run.", "neutral"));
     return out;
   }
   const secs = (ms?: number) => (typeof ms === "number" ? `  ·  ${(ms / 1000).toFixed(1)}s` : "");
@@ -1195,14 +1069,17 @@ export function documentToBlocks(doc: ReportDocument): ReportBlock[] {
       return;
     }
     const { data, sourceKeys } = chartRows(spec);
-    if (data.length > 1) out.push({ type: "chart", chartType: CHART_TYPE(spec.kind), title, data, sourceKeys });
+    // Gate on drawable content, not row count: a kpi-card is one row and must
+    // still render. figure-kit returns null for a spec with nothing to draw.
+    const drawable = !!(spec.series?.length || spec.values?.length || spec.rows?.length || spec.groups?.length);
+    if (drawable) out.push({ type: "chart", chartType: CHART_TYPE(spec.kind), title, data, sourceKeys, spec } as ReportBlock);
   };
   const sourceNote = (label?: string) => label ? { type: "paragraph" as const, text: `Source: ${label}`, citedKeys: [] } : null;
   // v2 nested section → heading + blocks; v1 flat blocks pass through below.
   const isV2 = doc.sections.some((s: any) => s && typeof s === "object" && "heading" in s);
   if (isV2) {
     for (const sec of doc.sections as any[]) {
-      out.push({ type: "heading", level: sec.heading.level === 1 ? 2 : 3, text: sec.heading.text });
+      out.push({ type: "heading", level: sec.heading.level === 1 ? 2 : 3, text: sec.heading.text, tagline: sec.heading.tagline });
       for (const b of sec.blocks ?? []) {
         const src = b.sourceId ? doc.sources.find((x) => x.id === b.sourceId) : undefined;
         switch (b.type) {
@@ -1287,56 +1164,50 @@ export function documentToBlocks(doc: ReportDocument): ReportBlock[] {
   return out;
 }
 
-/** PDF for a harness run: title band, the document's own sections, sources. */
-async function harnessDocumentPdf(run: any): Promise<Buffer> {
-  const doc: ReportDocument = run.report;
-  const content: PdfContent = [
-    { image: LOGO_PNG_DATA_URI, width: 34, height: 26, margin: [0, 0, 0, 10] },
-    ...(doc.title ? [{ text: doc.title, style: "title" } as PdfNode] : []),
-    ...(doc.subtitle ? [{ text: doc.subtitle, style: "subtitle" } as PdfNode] : []),
-    {
-      text: `${doc.symbol}${doc.generatedAt ? ` · ${new Date(doc.generatedAt).toLocaleDateString()}` : ""}${run.source ? ` · ${String(run.source).toUpperCase()}` : ""}`,
-      style: "subtitle",
-      margin: [0, 2, 0, 10],
-    },
-  ];
-  for (const block of documentToBlocks(doc)) content.push(...(await blockToPdfContent(block, {})));
-  if (doc.sources.length) {
-    content.push({ text: "Sources", style: "h3", margin: [0, 12, 0, 4] });
-    for (const src of doc.sources) {
-      content.push({ text: `${src.label} — ${src.value}${src.url ? ` (${src.url})` : ""}`, style: "sourceLine" });
-    }
-  }
-  const document = {
-    info: { title: doc.title ?? doc.symbol, author: "Relativity" },
-    content,
-    styles: {
-      title: { fontSize: 24, bold: true, color: "#16181B" },
-      subtitle: { fontSize: 12, color: "#6B7280" },
-      h2: { fontSize: 14, bold: true, color: "#16181B", margin: [0, 16, 0, 6] },
-      h3: { fontSize: 11, bold: true, color: "#4B5563", margin: [0, 10, 0, 3] },
-      body: { fontSize: 9.5, color: "#4B5563", lineHeight: 1.45, margin: [0, 2, 0, 4] },
-      callout: { fontSize: 9.5, margin: [10, 6, 10, 6], color: "#4B5563" },
-      quote: { fontSize: 10, italics: true, color: "#4B5563", margin: [0, 4, 0, 6] },
-      tableTitle: { fontSize: 9.5, bold: true, color: "#4B5563", margin: [0, 6, 0, 2] },
-      cellHeader: { fontSize: 8.5, bold: true, color: "#6B7280", margin: [0, 1] },
-      cell: { fontSize: 8.5, color: "#16181B", margin: [0, 1] },
-      sourceLine: { fontSize: 7.5, color: "#23747D", margin: [1, 0, 0, 4] },
-    },
-  };
-  const pdf: any = pdfMake;
-  const made = pdf.createPdf(document);
-  return new Promise<Buffer>((resolve, reject) => {
-    made.getBuffer((buf: Buffer) => resolve(Buffer.from(buf)), (err: Error) => reject(err));
-  });
+/** The wordmark — "Relativity." set in Newsreader, the app's Logo as type. */
+function wordmark(margin: number[] = [0, 0, 0, 10]): PdfNode {
+  return { text: "Relativity.", style: "wordmark", margin };
 }
 
+/** Shared page styles: Newsreader for display, Anek Latin for everything else. */
+const PDF_STYLES = {
+  wordmark: { fontSize: 16, font: "Newsreader", color: "#16181B" },
+  title: { fontSize: 26, font: "Newsreader", color: "#16181B" },
+  subtitle: { fontSize: 12, color: "#6B7280" },
+  meta: { fontSize: 9, color: "#9CA3AF", margin: [0, 2, 0, 0] },
+  hero: { fontSize: 30, font: "Newsreader", color: "#16181B" },
+  heroLabel: { fontSize: 9, color: "#9CA3AF", margin: [0, -6, 0, 8] },
+  eyebrow: { fontSize: 7.5, bold: true, color: "#23747D", characterSpacing: 1.4 },
+  h1: { fontSize: 17, font: "Newsreader", color: "#16181B" },
+  sectionCount: { fontSize: 11, bold: true, color: "#9CA3AF" },
+  h2: { fontSize: 14, font: "Newsreader", color: "#16181B", margin: [0, 16, 0, 6] },
+  tagline: { fontSize: 9.5, font: "Newsreader", italics: true, color: "#23747D", margin: [0, -2, 0, 8] },
+  h3: { fontSize: 11, font: "Newsreader", color: "#4B5563", margin: [0, 10, 0, 3] },
+  body: { fontSize: 9.5, color: "#4B5563", lineHeight: 1.45, margin: [0, 2, 0, 4] },
+  callout: { fontSize: 9.5, margin: [10, 6, 10, 6], color: "#4B5563" },
+  quote: { fontSize: 10, font: "Newsreader", italics: true, color: "#4B5563", margin: [0, 4, 0, 6] },
+  tableTitle: { fontSize: 9.5, bold: true, color: "#4B5563", margin: [0, 6, 0, 2] },
+  cellHeader: { fontSize: 8.5, bold: true, color: "#6B7280", margin: [0, 1] },
+  cell: { fontSize: 8.5, color: "#16181B", margin: [0, 1] },
+  infoLabel: { fontSize: 8, color: "#9CA3AF" },
+  infoValue: { fontSize: 8, color: "#16181B" },
+  sourceLine: { fontSize: 7.5, color: "#23747D", margin: [1, 0, 0, 4] },
+  spacer: { fontSize: 6 },
+  footer: { fontSize: 7.5, color: "#9CA3AF" },
+};
+
 export async function buildReportPdf(run: any): Promise<Buffer> {
-  pdfMake.vfs = pdfFonts?.pdfMake?.vfs ?? pdfFonts ?? {};
   const report = run.report || {};
-  // Harness runs store a typed ReportDocument in `report` — different renderer.
-  if (report?.schema === "relativity/report.v1" || report?.schema === "relativity/report.v2") return harnessDocumentPdf(run);
-  const blocks: ReportBlock[] = Array.isArray(report.blocks) ? report.blocks : [];
+  // v2 harness documents carry their own sections; legacy runs stored flat blocks.
+  const isDoc = report?.schema === "relativity/report.v1" || report?.schema === "relativity/report.v2";
+  const blocks: ReportBlock[] = isDoc
+    ? documentToBlocks(report as ReportDocument)
+    : Array.isArray(report.blocks)
+      ? report.blocks
+      : [];
+  const docSources: any[] = isDoc && Array.isArray(report.sources) ? report.sources : [];
+  // The report's own verdict word leads the hero when no score was computed.
+  const verdictWord = isDoc && typeof report.verdict === "string" && report.verdict ? String(report.verdict) : null;
   const total = run.total_score;
   const coverage = run.coverage;
   const fitLow = run.fit_low;
@@ -1351,7 +1222,6 @@ export async function buildReportPdf(run: any): Promise<Buffer> {
   const footerAgent = isUuid(run.agent_name)
     ? run.agent_display_name || ""
     : run.agent_name || "";
-  const tokensLine = tokensMeta(run);
   const traceCount = Array.isArray(run.trace) ? run.trace.length : 0;
   // Subject's own logo, hotlinked from the free logo APIs — never stored.
   // A miss just means the title renders without it.
@@ -1363,28 +1233,23 @@ export async function buildReportPdf(run: any): Promise<Buffer> {
     execNodes.push(...sectionOpener("Section 01", "Executive summary", { count: String(blocks.length) }));
     if (!run.report) {
       // UI shows these two in this order: partial first, then fallback.
-      execNodes.push({
-        text: "No executive synthesis for this run — review the parameter breakdowns below.",
-        style: "callout",
-        background: "#F6EFDC",
-        color: "#7A5A1F",
-      });
+      execNodes.push(callout("No executive synthesis for this run — review the parameter breakdowns below.", "caution"));
     } else {
       if (report.partial) {
-        execNodes.push({
-          text: `Some skills could not assess every anchor — this report leans on partial evidence${covText !== "coverage n/a" ? ` (${covText})` : ""}.`,
-          style: "callout",
-          background: "#F6EFDC",
-          color: "#7A5A1F",
-        });
+        execNodes.push(
+          callout(
+            `Some skills could not assess every anchor — this report leans on partial evidence${covText !== "coverage n/a" ? ` (${covText})` : ""}.`,
+            "caution",
+          ),
+        );
       }
       if (report.source === "fallback") {
-        execNodes.push({
-          text: "AI narrative was unavailable for this run; this synthesis was assembled deterministically from the scored breakdowns below.",
-          style: "callout",
-          background: "#F6EFDC",
-          color: "#7A5A1F",
-        });
+        execNodes.push(
+          callout(
+            "AI narrative was unavailable for this run; this synthesis was assembled deterministically from the scored breakdowns below.",
+            "caution",
+          ),
+        );
       }
     }
     for (const block of blocks) {
@@ -1416,12 +1281,7 @@ export async function buildReportPdf(run: any): Promise<Buffer> {
     count: String(usable.length),
   });
   if (usable.length === 0) {
-    skillNodes.push({
-      text: "No skill reports were stored for this run.",
-      style: "callout",
-      background: "#F6EFDC",
-      color: "#7A5A1F",
-    });
+    skillNodes.push(callout("No skill reports were stored for this run.", "caution"));
   } else {
     // Index — a real sequence: each skill's score and coverage at a glance.
     usable.forEach((o, i) => {
@@ -1466,16 +1326,12 @@ export async function buildReportPdf(run: any): Promise<Buffer> {
   const document: any = {
     pageSize: "A4",
     pageMargins: [44, 46, 44, 60],
+    fonts: PDF_FONTS,
     info: { title: `${run.share_name || run.symbol || "Analysis"} — Equity Report`, author: "Relativity" },
     footer: (currentPage: number, pageCount: number) => ({
       columns: [
-        {
-          image: LOGO_PNG_DATA_URI,
-          width: 17,
-          height: 13,
-          margin: [0, 1, 0, 0],
-        },
-        { text: `Relativity · ${run.share_name || run.symbol}${footerAgent ? ` · ${footerAgent}` : ""}`, style: "footer", alignment: "left", margin: [0, 3, 0, 0] },
+        { text: "Relativity.", style: "wordmark", fontSize: 8.5, margin: [0, 1, 0, 0] },
+        { text: `${run.share_name || run.symbol}${footerAgent ? ` · ${footerAgent}` : ""}`, style: "footer", alignment: "left", margin: [0, 3, 0, 0] },
         {
           text: [
             { text: `page ${currentPage} of ${pageCount}` },
@@ -1492,13 +1348,8 @@ export async function buildReportPdf(run: any): Promise<Buffer> {
     }),
     content: [
       // ── Title band ──
-      // Brand mark alone on top, stock name and details stacked below it.
-      {
-        image: LOGO_PNG_DATA_URI,
-        width: 34,
-        height: 26,
-        margin: [0, 0, 0, 10],
-      },
+      // Wordmark alone on top, stock name and details stacked below it.
+      wordmark(),
       // Subject's logo sits left of the title; an empty spacer keeps the
       // column geometry identical when the CDN has no logo for the ticker.
       {
@@ -1544,7 +1395,6 @@ export async function buildReportPdf(run: any): Promise<Buffer> {
             },
           ]
         : [identityTitleBand(run)]),
-      ...(tokensLine ? [{ text: tokensLine, style: "meta", margin: [0, 8, 0, 0] }] : []),
       { text: "", style: "spacer" },
       // ── Hero band (agent runs; the UI shows no hero for skill runs) ──
       ...(!isSkillRun
@@ -1556,32 +1406,40 @@ export async function buildReportPdf(run: any): Promise<Buffer> {
                 body: [
                   [
                     {
-                      text: report.heroLabel
-                        ? String(report.heroLabel)
-                        : total != null && !lowCov
-                          ? `${total}`
-                          : "—",
+                      // The verdict word leads when no score was computed (the
+                      // UI puts the verdict's word at the headline too).
+                      text: verdictWord
+                        ? verdictWord
+                        : report.heroLabel
+                          ? String(report.heroLabel)
+                          : total != null && !lowCov
+                            ? `${total}`
+                            : "—",
                       style: "hero",
-                      color: report.heroLabel
-                        ? "#16181B"
-                        : total == null || lowCov
-                          ? "#9CA3AF"
-                          : signalColor(total),
+                      color: verdictWord
+                        ? VERDICT_TONE[verdictWord] ?? "#9CA3AF"
+                        : report.heroLabel
+                          ? "#16181B"
+                          : total == null || lowCov
+                            ? "#9CA3AF"
+                            : signalColor(total),
                       alignment: "center",
-                      ...(report.heroLabel && String(report.heroLabel).length > 14 ? { fontSize: 20 } : {}),
+                      ...(!verdictWord && report.heroLabel && String(report.heroLabel).length > 14 ? { fontSize: 20 } : {}),
                     },
                   ],
                   [
                     {
                       // UI renders the band pill beside the coverage pill in
                       // both hero variants — fold both into this sub-line.
-                      text: report.heroLabel
-                        ? `Stance${total != null && !lowCov ? ` · ${bandLabel(total)}` : ""} · ${covText}`
-                        : total == null
-                          ? "No fit score — see the skill reports below"
-                          : lowCov
-                            ? covText
-                            : `Fit to the agent's philosophy · ${bandLabel(total)} · ${covText}${fitLow != null && fitHigh != null ? ` · band ${fitLow}–${fitHigh}` : ""}`,
+                      text: verdictWord && total == null
+                        ? `Verdict from the report · ${covText}`
+                        : report.heroLabel
+                          ? `Stance${total != null && !lowCov ? ` · ${bandLabel(total)}` : ""} · ${covText}`
+                          : total == null
+                            ? "No fit score — see the skill reports below"
+                            : lowCov
+                              ? covText
+                              : `Fit to the agent's philosophy · ${bandLabel(total)} · ${covText}${fitLow != null && fitHigh != null ? ` · band ${fitLow}–${fitHigh}` : ""}`,
                       style: "heroLabel",
                       alignment: "center",
                     },
@@ -1598,38 +1456,28 @@ export async function buildReportPdf(run: any): Promise<Buffer> {
               : []),
           ]
         : []),
+      // ── Run info: verdict, identity, timing, tokens ──
+      runInfoPanel(run, covText, verdictWord),
       // Callouts the UI shows above the report body (all run modes).
       ...(run.price_data === "unavailable"
         ? [
-            {
-              text: "No live price feed for this instrument — valuation and technical criteria are shown as N/A.",
-              style: "callout",
-              background: "#F6EFDC",
-              color: "#7A5A1F",
-              margin: [0, 0, 0, 8],
-            },
+            callout(
+              "No live price feed for this instrument — valuation and technical criteria are shown as N/A.",
+              "caution",
+              [0, 0, 0, 8],
+            ),
           ]
         : []),
       ...(run.error
-        ? [
-            {
-              text: `Run error — ${plain(String(run.error)).slice(0, 400)}`,
-              style: "callout",
-              background: "#F7E9E9",
-              color: "#943F3F",
-              margin: [0, 0, 0, 8],
-            },
-          ]
+        ? [callout(`Run error — ${plain(String(run.error)).slice(0, 400)}`, "negative", [0, 0, 0, 8])]
         : []),
       ...(!isSkillRun && insufficientCoverage(coverage)
         ? [
-            {
-              text: `Not enough of the rubric could be scored to give a reliable headline score. Only ${coveragePct(coverage)}% of the criteria had usable data. Review the breakdowns below — unscored criteria are excluded, not failed.`,
-              style: "callout",
-              background: "#F6EFDC",
-              color: "#7A5A1F",
-              margin: [0, 0, 0, 8],
-            },
+            callout(
+              `Not enough of the rubric could be scored to give a reliable headline score. Only ${coveragePct(coverage)}% of the criteria had usable data. Review the breakdowns below — unscored criteria are excluded, not failed.`,
+              "caution",
+              [0, 0, 0, 8],
+            ),
           ]
         : []),
       ...execNodes,
@@ -1642,40 +1490,34 @@ export async function buildReportPdf(run: any): Promise<Buffer> {
         { pageBreak: true, count: String(traceCount) },
       ),
       ...reasoningBlocks(run),
+      // ── Sources the report cited (v2 documents carry their own) ──
+      ...(docSources.length
+        ? [
+            ...sectionOpener("Appendix", "Sources", { pageBreak: true, count: String(docSources.length) }),
+            ...docSources.map((s: any) => ({
+              text: `•  ${plain([s.label, s.value].filter(Boolean).join(" — "))}${s.url ? `  ${s.url}` : ""}`,
+              style: "sourceLine",
+              margin: [0, 2, 0, 2],
+            })),
+          ]
+        : []),
     ],
+    defaultStyle: { font: "Anek" },
     styles: {
+      ...PDF_STYLES,
       verdictPill: { fontSize: 8, bold: true, color: "#4B5563", alignment: "right" },
-      sourceLine: { fontSize: 7.5, color: "#23747D", margin: [1, 0, 0, 4] },
       obsHeader: { fontSize: 8, bold: true, color: "#16181B" },
       obsUrl: { fontSize: 7, color: "#9CA3AF" },
       obsSummary: { fontSize: 8, color: "#4B5563", lineHeight: 1.35, margin: [0, 0, 0, 2] },
       obsRaw: { fontSize: 6.5, color: "#9CA3AF", lineHeight: 1.3, margin: [0, 0, 0, 4] },
-      title: { fontSize: 26, bold: true, color: "#16181B" },
-      subtitle: { fontSize: 12, color: "#6B7280", fontFeatures: ["tnum"] },
-      meta: { fontSize: 9, color: "#9CA3AF", margin: [0, 2, 0, 0] },
-      spacer: { fontSize: 6 },
-      hero: { fontSize: 30, bold: true, color: "#16181B" },
-      heroLabel: { fontSize: 9, color: "#9CA3AF", margin: [0, -6, 0, 8] },
-      eyebrow: { fontSize: 7.5, bold: true, color: "#23747D", characterSpacing: 1.4 },
-      h1: { fontSize: 17, bold: true, color: "#16181B" },
-      sectionCount: { fontSize: 11, bold: true, color: "#9CA3AF" },
-      h2: { fontSize: 14, bold: true, color: "#16181B", margin: [0, 16, 0, 6] },
-      h3: { fontSize: 11, bold: true, color: "#4B5563", margin: [0, 10, 0, 3] },
-      body: { fontSize: 9.5, color: "#4B5563", lineHeight: 1.45, margin: [0, 2, 0, 4] },
-      callout: { fontSize: 9.5, margin: [10, 6, 10, 6], color: "#4B5563" },
-      quote: { fontSize: 10, italics: true, color: "#4B5563", margin: [0, 4, 0, 6] },
-      tableTitle: { fontSize: 9.5, bold: true, color: "#4B5563", margin: [0, 6, 0, 2] },
-      cellHeader: { fontSize: 8.5, bold: true, color: "#6B7280", fontFeatures: ["smcp"], margin: [0, 1] },
-      cell: { fontSize: 8.5, color: "#16181B", margin: [0, 1] },
-      thought: { fontSize: 9, italics: true, color: "#4B5563", lineHeight: 1.45, margin: [12, 3, 0, 4] },
+      thought: { fontSize: 9, font: "Newsreader", italics: true, color: "#4B5563", lineHeight: 1.45, margin: [12, 3, 0, 4] },
       toolLine: { fontSize: 8.5, color: "#16181B" },
       risks: { fontSize: 9, color: "#7A5A1F", margin: [0, 2, 0, 4] },
-      footer: { fontSize: 7.5, color: "#9CA3AF" },
     },
   };
 
   const pdf: any = pdfMake;
-  const doc = pdf.createPdf(document);
+  const doc = pdf.createPdf(document, undefined, PDF_FONTS, pdfFontVfs());
   return new Promise<Buffer>((resolve, reject) => {
     doc.getBuffer((buf: Buffer) => resolve(Buffer.from(buf)), (err: Error) => reject(err));
   });

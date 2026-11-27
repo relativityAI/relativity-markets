@@ -75,33 +75,88 @@ export function FaviconMark({ url, size = 12 }: { url: string; size?: number }) 
 
 // Circular country mark for a run's exchange — replaces the 🇮🇳/🇺🇸 emoji.
 // TradingView's own SVGs, hotlinked (no asset to babysit).
-const COUNTRY_FLAGS: Record<string, string> = {
-    IN: "https://s3-symbol-logo.tradingview.com/country/IN--big.svg",
-    US: "https://s3-symbol-logo.tradingview.com/country/US--big.svg",
-};
-
-export function FlagLogo({ source, size = 14 }: { source?: string | null; size?: number }) {
-    const key = String(source || "").toUpperCase() === "NSE" ? "IN" : "US";
+export function CountryFlag({ country, size = 14, title }: { country?: string | null; size?: number; title?: string }) {
+    const code = String(country || "").trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(code)) return null;
     return (
         <img
-            src={COUNTRY_FLAGS[key]}
+            src={`https://s3-symbol-logo.tradingview.com/country/${code}--big.svg`}
             alt=""
             aria-hidden="true"
-            title={key === "IN" ? "India" : "United States"}
+            title={title || code}
             width={size}
             height={size}
             loading="lazy"
+            onError={(e) => (e.currentTarget.style.display = "none")}
             style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0, display: "inline-block" }}
         />
+    );
+}
+
+export function FlagLogo({ source, size = 14 }: { source?: string | null; size?: number }) {
+    const key = String(source || "").toUpperCase() === "NSE" ? "IN" : "US";
+    return <CountryFlag country={key} size={size} title={key === "IN" ? "India" : "United States"} />;
+}
+
+/**
+ * A plugin's market scope as flags: its country when it has one, else the
+ * supported markets (India + US) — "works for any market" = all of them.
+ */
+export function MarketFlags({ country, size = 14 }: { country?: string | null; size?: number }) {
+    const code = String(country || "").trim().toUpperCase();
+    const codes = /^[A-Z]{2}$/.test(code) ? [code] : ["IN", "US"];
+    return (
+        <span className="inline-flex shrink-0 items-center gap-1">
+            {codes.map((c) => (
+                <CountryFlag key={c} country={c} size={size} />
+            ))}
+        </span>
     );
 }
 
 // Company logo for a ticker, served by our own /logo/:symbol route (which
 // resolves symbol → domain server-side and redirects to the Ticker Logos
 // CDN). Unknown ticker falls back to its initial rather than a broken image.
+
+/** Sample a loaded logo: true for a near-black monochrome glyph (AAPL & co)
+ *  that would vanish on the dark plate. Both logo hosts send CORS `*`, so
+ *  the canvas is readable; anything else (tainted canvas, decode hiccup)
+ *  just returns false and the logo renders untouched. */
+function isDarkMono(img: HTMLImageElement): boolean {
+    try {
+        const w = img.naturalWidth;
+        const h = img.naturalHeight;
+        if (!w || !h || w * h > 400_000) return false;
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (!ctx) return false;
+        ctx.drawImage(img, 0, 0);
+        const d = ctx.getImageData(0, 0, w, h).data;
+        let opaque = 0;
+        let colored = 0;
+        let dark = 0;
+        for (let i = 0; i < d.length; i += 4) {
+            if (d[i + 3] < 64) continue;
+            opaque++;
+            const mx = Math.max(d[i], d[i + 1], d[i + 2]);
+            if (mx - Math.min(d[i], d[i + 1], d[i + 2]) > 40) colored++;
+            if (mx < 96) dark++;
+        }
+        return opaque > 4 && colored / opaque < 0.08 && dark / opaque > 0.6;
+    } catch {
+        return false;
+    }
+}
+
 export function TickerLogo({ symbol, size = 20 }: { symbol?: string; size?: number }) {
     const sym = String(symbol || "").trim();
     const [failed, setFailed] = useState(false);
+    const [monoDark, setMonoDark] = useState(false);
+    // First host 404s on some tickers (logoapi.sh's gaps) — retry on the
+    // other one before giving up and showing the letter.
+    const [alt, setAlt] = useState(false);
     const radius = "50%"; // circle, TradingView-style
     if (!sym) return null;
     if (failed) {
@@ -129,23 +184,52 @@ export function TickerLogo({ symbol, size = 20 }: { symbol?: string; size?: numb
         );
     }
     return (
-        <img
-            src={`${API_BASE}/logo/${encodeURIComponent(sym)}`}
-            alt=""
-            aria-hidden="true"
-            title={sym}
-            loading="lazy"
-            decoding="async"
-            onError={() => setFailed(true)}
+        // Plate lives on the WRAPPER: `filter: invert(1)` (dark mode, black
+        // glyphs) inverts everything on the element it's set on — background
+        // included — so the plate must never sit on the filtered <img>.
+        <span
             style={{
                 width: size,
                 height: size,
-                objectFit: "contain",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
                 flexShrink: 0,
-                display: "inline-block",
-                borderRadius: radius,
+                borderRadius: "50%",
+                overflow: "hidden",
+                // No plate: the logos are SVGs with their own art — render as-is.
             }}
-        />
+        >
+            <img
+                // v=4: busts the browser's cached 302 — the redirect itself used to be
+                // cached for a day, so a new logo source took a day to show.
+                // Also forces a fresh CORS fetch — a response cached before
+                // crossOrigin was added would taint the canvas and kill detection.
+                src={`${API_BASE}/logo/${encodeURIComponent(sym)}?v=4${alt ? "&alt=1" : ""}`}
+                alt=""
+                aria-hidden="true"
+                title={sym}
+                loading="lazy"
+                decoding="async"
+                // no-cors images taint the canvas — without this the mono-dark
+                // pixel check always throws and black logos stay black.
+                crossOrigin="anonymous"
+                data-mono-dark={monoDark ? "1" : undefined}
+                onLoad={(e) => {
+                    if (!monoDark && isDarkMono(e.currentTarget)) setMonoDark(true);
+                }}
+                onError={() => (alt ? setFailed(true) : setAlt(true))}
+                style={{
+                    // 70% = the largest square whose corners fit inside the
+                    // wrapper circle (side = d/√2), so full-bleed SVGs are
+                    // never clipped by the plate.
+                    width: Math.round(size * 0.7),
+                    height: Math.round(size * 0.7),
+                    objectFit: "contain",
+                    display: "inline-block",
+                }}
+            />
+        </span>
     );
 }
 

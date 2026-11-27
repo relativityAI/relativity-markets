@@ -38,7 +38,12 @@ function downloadFile(name: string, content: string): void {
 }
 
 export function WorkspaceExplorer({ workspace, live = false }: { workspace: Record<string, string>; live?: boolean }) {
-    const paths = useMemo(() => Object.keys(workspace).sort(sortPaths), [workspace]);
+    // Legacy runs persisted raw tool dumps under /knowledge_base/ — that UI is
+    // gone; never resurface dead JSON files from old snapshots.
+    const paths = useMemo(
+        () => Object.keys(workspace).filter((p) => !p.startsWith("/knowledge_base/")).sort(sortPaths),
+        [workspace],
+    );
     const [selected, setSelected] = useState(paths[0] ?? "");
     const content = workspace[selected] ?? "";
 
@@ -190,7 +195,7 @@ function groupPaths(paths: string[]): Group[] {
 
 /** index.md first, then control, then everything else alphabetically. */
 function sortPaths(a: string, b: string): number {
-    const rank = (p: string) => (p === "/index.md" ? 0 : p.startsWith("/control/") ? 1 : p.startsWith("/knowledge_base/") ? 2 : p.startsWith("/sources/") ? 3 : 4);
+    const rank = (p: string) => (p === "/index.md" ? 0 : p.startsWith("/control/") ? 1 : p.startsWith("/sources/") ? 2 : 3);
     return rank(a) - rank(b) || a.localeCompare(b);
 }
 

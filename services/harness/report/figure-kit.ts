@@ -60,8 +60,6 @@ const HOVER_CSS =
   ".fig-hit{fill:transparent}" +
   ".fig-seg .fig-ro{opacity:0;transition:opacity .06s;pointer-events:none}" +
   ".fig-seg:hover .fig-ro{opacity:1}" +
-  ".fig-row .fig-val{opacity:0;transition:opacity .06s}" +
-  ".fig-row:hover .fig-val{opacity:1}" +
   ".fig-row:hover .fig-bar{opacity:.8}" +
   "</style>";
 
@@ -85,7 +83,9 @@ function txt(
   const style = [
     `font-family:${o.serif ? C.serif : C.sans}`,
     `font-size:${o.size ?? 11}px`,
-    `font-weight:${o.weight ?? 300}`,
+    // Newsreader never renders light in a report: serif text floors at 400
+    // (explicit 300s elsewhere in the kit resolve to normal too).
+    `font-weight:${o.serif ? Math.max(o.weight ?? 400, 400) : (o.weight ?? 300)}`,
     `fill:${o.fill ?? C.mid}`,
     o.italic ? "font-style:italic" : "",
     o.halo ? `paint-order:stroke;stroke:${C.bg};stroke-width:3px;stroke-linejoin:round` : "",
@@ -367,46 +367,52 @@ function legendRow(x: number, y: number, entries: { sw: "rect" | "dash"; color: 
 }
 
 /**
- * Horizontal bars (hbar) — magnitude bars from a common zero baseline, inked
- * by sign (positive → blue ink, negative → warm ink), value revealed on
- * hover (+ native <title>), compact content-width, sign legend on top.
+ * Horizontal bars (hbar) — the compact ranked list: left label column, bars
+ * from a zero baseline (negatives grow left, positives right, inked by sign),
+ * the signed value always printed in a right-hand column. No legend — the
+ * signed values carry it (skill rule 6: label the data, not a legend).
+ * Content-sized artboard: it renders at its drawn width, never stretched.
  */
 function hBarsSvg(categories: string[], values: number[], o: FigureOpts): string | null {
   const n = Math.min(categories.length, values.length);
   if (!n) return null;
-  const hasPos = values.some((v) => v > 0);
-  const hasNeg = values.some((v) => v < 0);
-  const rowH = 30;
-  const barH = 16;
-  const padT = hasPos && hasNeg ? 30 : hasPos || hasNeg ? 30 : 8;
-  const padB = 14;
+  const rowH = 21;
+  const barH = 9;
+  const padT = 8;
+  const padB = 8;
   const h = padT + n * rowH + padB;
-  const maxAbs = Math.max(...values.map(Math.abs));
-  const trackW = 380;
-  const labelW = clamp(Math.max(...categories.map((c) => c.length)) * 6.4 + 14, 60, 300);
-  const w = clamp(labelW + trackW + 48, 460, 1040);
-  const trackX = w - trackW - 34;
+
+  const texts = values.map((v) => signed(v, o.unit ?? ""));
+  const labelW = clamp(Math.max(...categories.map((c) => c.length)) * 6.4 + 18, 70, 300);
+  const valueW = clamp(Math.max(...texts.map((t) => t.length)) * 6.6 + 24, 60, 140);
+  // one compact width for every hbar — the track absorbs the label/value columns
+  const trackW = clamp(620 - labelW - valueW - 42, 160, 380);
+  const w = labelW + trackW + valueW + 42;
+  const trackX = labelW + 14;
+  const valX = w - 14;
+
+  // honest diverging scale: both signs share one scale, zero sits where the
+  // data puts it; one sign only hugs its edge of the track.
+  const posMax = Math.max(0, ...values);
+  const negMax = Math.max(0, ...values.map((v) => -v));
+  const scale = posMax + negMax > 0 ? trackW / (posMax + negMax) : 0;
+  const zeroX = posMax + negMax > 0 ? trackX + negMax * scale : trackX;
 
   const g: string[] = [svgOpen(w, h, o.label)];
-  if (hasPos && hasNeg) {
-    g.push(...legendRow(trackX, 8, [
-      { sw: "rect", color: C.pos, label: "+ Positive" },
-      { sw: "rect", color: C.neg, label: "− Negative" },
-    ]));
-  } else if (hasPos || hasNeg) {
-    g.push(...legendRow(trackX, 8, [{ sw: "rect", color: hasPos ? C.pos : C.neg, label: o.unit?.trim() === "%" ? "Change, %" : "Change" }]));
-  }
-  g.push(line(trackX, padT, trackX, h - padB, C.grid, 1)); // zero baseline
+  g.push(line(zeroX, padT, zeroX, h - padB, C.grid, 1)); // zero baseline
   for (let i = 0; i < n; i++) {
-    const y = padT + i * rowH + (rowH - barH) / 2;
-    const bw = maxAbs > 0 ? (Math.abs(values[i]) / maxAbs) * trackW : 0;
-    const color = signColor(values[i]);
+    const y = padT + i * rowH;
+    const cy = y + rowH / 2;
+    const v = values[i];
+    const bw = scale * Math.abs(v);
+    const x = v >= 0 ? zeroX : zeroX - bw;
+    const color = signColor(v);
     g.push(
       `<g class="fig-row">` +
-        txt(trackX - 8, y + barH / 2 + 4, categories[i], { anchor: "end", size: 12, fill: C.ink, halo: true }) +
-        rectT(trackX, y, bw, barH, color, signed(values[i], o.unit ?? ""), 2) +
-        // hidden value revealed on hover
-        `<text class="fig-val" x="${rr(trackX + bw + 8)}" y="${rr(y + barH / 2 + 4)}" style="font-family:${C.sans};font-size:12px;font-weight:400;fill:${color};font-variant-numeric:tabular-nums lining-nums">${esc(signed(values[i], o.unit ?? ""))}</text>` +
+        txt(8, cy + 4, categories[i], { anchor: "start", size: 11.5, fill: C.ink }) +
+        rectT(x, cy - barH / 2, bw, barH, color, signed(v, o.unit ?? ""), 1) +
+        // the signed value, always on, right-aligned like a ledger column
+        `<text class="fig-val" x="${rr(valX)}" y="${rr(cy + 4)}" style="font-family:${C.sans};font-size:11.5px;font-weight:400;fill:${color};font-variant-numeric:tabular-nums lining-nums" text-anchor="end">${esc(signed(v, o.unit ?? ""))}</text>` +
         `</g>`,
     );
   }

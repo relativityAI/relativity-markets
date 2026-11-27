@@ -87,7 +87,7 @@ describe("AnalysisResult navbar", () => {
         await expectRunInfoHasDuration();
     });
 
-    it("harness run: big logo, stock name, ticker and verdict lead the report", async () => {
+    it("harness run: big logo, identity line and verdict lead the report", async () => {
         vi.mocked(AnalysisService.readAnalysis).mockResolvedValue({
             ...baseRun,
             source: "SEC",
@@ -99,17 +99,20 @@ describe("AnalysisResult navbar", () => {
         const logo = document.querySelector('img[title="ACME"]') as HTMLImageElement;
         expect(logo).toBeTruthy();
         expect(logo.getAttribute("src")).toContain("/logo/ACME");
-        expect(logo.style.width).toBe("128px");
+        // The plate is 128px; the img sits inset (70%) so the circle never clips it.
+        expect((logo.parentElement as HTMLElement).style.width).toBe("128px");
+        expect(parseFloat(logo.style.width)).toBeLessThan(128);
 
-        // Name and ticker share one line beside the big logo; no "Verdict" label.
-        const header = logo.parentElement!;
-        expect(header.textContent).toContain("Acme Ltd");
-        expect(header.textContent).toContain("ACME");
-        expect(header.textContent).not.toContain("Verdict");
-        const name = within(header).getByText("Acme Ltd");
-        const ticker = within(header).getByText("ACME");
-        expect(name.parentElement).toBe(ticker.parentElement);
-        expect(getComputedStyle(name).color).not.toBe(getComputedStyle(ticker).color);
+        // One identity line above the logo: ticker · full name · run date · duration.
+        const identity = screen.getByRole("heading");
+        expect(identity.textContent).toContain("ACME");
+        expect(identity.textContent).toContain("Acme Ltd");
+        expect(identity.textContent).toMatch(/Ran \d{1,2} \w{3} \d{4}/);
+        expect(identity.textContent).toContain("42s");
+        // Name link opens the stock page in a new tab.
+        expect(screen.getByRole("link", { name: /Acme Ltd/i }).getAttribute("target")).toBe("_blank");
+        // No ticker beside the name, no "Verdict" label.
+        expect(screen.queryByText("Verdict")).toBeNull();
         expect(parseFloat(getComputedStyle(screen.getByText("Fair")).fontSize)).toBeGreaterThan(40);
     });
 

@@ -18,7 +18,7 @@ import { formatSeconds } from "@/utils";
 import PluginAvatar from "@/components/shared/PluginAvatar";
 import AgentActivity from "../components/shared/AgentActivity";
 import { MdArrowBack, MdInfo } from "react-icons/md";
-import { Download } from "lucide-react";
+import { Download, TriangleAlert, ArrowUpRight } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { dur, ease } from "@/lib/motion";
 import { ReportBlockRenderer } from "../components/builder/ReportBlockRenderer";
@@ -121,6 +121,36 @@ interface MetaRow {
 
 const TERMINAL = ["complete", "completed", "success", "error", "failed", "budget_exhausted"];
 
+/** Wall-clock length of a run: the recorded seconds, else start→updated. */
+export function runDuration(run: any): string | null {
+    if (typeof run?.duration === "number" && run.duration > 0) return formatSeconds(Math.round(run.duration));
+    const started = run?.started_at || run?.created_at || null;
+    if (!started) return null;
+    const terminal = TERMINAL.includes(String(run?.status || "").toLowerCase());
+    const end = terminal ? +new Date(run?.updated_at || started) : Date.now();
+    const ms = end - +new Date(started);
+    return ms >= 0 ? formatSeconds(Math.round(ms / 1000)) : null;
+}
+
+/**
+ * Token usage for a run: harness rows carry a final "usage" trace event (the
+ * run table has no token columns); legacy rows tally per-section tokens in
+ * qualitative_analysis. Either source feeds both the cost meter and the rows.
+ */
+export function traceTokens(run: any): { input: number; output: number; total: number } | null {
+    const trace: any[] = Array.isArray(run?.trace) ? run.trace : [];
+    for (let i = trace.length - 1; i >= 0; i--) {
+        const ev = trace[i];
+        if (ev?.type === "usage" && ev.value) {
+            const v = ev.value as { tokens_in?: number; tokens_out?: number };
+            const input = Number(v.tokens_in ?? 0);
+            const output = Number(v.tokens_out ?? 0);
+            if (input + output > 0) return { input, output, total: input + output };
+        }
+    }
+    return tokensUsed(run?.qualitative_analysis || {});
+}
+
 /**
  * The run info tab: tool calls, started, duration, tokens in/out, agent, stock.
  * Missing fields render as "—" rather than a guessed number.
@@ -128,19 +158,10 @@ const TERMINAL = ["complete", "completed", "success", "error", "failed", "budget
 export function runMetadata(run: any): { rows: MetaRow[] } {
     const trace: any[] = Array.isArray(run?.trace) ? run.trace : [];
     const toolCalls = trace.filter((e) => e?.type === "tool_call");
-    const status = String(run?.status || "").toLowerCase();
-    const terminal = TERMINAL.includes(status);
 
-    const tokens = tokensUsed(run?.qualitative_analysis || {});
-
+    const tokens = traceTokens(run);
     const started = run?.started_at || run?.created_at || null;
-    const wallMs = started ? (terminal ? +new Date(run?.updated_at || started) : Date.now()) - +new Date(started) : null;
-    const duration =
-        typeof run?.duration === "number" && run.duration > 0
-            ? formatSeconds(Math.round(run.duration))
-            : wallMs !== null && wallMs >= 0
-                ? formatSeconds(Math.round(wallMs / 1000))
-                : null;
+    const duration = runDuration(run);
     const ts = (v: any) =>
         typeof v === "string" && v
             ? new Date(v).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
@@ -156,6 +177,7 @@ export function runMetadata(run: any): { rows: MetaRow[] } {
     push("Duration", duration);
     push("Tokens in", tokens ? formatTokens(tokens.input) : "—");
     push("Tokens out", tokens ? formatTokens(tokens.output) : "—");
+    push("Model", run?.model);
     push("Plugin", run?.agent_name);
     push("Stock", run?.symbol);
 
@@ -210,22 +232,9 @@ export function RunMetadata({ run }: { run: any }) {
 
     const { spans, totalMs } = useMemo(() => waterfallFor(run?.trace, typeof run?.duration === "number" ? run.duration : undefined), [run?.trace, run?.duration]);
 
-    // Token usage: harness runs record a final "usage" trace event (the run
-    // table has no token columns); legacy pipeline runs carry per-section
-    // tokens in qualitative_analysis. Either source feeds the CostMeter.
-    const tokens = useMemo(() => {
-        const trace = Array.isArray(run?.trace) ? run.trace : [];
-        for (let i = trace.length - 1; i >= 0; i--) {
-            const ev = trace[i];
-            if (ev?.type === "usage" && ev.value) {
-                const v = ev.value as { tokens_in?: number; tokens_out?: number };
-                const input = Number(v.tokens_in ?? 0);
-                const output = Number(v.tokens_out ?? 0);
-                if (input + output > 0) return { input, output, total: input + output };
-            }
-        }
-        return tokensUsed(run?.qualitative_analysis || {});
-    }, [run?.trace, run?.qualitative_analysis]);
+    // Same source as the rows above — the harness "usage" trace event, else
+    // legacy per-section tokens.
+    const tokens = useMemo(() => traceTokens(run), [run]);
 
     // ponytail: the harness records no per-model pricing — the meter reads tokens, not dollars; add $ when cost data lands.
     const costLines: CostLine[] =
@@ -282,7 +291,7 @@ export function RunMetadata({ run }: { run: any }) {
 }
 
 /** Sticky-navbar run pill (assistant-ui agent-status): what the run is doing + elapsed. */
-function AgentStatusPill({ analysis }: { analysis: any }) {
+function AgentStatusPill({ analysis, onRetry }: { analysis: any; onRetry?: () => void | Promise<void> }) {
     const statusKey = String(analysis?.status || "").toLowerCase();
     const terminal = TERMINAL.includes(statusKey);
     const failed = ["error", "failed", "budget_exhausted"].includes(statusKey);
@@ -326,6 +335,9 @@ function AgentStatusPill({ analysis }: { analysis: any }) {
             state={failed ? "failed" : terminal ? "done" : "working"}
             label={label}
             elapsed={elapsed !== undefined && elapsed > 0 ? formatSeconds(elapsed) : undefined}
+            onRetry={failed && onRetry ? () => void onRetry() : undefined}
+            // The cause is one hover away — no error section on the page.
+            title={failed ? String(analysis?.error || "").trim() || undefined : undefined}
             aria-live="polite"
         />
     );
@@ -651,8 +663,8 @@ export default function AnalysisResult() {
                                 );
                             })}
                         </Tabs.List>
-                        <HStack gap={2} align="center" flexShrink={0}>
-                            <AgentStatusPill analysis={analysis} />
+                        <HStack gap={2} align="center" flexShrink={0} ml="auto">
+                            <AgentStatusPill analysis={analysis} onRetry={retryRun} />
                             {isComplete && <DownloadButton runId={id} name={analysis.share_name || analysis.symbol} />}
                         </HStack>
                     </Flex>
@@ -696,21 +708,7 @@ export default function AnalysisResult() {
                     </Box>
                 )}
 
-                {analysis.error && isComplete && (
-                    <Box mb={6}>
-                        <Callout tone="negative" title="Run Error">
-                            <Text
-                                as="span"
-                                fontFamily="var(--font-mono)"
-                                whiteSpace="pre-wrap"
-                                wordBreak="break-word"
-                                fontSize="12.5px"
-                            >
-                                {analysis.error}
-                            </Text>
-                        </Callout>
-                    </Box>
-                )}
+                {/* Run failure lives in the status pill (top-right) only. */}
 
                 {/* Hero: the verdict leads — its word is the headline, the
                     identity block (avatar → actor → skills → model) and the
@@ -837,16 +835,12 @@ export default function AnalysisResult() {
                                         )}
 
                                         <Box mb={4}>
-                                            {skillOutputs.length > 0 ? (
+                                            {skillOutputs.length > 0 && (
                                                 <Flex direction="column" gap={6}>
                                                     {skillOutputs.map((out: any, i: number) => (
                                                         <SkillResultCard key={out.skill_id || out.skill_name || i} output={out} analysisId={id} />
                                                     ))}
                                                 </Flex>
-                                            ) : (
-                                                <Callout tone="caution">
-                                                    No skill reports were stored for this run.
-                                                </Callout>
                                             )}
                                         </Box>
                                         </Box>
@@ -1058,7 +1052,7 @@ const VERDICT_BAND_EXAMPLE: Record<string, number> = {
     Outstanding: 95, Strong: 80, Fair: 60, Underwhelming: 45, Subpar: 20,
 };
 
-/** Harness run result: the typed ReportDocument + the Agent Workspace (reasoning + knowledge base). */
+/** Harness run result: the typed ReportDocument + the Agent Workspace (reasoning + tool trace). */
 /** The banner's Retry — spins while the relaunch request is in flight, so
  *  a click always answers visibly. */
 function RetryButton({ onRetry }: { onRetry: () => void | Promise<void> }) {
@@ -1079,13 +1073,30 @@ function RetryButton({ onRetry }: { onRetry: () => void | Promise<void> }) {
     );
 }
 
+/** The 6px circle that separates items on the report identity line. */
+function IdDot() {
+    return (
+        <Box
+            as="span"
+            display="inline-block"
+            w="6px"
+            h="6px"
+            borderRadius="full"
+            bg="var(--ink-tertiary)"
+            mx={2}
+            style={{ verticalAlign: "middle" }}
+            aria-hidden="true"
+        />
+    );
+}
+
 function HarnessRunView({ run, onRetry }: { run: any; tags?: string[]; onRetry?: () => void | Promise<void> }) {
     const doc = run.report_document as ReportDocument;
     const status = String(run.status || "").toLowerCase();
     const failed = status === "failed" || status === "budget_exhausted" || status === "error";
     // Mid-run the canvas pipeline flushes a partial document — but the report
     // tab stays hidden until the run is terminal; live viewing happens in the
-    // agent workspace (reasoning timeline + knowledge base) behind a spinner.
+    // agent workspace (reasoning timeline + workspace files) behind a spinner.
     const drafting = status === "running" || status === "pending" || status === "processing";
     // Derived tab — no effect: while drafting the workspace is the ONLY view;
     // the moment the run finishes the report is selected (unless the user
@@ -1100,8 +1111,51 @@ function HarnessRunView({ run, onRetry }: { run: any; tags?: string[]; onRetry?:
     const verdictInk = verdictForScore(VERDICT_BAND_EXAMPLE[verdictWord] ?? null).color;
     const ticker = String(doc?.symbol || run.symbol || "");
     const stockName = String(run.share_name || ticker);
-    // Some runs store the ticker as the share name — don't print it twice.
-    const showTicker = ticker && ticker.toLowerCase() !== stockName.toLowerCase();
+    // Identity line above the logo: human-readable run date + duration.
+    const runAt = run.started_at || run.created_at || null;
+    const runDate = runAt
+        ? new Date(runAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
+        : "—";
+    const runDur = runDuration(run);
+    // Harness rows store share_name = symbol — when the name is just the
+    // ticker again, look the real company name up so both can show.
+    const sameName = stockName.trim().toLowerCase() === ticker.trim().toLowerCase();
+    const [company, setCompany] = useState<string | null>(null);
+    useEffect(() => {
+        if (!sameName || !ticker) return;
+        const ac = new AbortController();
+        fetch(`${API_BASE}/stocks/search?${new URLSearchParams({ query: ticker })}`, { signal: ac.signal })
+            .then((r) => (r.ok ? r.json() : []))
+            .then((rows: any[]) => {
+                const hit = (Array.isArray(rows) ? rows : []).find(
+                    (r) => String(r?.ticker || r?.SYMBOL || "").toUpperCase() === ticker.toUpperCase(),
+                );
+                const name = String(hit?.name || hit?.NAME || "").trim();
+                if (name) setCompany(name);
+            })
+            .catch(() => {});
+        return () => ac.abort();
+    }, [sameName, ticker]);
+    const displayName = sameName ? company : stockName;
+    // SEC names arrive ALL CAPS; show them in normal case, never uppercased.
+    const prettyName =
+        displayName && displayName === displayName.toUpperCase() && /\p{L}/u.test(displayName)
+            ? displayName.toLowerCase().replace(/(^|\s)\p{L}/gu, (c) => c.toUpperCase())
+            : displayName;
+    const stockHref = `/stock/${encodeURIComponent(ticker)}${
+        run.source ? `?source=${encodeURIComponent(String(run.source).toUpperCase())}` : ""
+    }`;
+    // `run.error` is a notes list (partial sections, open todos), not always a
+    // failure — only a dead status makes it an error. The API-key fix is offered
+    // only when the text actually reads like a key problem.
+    const notes = String(run.error || "").split("\n").map((l) => l.trim()).filter(Boolean);
+    const hasIssue = !drafting && (failed || notes.length > 0);
+    const keyIssue = /\b(401|403)\b|api[ _-]?key|unauthorized|forbidden|no provider key|authentication/i.test(
+        notes.join(" "),
+    );
+    // A dead run shows its cause up front; a finished run with notes stays tucked away.
+    const [notesOpen, setNotesOpen] = useState(failed);
+    const issueTone = failed ? "var(--signal-negative)" : "var(--signal-caution)";
     return (
         <Box bg="var(--surface-canvas)">
             <Tabs.Root
@@ -1158,39 +1212,64 @@ function HarnessRunView({ run, onRetry }: { run: any; tags?: string[]; onRetry?:
                             );
                         })}
                     </Tabs.List>
-                    <Box flexShrink={0}>
+                    <HStack gap={2} flexShrink={0} ml="auto" data-print-hide>
+                        {hasIssue && (
+                            <Button
+                                variant="subtle"
+                                size="sm"
+                                onClick={() => setNotesOpen((v) => !v)}
+                                aria-expanded={notesOpen}
+                                aria-controls="run-issue-notes"
+                                style={{
+                                    color: issueTone,
+                                    background: `color-mix(in srgb, ${issueTone} 12%, transparent)`,
+                                    gap: 6,
+                                }}
+                            >
+                                <TriangleAlert size={13} aria-hidden="true" />
+                                {failed ? "Run failed" : "Report incomplete"}
+                            </Button>
+                        )}
                         <DownloadButton runId={run.id} name={run.share_name || run.symbol} />
-                    </Box>
+                    </HStack>
                 </Flex>
 
-                {/* Failed runs must say why — cause, the fix, and a retry —
-                    on every tab, not just the partial report. */}
-                {!drafting && (failed || run.error) && (
-                    <Box mt={4} mb={2}>
-                        <Callout tone="negative" title="Run Error">
-                            {run.error ? (
+                {/* Cause lives behind the top-right chip: no card over the report. */}
+                {hasIssue && notesOpen && (
+                    <Box
+                        id="run-issue-notes"
+                        mt={2}
+                        mb={3}
+                        pl={3}
+                        borderLeft={`2px solid ${issueTone}`}
+                    >
+                        {notes.length ? (
+                            notes.map((line) => (
                                 <Text
-                                    as="span"
+                                    key={line}
                                     fontFamily="var(--font-mono)"
                                     whiteSpace="pre-wrap"
                                     wordBreak="break-word"
                                     fontSize="12.5px"
+                                    lineHeight={1.6}
+                                    color="var(--ink-secondary)"
+                                    mb={1}
                                 >
-                                    {run.error}
+                                    {line}
                                 </Text>
-                            ) : (
-                                <Text as="span">
-                                    The run stopped before it could finish — no cause was recorded.
-                                </Text>
-                            )}
-                        </Callout>
-                        <Flex align="center" gap={3} mt={2}>
-                            <Text fontSize="12.5px" color="var(--ink-secondary)">
-                                Check Settings → API keys, then retry.
+                            ))
+                        ) : (
+                            <Text fontSize="13px" color="var(--ink-secondary)">
+                                The run stopped before it could finish — no cause was recorded.
                             </Text>
-                            {onRetry && (
-                                <RetryButton onRetry={onRetry} />
+                        )}
+                        <Flex align="center" gap={3} mt={2} flexWrap="wrap">
+                            {keyIssue && (
+                                <Text fontSize="12.5px" color="var(--ink-tertiary)">
+                                    Check Settings → API keys, then retry.
+                                </Text>
                             )}
+                            {onRetry && <RetryButton onRetry={onRetry} />}
                         </Flex>
                     </Box>
                 )}
@@ -1210,40 +1289,88 @@ function HarnessRunView({ run, onRetry }: { run: any; tags?: string[]; onRetry?:
                                 The run did not complete — the report below is partial.
                             </Text>
                         )}
-                        {/* Stock identity + verdict lead the report: a large logo,
-                            name and ticker on one line, then the verdict word. */}
+                        {/* Identity line above the logo: ticker ● company name ●
+                            run date ● duration — dots are real circles, not ·. */}
                         {doc && (
-                            <Flex align="center" gap={{ base: 5, md: 8 }} mt={6} mb={9}>
-                                <TickerLogo symbol={ticker} size={128} />
-                                <Box minW={0}>
-                                    <Flex align="baseline" gap={3} flexWrap="wrap">
-                                        <Text
-                                            as="h1"
-                                            fontSize={{ base: "18px", md: "20px" }}
-                                            fontWeight={500}
-                                            lineHeight="shorter"
-                                            color="var(--ink-primary)"
-                                        >
-                                            {stockName}
-                                        </Text>
-                                        {showTicker && (
-                                            <Text fontSize="14px" fontWeight={400} color="var(--ink-tertiary)">
-                                                {ticker}
-                                            </Text>
+                            <Box mt={6} mb={9}>
+                                <Flex align="center" gap={2} mb={3} minW={0} flexWrap="wrap">
+                                    <Box
+                                        w="6px"
+                                        h="6px"
+                                        borderRadius="full"
+                                        bg={verdictInk}
+                                        flexShrink={0}
+                                        aria-hidden="true"
+                                    />
+                                    <Text
+                                        as="h1"
+                                        fontSize="13px"
+                                        fontWeight={400}
+                                        fontFamily="var(--font-body)"
+                                        color="var(--ink-secondary)"
+                                        minW={0}
+                                        whiteSpace="nowrap"
+                                    >
+                                        {ticker}
+                                        <IdDot />
+                                        {prettyName && (
+                                            <>
+                                                <Link
+                                                    to={stockHref}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    style={{ color: "var(--signal-live)" }}
+                                                    className="hover:underline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
+                                                >
+                                                    {prettyName}
+                                                    <ArrowUpRight
+                                                        size={11}
+                                                        aria-hidden="true"
+                                                        // Tailwind preflight makes svgs display:block, which
+                                                        // breaks this inline link across lines — keep it inline.
+                                                        style={{ verticalAlign: "-1px", marginLeft: 1, display: "inline-block" }}
+                                                    />
+                                                </Link>
+                                                <IdDot />
+                                            </>
                                         )}
-                                    </Flex>
+                                        {runAt && (
+                                            <>
+                                                Ran {runDate}
+                                                <IdDot />
+                                            </>
+                                        )}
+                                        {runDur}
+                                    </Text>
+                                </Flex>
+                                <Flex align="center" gap={{ base: 5, md: 8 }}>
+                                    <Link
+                                        to={stockHref}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        data-solid=""
+                                        className="glass-hover -m-2 shrink-0 p-2 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
+                                        aria-label={`Open ${ticker} stock page`}
+                                    >
+                                        <span className="glass-hover-body block">
+                                            <TickerLogo symbol={ticker} size={128} />
+                                        </span>
+                                        <span className="glass-hover-cue text-[var(--ink-secondary)]">
+                                            <ArrowUpRight size={22} aria-hidden="true" />
+                                        </span>
+                                    </Link>
                                     <Text
                                         fontFamily="var(--font-display)"
-                                        fontWeight={300}
+                                        fontWeight={400}
                                         fontSize={{ base: "48px", md: "76px" }}
                                         lineHeight="0.95"
                                         color={verdictInk}
-                                        mt={{ base: 2, md: 3 }}
+                                        minW={0}
                                     >
                                         {verdictWord}
                                     </Text>
-                                </Box>
-                            </Flex>
+                                </Flex>
+                            </Box>
                         )}
                         <Box mt={4}>
                             <ReportDocumentRenderer document={doc} />
@@ -1254,7 +1381,7 @@ function HarnessRunView({ run, onRetry }: { run: any; tags?: string[]; onRetry?:
                     <Tabs.Content value="agent workspace">
                         {drafting && (
                             <Text mt={4} mb={2} fontSize="13px" color="var(--ink-secondary)">
-                                Run in progress — reasoning and knowledge base stream in here live.
+                                Run in progress — reasoning and tool activity stream in here live.
                             </Text>
                         )}
                         {hasTrace && (
@@ -1272,9 +1399,9 @@ function HarnessRunView({ run, onRetry }: { run: any; tags?: string[]; onRetry?:
                         )}
                         {workspace && (
                             <Box mt={8} mb={6}>
-                                <Text fontSize="13px" fontWeight={600} mb={1}>Knowledge Base</Text>
+                                <Text fontSize="13px" fontWeight={600} mb={1}>Workspace files</Text>
                                 <Text fontSize="12px" color="var(--ink-secondary)" mb={3}>
-                                    Evidence the agent gathered and distilled during research — notes cite archived sources.
+                                    Files the agent wrote during the run — report drafts, figures and notes.
                                 </Text>
                                 <WorkspaceExplorer workspace={workspace} live={drafting} />
                             </Box>

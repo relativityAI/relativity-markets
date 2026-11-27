@@ -10,6 +10,7 @@
 import { Avatar, Style } from "@dicebear/core";
 import voxelBotDefinition from "@dicebear/styles/voxel-bot.json" with { type: "json" };
 import { Resvg } from "@resvg/resvg-js";
+import { resvgFontOptions } from "../api/pdfFonts.js";
 
 // Wrap once — Avatar warns when a raw definition is passed per call.
 const voxelBot = new Style(voxelBotDefinition);
@@ -152,11 +153,11 @@ export function providerChipPng(model: string | undefined | null, px = 96): Buff
         svg =
             `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${px} ${px}">` +
             `<rect width="${px}" height="${px}" rx="${Math.round(px * 0.14)}" fill="#FFFFFF" stroke="#D9D9D5"/>` +
-            `<text x="${px / 2}" y="${Math.round(px * 0.72)}" font-family="Helvetica, Arial, sans-serif" font-size="${Math.round(px * 0.6)}" font-weight="600" fill="${color}" text-anchor="middle">${initial}</text>` +
+            `<text x="${px / 2}" y="${Math.round(px * 0.72)}" font-family="Anek Latin, sans-serif" font-size="${Math.round(px * 0.6)}" font-weight="600" fill="${color}" text-anchor="middle">${initial}</text>` +
             `</svg>`;
     }
 
-    const resvg = new Resvg(svg, { fitTo: { mode: "width", value: px * 4 } });
+    const resvg = new Resvg(svg, { fitTo: { mode: "width", value: px * 4 }, font: resvgFontOptions() });
     const png = Buffer.from(resvg.render().asPng());
     if (providerCache.size < 64) providerCache.set(key, png);
     return png;

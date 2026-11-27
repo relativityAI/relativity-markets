@@ -7,9 +7,10 @@
  * UI already renders — so the canvas IS the report at every moment. The canvas
  * lives in process memory; the caller decides what to persist.
  *
- * Compilation is pass-through: sections and sources land exactly as the agent
- * wrote them (on id collision the first source wins). Nothing is synthesized —
- * no title, no timestamp, no citation tails, no token rewriting.
+ * Compilation is pass-through: sections land exactly as the agent wrote them.
+ * Nothing is synthesized — no title, no timestamp, no citation tails, no
+ * token rewriting. The source registry is set once by the harness from the
+ * run's trace (report/sources.ts) — never agent-authored.
  */
 
 import {
@@ -132,6 +133,7 @@ export class ReportCanvas {
   title?: string;
   subtitle?: string;
   private readonly entries: CanvasEntry[] = [];
+  private registry: Source[] = [];
 
   constructor(symbol: string, title?: string, subtitle?: string) {
     this.symbol = symbol;
@@ -154,8 +156,14 @@ export class ReportCanvas {
     this.entries.push(entry);
   }
 
+  /** Verified source ledger for this run (mined from the trace) — the
+   *  registry citation refs and figure source lines resolve against. */
+  setSources(sources: Source[]): void {
+    this.registry = sources;
+  }
+
   sources(): Source[] {
-    return []; // legacy field — the agent cites sources in the citations block now
+    return this.registry;
   }
 
   /** Section-groups (id → title) — what report_remove may target. */

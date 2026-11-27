@@ -28,15 +28,17 @@ export function downloadSvg(svg: string, name: string) {
   save(URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" })), `${slug(name)}.svg`);
 }
 
-export function downloadPng(svg: string, name: string, width = 1040) {
+export function downloadPng(svg: string, name: string, width?: number) {
   const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
   const img = new Image();
   img.onload = () => {
-    const height = Math.round((img.naturalHeight || 420) * (width / (img.naturalWidth || width)));
+    // rasterise at the artboard's own size (no upscaling compact figures)
+    const w = width ?? (img.naturalWidth || 1040);
+    const height = Math.round((img.naturalHeight || 420) * (w / (img.naturalWidth || w)));
     const canvas = document.createElement("canvas");
-    canvas.width = width;
+    canvas.width = w;
     canvas.height = height;
-    canvas.getContext("2d")?.drawImage(img, 0, 0, width, height);
+    canvas.getContext("2d")?.drawImage(img, 0, 0, w, height);
     URL.revokeObjectURL(url);
     canvas.toBlob((b) => b && save(URL.createObjectURL(b), `${slug(name)}.png`));
   };

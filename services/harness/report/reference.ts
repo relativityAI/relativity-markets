@@ -23,8 +23,8 @@ export const BLOCKS: BlockSpec[] = [
     id: "text",
     name: "text",
     when:
-      "Prose. level 1 = the claim/lead (inline sources via highlights); level 2 = the supporting detail — OPTIONAL: a level-1 text may stand alone; when a level-2 follows, it comes IMMEDIATELY after its level-1. Every number gets a highlight with a sourceId.",
-    json: `{ "type": "text", "level": 1, "text": "…", "highlights": [{ "text": "4.2%", "kind": "positive", "sourceId": "s1" }] }`,
+      "Prose. level 1 = the claim/lead; level 2 = the supporting detail — OPTIONAL: a level-1 text may stand alone; when a level-2 follows, it comes IMMEDIATELY after its level-1. Every number gets a highlight.",
+    json: `{ "type": "text", "level": 1, "text": "…", "highlights": [{ "text": "4.2%", "kind": "positive" }] }`,
   },
   {
     id: "chart",
@@ -42,7 +42,7 @@ export const BLOCKS: BlockSpec[] = [
   {
     id: "citations",
     name: "citations",
-    when: "REQUIRED at the end of the report's last section (or per section when the skill asks): the sources you actually used. Each ref is the agent-written { source, url } — real label and real link, exactly as you found them. Never emit placeholder tokens like [src] or [1].",
+    when: "REQUIRED as the LAST block of EVERY section that uses outside data: the sources you actually used. Each ref is { source, url } copied EXACTLY as your tool results returned it — the harness drops any URL it never saw in your tool results, so never invent or reconstruct links. Never emit placeholder tokens like [src] or [1].",
     json: `{ "type": "citations", "refs": [{ "source": "Apple Q3 2026 press release", "url": "https://apple.com/newsroom/…" }] }`,
   },
 ];
@@ -64,7 +64,7 @@ export const SECTION_SHAPE = `Each section you write is a COMPLETE unit — one 
 Rules:
 - Exactly ONE heading per section, and it carries \`tagline\` (REQUIRED): 3–5 words, the answer ("Mixed", "Funds buying, savers sitting") — rendered in colour under the title.
 - Section order: heading → level-1 text → OPTIONAL level-2 detail → figures. A level-1 text may stand alone; a level-2 must sit directly under its level-1.
-- Cite sources INLINE, not by id: no \`sourceId\` fields exist and the harness keeps no source registry. When the report's structure asks for sources, end with a \`citations\` block whose refs carry the REAL { source, url } you pulled numbers from. Never write placeholder tokens like \`[src]\`, \`[1]\` or \`[source]\`.
+- Cite sources at the SECTION level, never inline: no \`sourceId\` fields exist and the harness keeps no source registry. End every section that uses outside data with a \`citations\` block whose refs carry the REAL { source, url } you pulled numbers from — copied exactly as your tool results returned them (links the harness never saw get dropped). Never write placeholder tokens like \`[src]\`, \`[1]\` or \`[source]\`.
 - \`kpi-card\` and \`stat-spark\` render as CARDS, not plots: carry \`title\` and \`tagline\` (3–5 words); \`stat-spark\` clusters several cards via \`panels\`.
 - \`badges\`, \`quote\` and \`callout\` do not exist — never write them.`;
 
@@ -84,7 +84,7 @@ const PLOT_NOTES: Record<string, string> = {
   line: "single time-series — ONE `series` (or one `data` token). Tall plot, tight y-axis that hugs the data, serif end label, hover crosshair (date + value). ALWAYS name the line (`spec.names` positional, or the series `label`). Not for comparisons — use `multiline`.",
   multiline: "2–4 time-series on one axis — `series` or comma `data` tokens (e.g. \"price, sma200\"); lead = story ink, rival = ink, rest grey. Name EVERY line via `spec.names`. Hover shows date + every series' value. Never more than 4 lines.",
   area: "time-series with weight — same data as `line`, drawn as the line itself.",
-  hbar: "magnitude bars from one zero baseline, inked by sign (positive = blue ink, negative = warm ink); the signed value appears on hover; sign legend on top; compact width. Rankings, sector days, top/bottom lists.",
+  hbar: "compact ranked list — left label column, bars from a zero baseline (negatives grow left, positives right, inked by sign), the signed value always printed in a right-hand column. No legend — the values carry it. Content-sized width. Rankings, sector days, top/bottom lists.",
   vbar: "paired vertical columns — `groups` with TWO series: primary period totals (ink columns, serif value labels) alongside secondary negative peak/drawdown markers (warm dashes + labels); legend on top, compact width, signed axis. A single series (`categories`+`values`) draws plain columns.",
   gbar: "grouped columns — `categories` + `groups` (2–4 of `{name, values}`); ONE group per series, every group aligned to the same categories. Legend, compact width, serif value labels when ≤2 groups. The comparison chart: returns by period across indices/sectors, plan vs actual.",
   table: "the advanced grid — `columns` (headers) + `rows`; cells are text, numbers, or `{ text, sub?, bar? }` — a level-1 main line, a level-2 muted sub-line, an optional 0..1 underline gauge. Bold row labels, generous spacing, numbers right-aligned. Model-vs-model, financials, comparisons.",
@@ -112,7 +112,7 @@ export function plotReferenceMarkdown(hasSeriesTool: boolean): string {
     ...kinds.map((k) => `- \`${k}\` — ${PLOT_NOTES[k] ?? "see the renderer"}`),
     "",
     "Data shapes:",
-    `- bars: \`{ "type": "chart", "measure": "%", "spec": { "kind": "hbar", "categories": ["FMCG", "Pharma", "IT"], "values": [-0.8, -1.2, 0.6] } }\` — inked by sign, value on hover`,
+    `- bars: \`{ "type": "chart", "measure": "%", "spec": { "kind": "hbar", "categories": ["FMCG", "Pharma", "IT"], "values": [-0.8, -1.2, 0.6] } }\` — inked by sign, value printed at the row end`,
     `- paired columns: \`{ "type": "chart", "measure": "%", "spec": { "kind": "vbar", "categories": ["'22", "'23", "'24"], "groups": [{ "name": "Total return over the calendar year, %", "values": [6, 21, 10] }, { "name": "Largest fall from a peak within that year, %", "values": [-16, -7, -11] }] } }\` — primary totals + secondary drawdown markers`,
     `- grouped: \`{ "type": "chart", "measure": "%", "spec": { "kind": "gbar", "categories": ["1Y", "3Y", "5Y"], "groups": [{ "name": "Nifty 50", "values": [-1.8, 10.2, 8.0] }, { "name": "Smallcap 250", "values": [5.9, 12.8, 13.7] }] } }\` — several series across the SAME categories (comparisons: returns, plan vs actual)`,
     `- time-series: \`{ "type": "chart", "measure": "USD", "spec": { "kind": "multiline", "data": "price, sma200", "names": ["AAPL", "200-day average"] } }\` — the harness expands tokens into real series at assembly`,
