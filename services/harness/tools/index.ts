@@ -20,7 +20,7 @@ export { getToolCatalog, TOOL_CATALOG } from "./catalog.js";
 
 // ── Helpers other modules import ──────────────────────────────────────────
 export { wrapUntrusted } from "./untrusted.js";
-export { describeToolCall, kbTaskFromPath } from "./describe.js";
+export { describeToolCall } from "./describe.js";
 
 // ── Market data (server-side chart/indicator client) ─────────────────────
 export { toYahooSymbol, getPriceHistory, priceHistoryDigest, quoteDigest, getMacroSnapshot } from "../marketdata.js";

@@ -383,7 +383,7 @@ export function McpPanel({ prefs, savePrefs }: {
 
             {failed && (
                 <div role="alert" className="mb-3 flex flex-wrap items-center gap-3 bg-[var(--surface-recessed)] px-3 py-2.5">
-                    <span className="font-app-body text-[13px] text-[var(--signal-negative)]">
+                    <span className="font-app-body text-[13px] text-[var(--signal-negative-text)]">
                         Couldn't load MCP servers - the list below may be out of date.
                     </span>
                     <button

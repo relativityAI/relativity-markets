@@ -123,6 +123,12 @@ export interface PluginSummary {
     categories: string[];
     developer_url: string | null;
     install_source: string | null;
+    /** Optional ISO-2 country the plugin targets (""/null = all countries). */
+    country: string | null;
+    /** Custom avatar image URL (""/null = the generated avatar). */
+    avatar: string | null;
+    /** Which run-form category this plugin serves: "equity" | "industry" (null = any). */
+    agent_category: string | null;
     skill_count: number;
 }
 
@@ -228,6 +234,75 @@ export async function listCategories(): Promise<string[]> {
     return response.data;
 }
 
+// ── Taxonomy: sectors, industries, groups ───────────────────────────────────
+
+export type EntityLevel = "sector" | "industry_group" | "industry" | "basic_industry" | "sub_industry";
+
+/** One row of /entities/search — a stock or a sector/industry group. */
+export interface EntityHit {
+    type: "stock" | "group";
+    symbol?: string;
+    key?: string;
+    name: string;
+    source: "NSE" | "SEC";
+    level?: EntityLevel;
+    sub?: string;
+    count?: number;
+    exchange?: string;
+}
+
+export interface GroupConstituent {
+    symbol: string;
+    name: string;
+    source: "NSE" | "SEC";
+}
+
+export interface GroupDetail {
+    key: string;
+    market: "NSE" | "SEC";
+    level: EntityLevel;
+    code: string;
+    name: string;
+    path: string[];
+    count: number;
+    constituents: GroupConstituent[];
+}
+
+export interface SectorRow extends GroupDetail {
+    children: number;
+}
+
+export const TaxonomyService = {
+    async search(query: string, market?: string, signal?: AbortSignal): Promise<EntityHit[]> {
+        const response = await axios.get(`${API_BASE}/entities/search`, {
+            params: { query, ...(market ? { market } : {}) },
+            signal,
+        });
+        return response.data as EntityHit[];
+    },
+
+    async group(key: string): Promise<GroupDetail> {
+        const response = await axios.get(`${API_BASE}/groups/${encodeURIComponent(key)}`);
+        return response.data as GroupDetail;
+    },
+
+    async sectors(market?: string, level?: string): Promise<SectorRow[]> {
+        const response = await axios.get(`${API_BASE}/sectors`, {
+            params: { ...(market ? { market } : {}), level: level || "sector" },
+        });
+        return response.data as SectorRow[];
+    },
+};
+
+/** Batched change-pct for search rows — symbol keyed, absent when no quote. */
+export async function fetchQuoteChanges(symbols: string[]): Promise<Record<string, number>> {
+    if (!symbols.length) return {};
+    const response = await axios.get(`${API_BASE}/market/quotes`, {
+        params: { symbols: symbols.join(",") },
+    });
+    return response.data as Record<string, number>;
+}
+
 /** Display label for a run's plugin selection — legacy rows fall back to the
  *  stored agent_name (shown with a "Legacy" chip on the client). */
 export function runPluginLabel(
@@ -261,6 +336,12 @@ export const AnalysisService = {
     /** Re-launch a failed run in place — the result page's Retry. */
     async retryAnalysis(id: string): Promise<{ ok: boolean }> {
         const response = await axios.post(`${API_BASE}/analysis/${encodeURIComponent(id)}/retry`);
+        return response.data;
+    },
+
+    /** Stop a run that is still pending/running. */
+    async cancelAnalysis(id: string): Promise<{ canceled: boolean }> {
+        const response = await axios.post(`${API_BASE}/analysis/${encodeURIComponent(id)}/cancel`);
         return response.data;
     },
 

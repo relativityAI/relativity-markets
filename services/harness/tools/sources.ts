@@ -20,6 +20,7 @@ import { MultiServerMCPClient, type StreamableHTTPConnection } from "@langchain/
 import type { StructuredTool } from "langchain";
 import { log } from "../../api/logger.js";
 import { stockTechnicalAnalysisTool } from "./stock-ta.js";
+import { resolveGroupTool } from "./taxonomy.js";
 
 export const McpSourceSchema = z
   .object({
@@ -147,6 +148,8 @@ export async function buildRunTools(
   // Stocks-only TA for markets the TradingView MCP can't reach (India
   // NSE/BSE). Local tool, so it stays available even if an MCP source is down.
   push("local", stockTechnicalAnalysisTool());
+  // Sector/industry runs: resolve the run's group key to constituents.
+  push("local", resolveGroupTool());
 
   return { tools, skipped, close: () => Promise.allSettled(clients.map((c) => c.close())).then(() => undefined) };
 }

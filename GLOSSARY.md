@@ -39,9 +39,11 @@ codebase-design skill, not from here.
   `harness/trace.ts`. `canvas_block` = a section written to the report. The
   timeline UI and the report builder both consume it.
 - **Budget** — per-run limits (`types.ts`): `maxSteps` → the graph's
-  recursion limit (×2+2 for model+tools super-steps), `maxTokens`, and the
-  API's `maxMs` wall-clock backstop. Time-pressure reminders (middleware)
-  push the agent from research to writing at 50%/80%.
+  recursion limit (×6+6 for the middleware chain's super-steps — one tool
+  round costs ~5), `maxTokens` (recorded, never enforced), and the API's
+  `maxMs` wall-clock backstop. Time-pressure reminders (middleware) push the
+  agent from research to writing at 50%/80%. Precedence: request override >
+  `HARNESS_*` env / `harness.config.json` > built-ins.
 
 ### Persistence
 

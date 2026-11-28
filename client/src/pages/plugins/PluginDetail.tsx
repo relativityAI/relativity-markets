@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, BadgeCheck, ChevronDown, ExternalLink, FileText, Pencil, Trash2, X } from "lucide-react";
 import { PluginService, type PluginDetail as PluginDetailPayload } from "@/db";
 import PluginAvatar from "@/components/shared/PluginAvatar";
+import { CountryFlag, MarketFlags } from "@/lib/sourceLogos";
 import PluginFiles from "@/components/plugins/PluginFiles";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
@@ -59,6 +60,8 @@ export default function PluginDetail() {
         sourcesText: "",
         categoriesText: "",
         developer_url: "",
+        country: "",
+        avatar: "",
     });
 
     const load = useCallback(() => {
@@ -88,6 +91,8 @@ export default function PluginDetail() {
             sourcesText: plugin.sources.map((s) => s.url).join("\n"),
             categoriesText: plugin.categories.join(", "),
             developer_url: plugin.developer_url ?? "",
+            country: plugin.country ?? "",
+            avatar: plugin.avatar ?? "",
         });
         setEditing(true);
     };
@@ -111,6 +116,8 @@ export default function PluginDetail() {
                 sources: urls.map((u) => ({ label: u.replace(/^https?:\/\//, "").replace(/\/$/, ""), url: u })),
                 categories: draft.categoriesText.split(",").map((c) => c.trim()).filter(Boolean),
                 developer_url: draft.developer_url.trim() || null,
+                country: draft.country.trim() || null,
+                avatar: draft.avatar.trim() || null,
             });
             setPlugin((prev) => (prev ? { ...prev, ...updated, skills: prev.skills } : prev));
             setEditing(false);
@@ -163,13 +170,14 @@ export default function PluginDetail() {
             </Link>
 
             <div className="mt-4 flex flex-wrap items-start gap-4">
-                <PluginAvatar plugin={plugin.id} size={64} />
+                <PluginAvatar plugin={plugin} size={64} />
                 <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                         <h1 className="truncate font-app-body text-[30px] leading-none font-light tracking-tight text-console-ink">
                             {plugin.display_name}
                         </h1>
                         {!!plugin.verified && <BadgeCheck className="size-5 shrink-0 text-[var(--gh-blue)]" aria-label="Verified" />}
+                        <MarketFlags country={plugin.country} size={18} />
                     </div>
                     <p className="mt-2 flex min-w-0 items-baseline gap-1.5 font-app-body text-[13px] font-light text-console-ink-3">
                         <span className="shrink-0">{originLine}</span>
@@ -462,6 +470,64 @@ export default function PluginDetail() {
                                 </a>
                             ) : (
                                 <p className="font-app-body text-[13.5px] text-console-ink-4">—</p>
+                            )}
+                        </SidebarField>
+
+                        <SidebarField label="Country">
+                            {editing ? (
+                                <input
+                                    value={draft.country}
+                                    onChange={(e) => setDraft((d) => ({ ...d, country: e.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2) }))}
+                                    aria-label="Country code, two letters"
+                                    placeholder="IN — blank means all countries"
+                                    maxLength={2}
+                                    className={FIELD_INPUT}
+                                />
+                            ) : plugin.country ? (
+                                <span className="inline-flex items-center gap-2 font-app-body text-[14px] text-console-ink">
+                                    <CountryFlag country={plugin.country} size={16} />
+                                    {plugin.country}
+                                </span>
+                            ) : (
+                                <span className="inline-flex items-center gap-2 font-app-body text-[14px] text-console-ink-3">
+                                    <MarketFlags country={plugin.country} size={16} />
+                                    All markets
+                                </span>
+                            )}
+                        </SidebarField>
+
+                        <SidebarField label="Custom image">
+                            {editing ? (
+                                <>
+                                    <input
+                                        value={draft.avatar}
+                                        onChange={(e) => setDraft((d) => ({ ...d, avatar: e.target.value }))}
+                                        aria-label="Custom image URL"
+                                        placeholder="https://…/icon.png — blank means generated"
+                                        className={cn(FIELD_INPUT, "font-app-mono")}
+                                    />
+                                    <span className="mt-2 flex items-center gap-2.5">
+                                        <span className="inline-flex size-10 items-center justify-center overflow-hidden rounded-full">
+                                            {draft.avatar.trim() ? (
+                                                <img src={draft.avatar.trim()} alt="" className="size-10 rounded-full object-cover" />
+                                            ) : (
+                                                <PluginAvatar plugin={plugin.id} size={40} />
+                                            )}
+                                        </span>
+                                        <span className="font-app-body text-[12.5px] text-console-ink-3">
+                                            {draft.avatar.trim() ? "Preview" : "No image — the generated avatar is used"}
+                                        </span>
+                                    </span>
+                                </>
+                            ) : plugin.avatar ? (
+                                <img
+                                    src={plugin.avatar}
+                                    alt=""
+                                    className="size-10 rounded-full object-cover"
+                                    onError={(e) => (e.currentTarget.style.visibility = "hidden")}
+                                />
+                            ) : (
+                                <p className="font-app-body text-[14px] text-console-ink-3">Generated avatar</p>
                             )}
                         </SidebarField>
 

@@ -17,6 +17,7 @@ export function AgentStatus({
   label,
   elapsed,
   trailing,
+  onRetry,
   className,
   ...props
 }: Omit<ComponentProps<"span">, "children" | "state" | "label" | "elapsed"> & {
@@ -24,7 +25,11 @@ export function AgentStatus({
   label: string;
   elapsed?: string | undefined;
   trailing?: ReactNode | undefined;
+  /** Failed state: the round arrow becomes a real button that relaunches the run. */
+  onRetry?: (() => void) | undefined;
 }) {
+  // A focusable button must not sit inside an aria-hidden node.
+  const retryable = state === "failed" && onRetry != null;
   return (
     <span
       data-slot="agent-status"
@@ -63,12 +68,22 @@ export function AgentStatus({
         </span>
       )}
       <span
-        aria-hidden
+        aria-hidden={retryable ? undefined : "true"}
         data-slot="agent-status-trailing"
         className="text-muted-foreground flex size-6 items-center justify-center rounded-full"
       >
         {trailing !== undefined ? (
           trailing
+        ) : retryable ? (
+          <button
+            type="button"
+            onClick={onRetry}
+            title="Retry run"
+            aria-label="Retry run"
+            className="flex size-6 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-[var(--signal-negative)] focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
+          >
+            <RotateCcwIcon className="size-3" />
+          </button>
         ) : state === "done" || state === "failed" ? (
           <RotateCcwIcon className="size-3" />
         ) : (

@@ -33,6 +33,7 @@ import type { McpSourceConfig } from "../harness/tools/sources.js";
 import { getModels, getModelIds, getAvailableModelsForUser } from "./models.js";
 import { getAgentCategories } from "./categories.js";
 import { getSources, searchStocks } from "./discovery.js";
+import { searchEntities, listLevel, getGroup, type GroupLevel } from "./taxonomy.js";
 import { tickerLogoUrl } from "./tickerLogos.js";
 import { getPriceHistory, toYahooSymbol } from "../harness/marketdata.js";
 import { yf } from "./yf-client.js";
@@ -70,6 +71,7 @@ import {
   importPluginFromUrl,
   importPluginFromZip,
   initPlugins,
+  renderFigures, // re-render stored figures on read — old runs pick up figure-kit style changes
   type PluginRecord,
   type ReportDocument,
   type Verdict,
@@ -1047,11 +1049,29 @@ app.post("/analysis/:id/cancel", requireAuth, async (req, res) => {
   }
 });
 
+/**
+ * Re-render a stored report's figure SVGs on read. Assembly bakes `svgs`
+ * into `report_document` at run time, so a figure-kit style change would
+ * otherwise only appear on new runs — this rebuilds them from the stored
+ * specs (pure string build, nothing persisted) so every run shows the
+ * current figure style.
+ */
+function refreshReportFigures(row: Record<string, any>): void {
+  const doc = row?.report;
+  if (doc?.schema !== "relativity/report.v1" && doc?.schema !== "relativity/report.v2") return;
+  try {
+    renderFigures(doc as ReportDocument);
+  } catch (e: any) {
+    log.error("[figures]", `on-read re-render failed: ${e?.message}`);
+  }
+}
+
 app.get("/analysis/:id", apiOnly, requireAuth, async (req, res) => {
   try {
     const userId = (req as AuthedRequest).user.id;
     const data = await getRunRow(userId, String(req.params.id));
     if (!data) return res.status(404).json({ error: "Analysis not found" });
+    refreshReportFigures(data as Record<string, any>);
     // Harness runs store their typed ReportDocument in `report`; the result
     // view reads `report_document`, so surface it under that name.
     if ((data as any).report?.schema === "relativity/report.v1" || (data as any).report?.schema === "relativity/report.v2") (data as any).report_document = (data as any).report;
@@ -1080,6 +1100,7 @@ app.get("/analysis/:id/pdf", requireAuth, async (req, res) => {
     if (!data.quantitative_analysis && !data.qualitative_analysis && !data.report) {
       return res.status(409).json({ error: "No analysis to export" });
     }
+    refreshReportFigures(data as Record<string, any>); // same figures as the UI
     // Legacy runs stored the agent's UUID in agent_name. Resolve it to the real
     // agent name for the report header/footer (and fall back to the masked
     // label inside the PDF builder if the agent no longer exists).
@@ -1244,6 +1265,59 @@ app.get("/stocks/search", (req, res) => {
   res.json(searchStocks(q, source || undefined));
 });
 
+// ── Sector/industry groups (services/api/taxonomy.ts) ──────────────────────
+// Open like /stocks/search: public market data.
+
+app.get("/entities/search", (req, res) => {
+  const q = String(req.query.query || "");
+  const market = String(req.query.market || "");
+  res.json(searchEntities(q, market || undefined));
+});
+
+app.get("/sectors", (req, res) => {
+  const market = String(req.query.market || "") || undefined;
+  const level = String(req.query.level || "sector");
+  if (!["sector", "industry_group", "industry", "basic_industry", "sub_industry"].includes(level)) {
+    return res.status(400).json({ error: "unknown level" });
+  }
+  res.json(listLevel(market, level as GroupLevel));
+});
+
+app.get("/groups/:key", (req, res) => {
+  const g = getGroup(String(req.params.key || ""));
+  if (!g) return res.status(404).json({ error: "Group not found" });
+  res.json(g);
+});
+
+// Batched change-pct for search rows — ?symbols=RELIANCE.NS,AAPL (≤30).
+// 60s cache; missing/failed symbols come back absent, not errored.
+const quoteCache = new Map<string, { at: number; pct: number }>();
+const QUOTE_TTL_MS = 60_000;
+
+app.get("/market/quotes", async (req, res) => {
+  const symbols = String(req.query.symbols || "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 30);
+  if (!symbols.length) return res.json({});
+  const out: Record<string, number> = {};
+  const missing: string[] = [];
+  const now = Date.now();
+  for (const s of symbols) {
+    const hit = quoteCache.get(s);
+    if (hit && now - hit.at < QUOTE_TTL_MS) out[s] = hit.pct;
+    else missing.push(s);
+  }
+  await Promise.allSettled(missing.map(async (s) => {
+    try {
+      const q = await yf.quote(s);
+      const pct = Number(q.regularMarketChangePercent);
+      if (Number.isFinite(pct)) {
+        quoteCache.set(s, { at: now, pct });
+        out[s] = pct;
+      }
+    } catch { /* absent */ }
+  }));
+  res.json(out);
+});
+
 // Intraday chart closes for a sparkline — /market/chart/^NSEI?range=1d&interval=5m.
 // Yahoo interval rules bind interval to range, so both come from the caller.
 // Open on purpose: public market data, like /stocks/search. Index symbols
@@ -1336,10 +1410,14 @@ app.get("/stocks/:symbol/overview", async (req, res) => {
 // purpose — an <img> tag carries no Authorization header, like
 // /stocks/search above. The redirect target is always under one of the two
 // fixed logo hosts, so the symbol can never aim it anywhere else.
+// ?alt=1 flips the host — the UI retries with it when the first one 404s,
+// so a ticker logoapi.sh doesn't have still resolves via dharun.
 app.get("/logo/:symbol", async (req, res) => {
   try {
-    const url = await tickerLogoUrl(String(req.params.symbol || ""));
-    res.setHeader("Cache-Control", url ? "public, max-age=86400" : "public, max-age=600");
+    const url = await tickerLogoUrl(String(req.params.symbol || ""), req.query.alt === "1");
+    // Short cache on purpose: this is a redirect to a third-party logo host —
+    // holding it for a day kept stale logos on screen after a source swap.
+    res.setHeader("Cache-Control", url ? "public, max-age=600" : "public, max-age=600");
     if (!url) return res.status(404).end();
     res.redirect(url);
   } catch {
@@ -1387,6 +1465,7 @@ app.get("/harness/runs/:id", requireAuth, async (req, res) => {
   try {
     const data = await getRunRow((req as AuthedRequest).user.id, String(req.params.id));
     if (!data) return res.status(404).json({ error: "Run not found" });
+    refreshReportFigures(data as Record<string, any>);
     res.json({ ...data, report_document: data.report });
   } catch (e: any) {
     res.status(503).json({ error: e.message });

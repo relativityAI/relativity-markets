@@ -18,6 +18,8 @@ import AnalysisList from "./pages/AnalysisList";
 import Analysis from "./pages/Analysis";
 import AnalysisResult from "./pages/AnalysisResult";
 import Stock from "./pages/Stock";
+import Group from "./pages/Group";
+import Sectors from "./pages/Sectors";
 import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 import Privacy from "./pages/Privacy";
@@ -143,7 +145,7 @@ function AppRoutes() {
     locationPath.startsWith("/agent/");
   const showNav = !isLogin;
   // Remove footer from analysis result page (and analysis-related pages as requested)
-  const showFooter = showNav && !isPublicPage && !isConsole && !isAnalysisPage && locationPath !== "/settings" && !locationPath.startsWith("/stock");
+  const showFooter = showNav && !isPublicPage && !isConsole && !isAnalysisPage && locationPath !== "/settings" && !locationPath.startsWith("/stock") && !locationPath.startsWith("/group") && locationPath !== "/sectors";
 
   return (
     <Flex direction="column" h="100dvh" overflow="hidden">
@@ -224,6 +226,8 @@ function AppRoutes() {
                       }
                     />
                     <Route path="/stock/:symbol" element={<Stock />} />
+                    <Route path="/group/:key" element={<Group />} />
+                    <Route path="/sectors" element={<Sectors />} />
                     <Route
                       path="/settings"
                       element={

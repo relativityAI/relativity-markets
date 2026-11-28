@@ -5,7 +5,7 @@ import { DateTimePicker, type DateTimeValue } from "@/pages/shared/DateTimePicke
 function openPicker(initial: DateTimeValue = { date: "2026-11-22", time: "09:00" }) {
   const onChange = vi.fn();
   render(<DateTimePicker value={initial} onChange={onChange} />);
-  fireEvent.click(screen.getByLabelText("Pick date and time"));
+  fireEvent.click(screen.getByTestId("schedule-datetime"));
   return onChange;
 }
 
@@ -40,11 +40,11 @@ describe("DateTimePicker", () => {
     const { rerender } = render(
       <DateTimePicker value={{ date: "2026-11-22", time: "09:00" }} onChange={() => {}} />,
     );
-    expect(screen.getByLabelText("Pick date and time").textContent).toContain("11/22/2026 · 9:00 AM");
+    expect(screen.getByTestId("schedule-datetime").textContent).toContain("11/22/2026 · 9:00 AM");
 
     rerender(
       <DateTimePicker value={{ date: "2026-12-01", time: "17:30" }} onChange={() => {}} />,
     );
-    expect(screen.getByLabelText("Pick date and time").textContent).toContain("12/01/2026 · 5:30 PM");
+    expect(screen.getByTestId("schedule-datetime").textContent).toContain("12/01/2026 · 5:30 PM");
   });
 });

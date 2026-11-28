@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
-import { Search, Moon, Sun, Check, TriangleAlert, ArrowRight, Settings as SettingsIcon } from "lucide-react";
+import { Moon, Sun, Check, TriangleAlert, ArrowRight, Settings as SettingsIcon } from "lucide-react";
 import { useAuth } from "@/auth/useAuth";
 import { useColorMode } from "@/components/ui/color-mode";
 import AlertBell from "@/components/AlertBell";
-import { AnalysisService, API_BASE, PluginService, type PluginSummary } from "@/db";
-import { FlagLogo, TickerLogo } from "@/lib/sourceLogos";
+import EntitySearch, { type EntityPick } from "@/components/search/EntitySearch";
+import { AnalysisService, API_BASE } from "@/db";
+import { TickerLogo } from "@/lib/sourceLogos";
 import { MCP_LOGOS } from "@/lib/mcp";
 import { cn } from "@/lib/utils";
 
@@ -58,96 +59,24 @@ export default function NavBar() {
     };
   }, []);
 
-  // Global search — stocks, plugins and runs in one listbox; ⌘K/Ctrl-K
-  // focuses it from anywhere. 300ms debounce: stocks stream from
-  // /stocks/search, while plugins and runs are small stable lists — fetched
-  // once per session, filtered locally.
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<StockRow[]>([]);
-  const [pluginHits, setPluginHits] = useState<{ id: string; name: string }[]>([]);
-  const [runHits, setRunHits] = useState<{ id: string; label: string; symbol?: string; status?: string }[]>([]);
-  const [searching, setSearching] = useState(false);
+  // Global search — the shared TradingView-style EntitySearch owns the query,
+  // tabs, pills, recents and fetching. The navbar only opens/closes it and
+  // navigates on pick. Ctrl/Cmd+K lives inside the component (hotkey).
   const [searchOpen, setSearchOpen] = useState(false);
-  const [activeIdx, setActiveIdx] = useState(-1);
-  const searchWrapRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const catalogRef = useRef<{ plugins?: PluginSummary[]; runs?: any[] }>({});
-
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    abortRef.current?.abort();
-    const q = query.trim();
-    setActiveIdx(-1);
-    debounceRef.current = setTimeout(async () => {
-      if (!q) {
-        setResults([]);
-        setPluginHits([]);
-        setRunHits([]);
-        setSearching(false);
-        return;
-      }
-      setSearching(true);
-      const controller = new AbortController();
-      abortRef.current = controller;
-      const live = () => !controller.signal.aborted;
-      const lower = q.toLowerCase();
-      const match = (s: string) => s.toLowerCase().includes(lower);
-
-      const stocks = fetch(`${API_BASE}/stocks/search?${new URLSearchParams({ query: q })}`, {
-        signal: controller.signal,
-      })
-        .then((r) => r.json())
-        .then((d) => { if (live()) setResults(Array.isArray(d) ? d : []); })
-        .catch((err) => {
-          if (live() && (!(err instanceof DOMException) || err.name !== "AbortError")) setResults([]);
-        });
-
-      const plugins = (catalogRef.current.plugins
-          ? Promise.resolve(catalogRef.current.plugins)
-          : PluginService.list().then((p) => { catalogRef.current.plugins = p; return p; }))
-        .then((p) => {
-          if (live())
-            setPluginHits(
-              p
-                .filter((x) => match(`${x.display_name} ${x.description || ""}`))
-                .slice(0, 5)
-                .map((x) => ({ id: x.id, name: x.display_name })),
-            );
-        })
-        .catch(() => {});
-
-      const runs = (catalogRef.current.runs
-          ? Promise.resolve(catalogRef.current.runs)
-          : AnalysisService.listAnalyses().then((r) => {
-              catalogRef.current.runs = Array.isArray(r) ? r : [];
-              return catalogRef.current.runs;
-            }))
-        .then((rows) => {
-          if (!live()) return;
-          setRunHits(
-            rows
-              .filter((a: any) => match(`${a.share_name || ""} ${a.symbol || ""} ${a.model || ""}`))
-              .slice(0, 5)
-              .map((a: any) => ({
-                id: String(a.analysis_id || a._id || a.id || ""),
-                label: a.share_name || a.symbol || "Run",
-                symbol: a.symbol || undefined,
-                status: a.status ? String(a.status) : undefined,
-              })),
-          );
-        })
-        .catch(() => {});
-
-      await Promise.allSettled([stocks, plugins, runs]);
-      if (live()) setSearching(false);
-    }, 300);
-    return () => clearTimeout(debounceRef.current);
-  }, [query]);
+  const navigateEntity = (pick: EntityPick) => {
+    if (pick.kind === "stock") {
+      navigate(`/stock/${encodeURIComponent(pick.symbol)}?source=${pick.source}`);
+    } else if (pick.kind === "group") {
+      navigate(`/group/${encodeURIComponent(pick.key)}`);
+    } else if (pick.kind === "plugin") {
+      navigate(`/plugins/${encodeURIComponent(pick.id)}`);
+    } else {
+      navigate(`/runs/${encodeURIComponent(pick.id)}`);
+    }
+  };
 
   // Level-2 "latest runs" cluster: the three most recent run symbols and an
-  // arrow — no details. Same fetch the ⌘K search catalog uses, cached there.
+  // arrow — no details.
   const [latestRuns, setLatestRuns] = useState<{ id: string; symbol: string }[]>([]);
   useEffect(() => {
     AnalysisService.listAnalyses()
@@ -155,7 +84,6 @@ export default function NavBar() {
         const list: { id?: string; analysis_id?: string; symbol?: string; created_at?: string }[] = Array.isArray(rows)
           ? rows
           : [];
-        catalogRef.current.runs = list;
         setLatestRuns(
           [...list]
             .sort((a, b) => +new Date(b.created_at || 0) - +new Date(a.created_at || 0))
@@ -166,116 +94,6 @@ export default function NavBar() {
       })
       .catch(() => {});
   }, []);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (searchWrapRef.current && !searchWrapRef.current.contains(e.target as Node)) setSearchOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  // ⌘K / Ctrl-K focuses the search box from anywhere in the app.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setSearchOpen(true);
-        searchInputRef.current?.focus();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, []);
-
-  const pickStock = (stock: StockRow) => {
-    const sym = stock.ticker || stock.SYMBOL || "";
-    const src = String(stock.source || "").toUpperCase();
-    setSearchOpen(false);
-    setQuery("");
-    navigate(`/stock/${encodeURIComponent(sym)}?source=${src}`);
-  };
-
-  // Hits are flattened in render order — that index is the keyboard cursor.
-  type Hit = { label: string; sub?: ReactNode; logo?: ReactNode; select: () => void };
-  const rawGroups: { label: string; hits: Hit[] }[] = [
-    {
-      label: "Stocks",
-      hits: results.map((stock) => {
-        const sym = stock.ticker || stock.SYMBOL || "";
-        const india = String(stock.source || "").toLowerCase() === "nse";
-        return {
-          label: stock.name || stock.NAME || sym,
-          sub: (
-            <span className="flex items-center gap-1">
-              <FlagLogo source={stock.source} size={11} />
-              {india ? "NSE" : "SEC"}:{sym}
-            </span>
-          ),
-          logo: <TickerLogo symbol={sym} size={18} />,
-          select: () => pickStock(stock),
-        };
-      }),
-    },
-    {
-      label: "Plugins",
-      hits: pluginHits.map((a) => ({
-        label: a.name,
-        sub: "Plugin",
-        select: () => navigate(`/plugins/${encodeURIComponent(a.id)}`),
-      })),
-    },
-    {
-      label: "Runs",
-      hits: runHits.map((r) => ({
-        label: r.label,
-        sub: r.status ? `Run · ${r.status}` : "Run",
-        logo: r.symbol ? <TickerLogo symbol={r.symbol} size={18} /> : undefined,
-        select: () => navigate(`/runs/${encodeURIComponent(r.id)}`),
-      })),
-    },
-  ].filter((g) => g.hits.length > 0);
-  let hitCursor = 0;
-  const hitGroups = rawGroups.map((g) => ({ ...g, hits: g.hits.map((hit) => ({ ...hit, idx: hitCursor++ })) }));
-  const flatHits = hitGroups.flatMap((g) => g.hits);
-
-  const chooseHit = (idx: number) => {
-    const hit = flatHits[idx];
-    if (!hit) return;
-    setSearchOpen(false);
-    setActiveIdx(-1);
-    setQuery("");
-    hit.select();
-  };
-
-  // Keyboard (aria-activedescendant): focus stays in the input so typing keeps
-  // filtering; arrows move the active option, Enter picks, Escape closes.
-  const onSearchKeyDown = (e: ReactKeyboardEvent) => {
-    if (e.key === "Escape") {
-      if (searchOpen) {
-        setSearchOpen(false);
-        setActiveIdx(-1);
-      }
-      return;
-    }
-    if (!searchOpen) return;
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      if (flatHits.length === 0) return;
-      e.preventDefault();
-      setActiveIdx(
-        e.key === "ArrowDown"
-          ? (activeIdx + 1) % flatHits.length
-          : activeIdx <= 0
-            ? flatHits.length - 1
-            : activeIdx - 1,
-      );
-    } else if (e.key === "Enter") {
-      if (activeIdx >= 0) {
-        e.preventDefault();
-        chooseHit(activeIdx);
-      }
-    }
-  };
 
   return (
     <nav className="bg-[var(--surface-canvas)]">
@@ -290,7 +108,7 @@ export default function NavBar() {
           <Link
             to="/"
             className="text-[var(--ink-primary)] select-none cursor-pointer"
-            style={{ fontFamily: "var(--font-display)", fontWeight: 500, fontSize: 26 }}
+            style={{ fontFamily: "var(--font-display)", fontWeight: 400, fontSize: 26 }}
           >
             Relativity.
           </Link>
@@ -372,94 +190,18 @@ export default function NavBar() {
           </div>
         </div>
 
-        {/* Global search — stocks/agents/skills/runs; centered between the
-            mast and the account controls on md+, own row on phones. */}
-        <div
-          ref={searchWrapRef}
-          onKeyDown={onSearchKeyDown}
-          className="relative order-3 flex basis-full items-center justify-center pb-3 md:order-none md:basis-auto md:flex-1 md:pb-0"
-        >
-          <div className="relative">
-            <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--ink-tertiary)]" />
-            <input
-              ref={searchInputRef}
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setSearchOpen(true);
-              }}
-              onFocus={() => setSearchOpen(true)}
-              placeholder="Search stocks, runs, agents…"
-              aria-label="Search stocks, agents, skills and runs"
-              role="combobox"
-              aria-expanded={searchOpen}
-              aria-controls="nav-search-listbox"
-              aria-autocomplete="list"
-              aria-activedescendant={
-                activeIdx >= 0 && searchOpen && query.trim() !== "" ? `nav-search-opt-${activeIdx}` : undefined
-              }
-              className="h-8 w-52 rounded-full border border-[var(--hairline)] bg-[var(--surface-recessed)] pr-3 pl-8 font-[family-name:var(--font-body)] text-sm font-normal text-[var(--ink-primary)] outline-none focus:border-[var(--ink-tertiary)] md:pr-12"
+        {/* Global search — TradingView-style entity search (stocks, groups,
+            plugins, runs); centered between the mast and the account controls
+            on md+, own row on phones. */}
+        <div className="relative order-3 flex basis-full items-center justify-center pb-3 md:order-none md:basis-auto md:flex-1 md:pb-0">
+          <div className="w-52 md:w-64">
+            <EntitySearch
+              open={searchOpen}
+              onOpenChange={setSearchOpen}
+              onPick={navigateEntity}
+              hotkey
             />
-            {query === "" && (
-              <kbd
-                aria-hidden="true"
-                className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 rounded-[3px] border border-[var(--hairline)] px-1 py-px font-[family-name:var(--font-body)] text-[10px] font-normal text-[var(--ink-tertiary)] md:block"
-              >
-                ⌘K
-              </kbd>
-            )}
           </div>
-          {searchOpen && query.trim() !== "" && (
-            <div
-              id="nav-search-listbox"
-              role="listbox"
-              aria-label="Search results"
-              className="listbox-panel absolute top-[calc(100%+6px)] left-1/2 -translate-x-1/2 z-50 max-h-[320px] w-[340px] overflow-y-auto rounded-[6px] border border-[var(--hairline)] bg-[var(--surface-canvas)] py-1 shadow-[0_8px_24px_rgba(0,0,0,0.12)]"
-            >
-              {searching && (
-                <div className="px-3 py-2.5 font-[family-name:var(--font-body)] text-xs text-[var(--ink-tertiary)]">Searching…</div>
-              )}
-              {!searching && flatHits.length === 0 && (
-                <div className="px-3 py-2.5 font-[family-name:var(--font-body)] text-xs text-[var(--ink-tertiary)]">
-                  Nothing matches “{query}”.
-                </div>
-              )}
-              {!searching &&
-                hitGroups.map((group) => (
-                  <div key={group.label} role="group" aria-label={group.label}>
-                    <div
-                      aria-hidden="true"
-                      className="px-3 pt-2 pb-0.5 font-[family-name:var(--font-body)] text-[10.5px] font-medium tracking-[0.08em] text-[var(--ink-tertiary)] uppercase"
-                    >
-                      {group.label}
-                    </div>
-                    {group.hits.map((hit) => (
-                      <button
-                        key={hit.idx}
-                        id={`nav-search-opt-${hit.idx}`}
-                        type="button"
-                        role="option"
-                        tabIndex={-1}
-                        aria-selected={activeIdx === hit.idx}
-                        onClick={() => chooseHit(hit.idx)}
-                        onMouseEnter={() => setActiveIdx(hit.idx)}
-                        className={`flex w-full cursor-pointer items-center gap-2 rounded-[12px] px-2.5 py-2 text-left ${
-                          activeIdx === hit.idx ? "bg-[var(--surface-recessed)]" : ""
-                        }`}
-                      >
-                        {hit.logo && <span className="inline-flex shrink-0">{hit.logo}</span>}
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[13px] text-[var(--ink-primary)]">{hit.label}</span>
-                          {hit.sub && (
-                            <span className="block truncate text-[11px] text-[var(--ink-tertiary)]">{hit.sub}</span>
-                          )}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                ))}
-            </div>
-          )}
         </div>
 
         {/* Controls: `ml-auto` keeps them pinned right if they ever land on a
@@ -517,6 +259,7 @@ export default function NavBar() {
               { to: "/my-workspace", label: "Workspace", end: true, dot: "#7A8B9E" },
               { to: "/new-run", label: "New Run", end: false, dot: "#7A9E7E" },
               { to: "/runs", label: "Runs", end: false, dot: "#C49A6C" },
+              { to: "/sectors", label: "Sectors", end: false, dot: "#9E7AC4" },
               { to: "/watchlists", label: "Watchlist", end: false, dot: "#3B82F6" },
             ].map((item) => (
               <NavLink
@@ -544,11 +287,11 @@ export default function NavBar() {
           {latestRuns.length > 0 && (
             <Link to="/runs" className="ml-auto hidden shrink-0 cursor-pointer items-center gap-2 pl-6 md:flex">
               <span className="text-[11px] font-normal text-[var(--ink-tertiary)]">Latest runs</span>
-              <span className="flex items-center">
+              <span className="flex items-center gap-0.5">
                 {latestRuns.map((r, i) => (
                   <span
                     key={r.id || i}
-                    className={`inline-flex rounded-full ${i > 0 ? "-ml-2" : ""}`}
+                    className="inline-flex rounded-full"
                     style={{ boxShadow: "0 0 0 2px var(--surface-canvas)" }}
                   >
                     <TickerLogo symbol={r.symbol} size={22} />

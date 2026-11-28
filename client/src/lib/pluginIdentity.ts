@@ -17,6 +17,8 @@ export interface PluginSeedLike {
     plugin_id?: string;
     display_name?: string;
     name?: string;
+    /** Custom image URL — when set it replaces the generated mark. */
+    avatar?: string | null;
 }
 
 /** Seed precedence: id → plugin_id → display_name → name → fallback. */

@@ -143,9 +143,8 @@ export function MenuDropdown({ value, placeholder, search, logo, disabled, child
                 }
                 onKeyDown={disabled ? undefined : onTriggerKeyDown}
                 whileTap={{ scale: 0.997 }}
-                className={`flex h-10 items-center gap-1.5 rounded-[8px] border border-transparent bg-[var(--surface-recessed)] px-3.5 transition-colors ${disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer focus-within:ring-1 focus-within:ring-console-accent/40"}`}
+                className={`flex h-8 items-center gap-1.5 rounded-full border border-transparent bg-[var(--surface-raised)] px-3.5 shadow-[0_8px_24px_rgba(0,0,0,0.14)] transition-shadow ${disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer focus-within:shadow-[0_8px_24px_rgba(0,0,0,0.3)]"}`}
                 style={{
-                    minHeight: "40px",
                     outline: "none",
                 }}
             >
@@ -227,7 +226,7 @@ export function MenuDropdown({ value, placeholder, search, logo, disabled, child
                             border: `1px solid ${hairline}`,
                             borderRadius: "12px",
                             padding: "4px 0",
-                            boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+                            boxShadow: "0 16px 40px rgba(0,0,0,0.18)",
                             maxHeight: "320px",
                             overflowY: "auto",
                             outline: "none",

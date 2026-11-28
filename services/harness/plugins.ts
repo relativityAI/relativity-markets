@@ -53,7 +53,7 @@ export const RELATIVITY_SAFETY =
 const RELATIVITY_SOURCE = { label: "github.com/relativityAI/relativity-markets", url: "https://github.com/relativityAI/relativity-markets" };
 
 /** Seeded metadata for Relativity plugins (read-only in the UI). */
-const SEEDED_META: Record<string, Partial<PluginRow>> = {
+const SEEDED_META: Record<string, Partial<PluginRow> & { agent_category?: string | null }> = {
   chartist: {
     display_name: "Chartist",
     description: "Technical-analysis playbook for equities — chart patterns, indicators, levels and the report structure every chartist run follows.",
@@ -72,6 +72,7 @@ const SEEDED_META: Record<string, Partial<PluginRow>> = {
     version_date: "Nov 12",
     license: "MIT",
     categories: ["Indices", "India", "Department: Investing"],
+    country: "IN",
     sources: [RELATIVITY_SOURCE],
   },
 };
@@ -132,6 +133,12 @@ interface ManifestData {
   developerUrl?: string;
   sources?: { label: string; url: string }[];
   categories?: string[];
+  /** Which run-form category this plugin serves: "equity" | "industry" (absent = any). */
+  agentCategory?: string;
+  /** Optional ISO-2 country the plugin targets (absent = any). */
+  country?: string;
+  /** Custom avatar image URL (absent = generated avatar). */
+  avatar?: string;
 }
 
 function readManifest(dir: string): ManifestData | null {
@@ -150,10 +157,14 @@ function humanize(id: string): string {
 }
 
 /** A plugin dir that exists but has no DB row yet → metadata from its manifest. */
-function metaFromDisk(id: string, dir: string, origin: "relativity" | "custom"): Partial<PluginRow> {
+function metaFromDisk(
+  id: string,
+  dir: string,
+  origin: "relativity" | "custom",
+): Partial<PluginRow> & { agent_category?: string | null } {
   const m = readManifest(dir) ?? {};
   const seeded = origin === "relativity" ? (SEEDED_META[id] ?? {}) : {};
-  const base: Partial<PluginRow> = {
+  const base: Partial<PluginRow> & { agent_category?: string | null } = {
     id,
     name: m.name ?? id,
     display_name: m.displayName ?? seeded.display_name ?? (origin === "relativity" ? humanize(id) : humanize(id)),
@@ -167,7 +178,10 @@ function metaFromDisk(id: string, dir: string, origin: "relativity" | "custom"):
     safety: m.safety ?? (origin === "relativity" ? RELATIVITY_SAFETY : RELATIVITY_SAFETY),
     sources: m.sources ?? seeded.sources ?? [],
     categories: m.categories ?? seeded.categories ?? [],
+    agent_category: m.agentCategory ?? seeded.agent_category ?? null,
     developer_url: m.developerUrl ?? null,
+    country: m.country ?? seeded.country ?? null,
+    avatar: m.avatar ?? seeded.avatar ?? null,
   };
   return base;
 }
@@ -176,6 +190,8 @@ function metaFromDisk(id: string, dir: string, origin: "relativity" | "custom"):
 export interface PluginRecord extends PluginRow {
   dir: string;
   skill_count: number;
+  /** Manifest-only: which run-form category this plugin serves. */
+  agent_category?: string | null;
 }
 
 function recordFor(id: string, dir: string, origin: "relativity" | "custom", row: PluginRow | null, skillCount: number): PluginRecord {
@@ -195,11 +211,16 @@ function recordFor(id: string, dir: string, origin: "relativity" | "custom", row
     sources: row?.sources?.length ? row.sources : (disk.sources ?? []),
     categories: row?.categories?.length ? row.categories : (disk.categories ?? []),
     developer_url: row?.developer_url ?? disk.developer_url ?? null,
+    // Row wins only once edited — "" (cleared) beats the manifest, NULL falls through.
+    country: row?.country ?? disk.country ?? null,
+    avatar: row?.avatar ?? disk.avatar ?? null,
     install_source: row?.install_source ?? null,
     created_at: row?.created_at,
     updated_at: row?.updated_at,
   };
-  return { ...merged, dir, skill_count: skillCount };
+  // agent_category is manifest-only (never persisted) — plugin.json is the
+  // single source of truth for which run-form category a plugin serves.
+  return { ...merged, dir, skill_count: skillCount, agent_category: disk.agent_category };
 }
 
 function scanRoot(root: string, origin: "relativity" | "custom"): { id: string; dir: string; skills: string }[] {
@@ -305,6 +326,7 @@ export function pluginsForSkills(skillIds: string[]): string[] {
 const META_FIELDS = [
   "display_name", "description", "listed_date", "version", "version_date",
   "license", "safety", "sources", "categories", "developer_url", "verified",
+  "country", "avatar",
 ] as const;
 
 export type PluginMetaPatch = Partial<Record<(typeof META_FIELDS)[number], unknown>>;
@@ -314,7 +336,12 @@ export async function updatePluginMeta(id: string, patch: PluginMetaPatch): Prom
   if (pluginOrigin(id) !== "custom") return null;
   const current = getPlugin(id);
   if (!current) return null;
-  const clean: Record<string, unknown> = { id, updated_at: new Date().toISOString() };
+  // Start from the whole current row: upsertPluginRow INSERT OR REPLACEs, so a
+  // patch carrying only its own keys would rebuild the row without the NOT NULL
+  // columns (name) and reset every field the patch didn't mention.
+  // agent_category is manifest-only — never persisted.
+  const { dir: _dir, skill_count: _skillCount, agent_category: _ac, ...fields } = current;
+  const clean: Record<string, unknown> = { ...fields, id, updated_at: new Date().toISOString() };
   for (const field of META_FIELDS) {
     if (!(field in patch)) continue;
     const v = patch[field];
@@ -326,6 +353,14 @@ export async function updatePluginMeta(id: string, patch: PluginMetaPatch): Prom
         .map((s: any) => ({ label: String(s.label || s.url), url: String(s.url) }));
     } else if (field === "categories") {
       clean[field] = Array.isArray(v) ? v.map(String).slice(0, 24) : [];
+    } else if (field === "country") {
+      // ISO-2 only; anything else (or cleared) = "" = all countries.
+      const code = String(v ?? "").toUpperCase().replace(/[^A-Z]/g, "");
+      clean[field] = /^[A-Z]{2}$/.test(code) ? code : "";
+    } else if (field === "avatar") {
+      // Image URL only — a non-http(s) value (javascript:, junk) clears it.
+      const url = String(v ?? "").trim();
+      clean[field] = /^https?:\/\/\S+$/i.test(url) ? url.slice(0, 2000) : "";
     } else {
       clean[field] = v == null ? null : String(v).slice(0, 2000);
     }

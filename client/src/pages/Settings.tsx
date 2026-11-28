@@ -466,7 +466,7 @@ function CustomProviderDialog({
                                 className="w-full rounded-[6px] border-[0.5px] border-[color:var(--hairline)] bg-transparent px-2.5 py-2 font-app-mono text-[12.5px] text-[var(--ink-primary)] shadow-none placeholder:text-[var(--ink-tertiary)] focus-visible:ring-1 focus-visible:ring-console-accent/40"
                             />
                             {fetchErr ? (
-                                <span className="text-[11.5px] text-[var(--signal-negative)]">{fetchErr}</span>
+                                <span className="text-[11.5px] text-[var(--signal-negative-text)]">{fetchErr}</span>
                             ) : (
                                 <span className="text-[11.5px] text-console-ink-4">
                                     One per line or comma-separated — the names the endpoint serves.
@@ -1100,7 +1100,7 @@ export default function Settings() {
                             <>
                                 {loadError && (
                                     <div role="alert" className="flex flex-wrap items-center gap-3 bg-[var(--surface-recessed)] px-3 py-2.5">
-                                        <span className="font-app-body text-[13px] text-[var(--signal-negative)]">
+                                        <span className="font-app-body text-[13px] text-[var(--signal-negative-text)]">
                                             Couldn't load your settings — the statuses below may be out of date.
                                         </span>
                                         <button

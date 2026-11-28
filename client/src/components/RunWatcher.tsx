@@ -3,7 +3,9 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { AnalysisService } from "@/db";
 import { toaster } from "@/components/ui/toaster";
 
-const TERMINAL = new Set(["completed", "complete", "success", "error", "failed", "cancelled", "timeout"]);
+// Server writes CANCELED (one L) — statusOf() lowercases it. "cancelled"
+// (two Ls) never matches, so the toast used to be skipped.
+const TERMINAL = new Set(["completed", "complete", "success", "error", "failed", "canceled", "cancelled", "timeout", "budget_exhausted"]);
 
 /**
  * Tells you when a run finishes while you're somewhere else. Polls the runs

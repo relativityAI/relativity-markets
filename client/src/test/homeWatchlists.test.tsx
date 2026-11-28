@@ -312,11 +312,14 @@ describe("home watchlists", () => {
     expect(msftRow.textContent).toContain("Sell");
     expect(msftRow.textContent).toContain("—");
 
-    // Badges are solid, bright fills — not tints (amber for mid, red for bad).
-    const badgeStyle = (row: HTMLElement, word: string) =>
-      [...row.querySelectorAll("a.rounded-full, span.rounded-full")].find((s) => s.textContent?.startsWith(word))?.getAttribute("style") || "";
-    expect(badgeStyle(appleRow, "Fair")).toContain("#FACC15");
-    expect(badgeStyle(msftRow, "Sell")).toContain("#F87171");
+    // Badges use the docs' custom-colour recipes: pale tint + tinted ink in
+    // light, deep tint + light ink in dark (amber for mid, red for bad).
+    const badgeClass = (row: HTMLElement, word: string) =>
+      [...row.querySelectorAll("a.rounded-full, span.rounded-full")].find((s) => s.textContent?.startsWith(word))?.getAttribute("class") || "";
+    expect(badgeClass(appleRow, "Fair")).toContain("bg-amber-50");
+    expect(badgeClass(appleRow, "Fair")).toContain("dark:bg-amber-950");
+    expect(badgeClass(msftRow, "Sell")).toContain("bg-red-50");
+    expect(badgeClass(msftRow, "Sell")).toContain("dark:bg-red-950");
     // Every badge carries its band's lucide glyph (currentColor).
     expect(appleRow.querySelector("a.rounded-full svg")).toBeTruthy();
 

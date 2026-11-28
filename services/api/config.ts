@@ -125,6 +125,7 @@ export const config = {
   dailyCaps: parseDailyCaps(),
   // Paths
   assetsDir: path.resolve(__dirname, "..", "assets"),
+  taxonomyDir: path.resolve(__dirname, "..", "taxonomy", "data"),
   modelsFile: path.resolve(__dirname, "..", "config", "models.yaml"),
   // The output format is the harness's one file: harness/config/prompts/AGENTS.md.
   // Limits

@@ -151,8 +151,8 @@ export default function AlertBell() {
                 {unread > 0 && (
                     <span
                         aria-hidden
-                        className="absolute -top-1 -right-1.5 grid h-4 min-w-4 place-items-center rounded-full px-1 font-[family-name:var(--font-body)] text-[10px] leading-none font-medium text-white"
-                        style={{ background: "var(--signal-negative)" }}
+                        className="absolute -top-1 -right-1.5 grid h-4 min-w-4 place-items-center rounded-full px-1 font-[family-name:var(--font-body)] text-[10px] leading-none font-medium text-[#0b1220]"
+                        style={{ background: "var(--signal-live)" }}
                     >
                         {unread > 9 ? "9+" : unread}
                     </span>
@@ -170,12 +170,14 @@ export default function AlertBell() {
                         // 10rem = the bell's offset from the screen edge on a
                         // phone (row padding + the two touch-sized icons + gaps)
                         // plus a 16px margin, so the list never clips.
-                        "absolute right-0 z-50 mt-2 w-[min(20rem,calc(100vw_-_10rem))] overflow-hidden rounded-[10px] border border-[var(--hairline)] bg-[var(--surface-raised)] shadow-lg",
+                        // No border: the shade + soft shadow lift it off the
+                        // page instead (same shadow the navbar panels use).
+                        "absolute right-0 z-50 mt-2 w-[min(20rem,calc(100vw_-_10rem))] overflow-hidden rounded-[10px] bg-[var(--surface-raised)] shadow-[0_8px_24px_rgba(0,0,0,0.14)]",
                         "animate-[pop-down-in_160ms_ease-out] transition-[opacity,transform] duration-150 ease-out",
                         closing ? "pointer-events-none opacity-0 -translate-y-1 scale-[0.98]" : "opacity-100",
                     )}
                 >
-                    <div className="flex items-center justify-between border-b border-[var(--hairline)] px-3.5 py-2.5">
+                    <div className="flex items-center justify-between bg-[var(--surface-panel)] px-3.5 py-2.5">
                         <span className="font-[family-name:var(--font-body)] text-[13px] font-medium text-[var(--ink-primary)]">
                             Alerts
                         </span>

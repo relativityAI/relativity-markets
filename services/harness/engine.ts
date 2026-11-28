@@ -35,9 +35,10 @@ import { TraceMapper, type RunStats } from "./trace.js";
 import { langfuseCallbacks } from "./tracing.js";
 import { getCheckpointer } from "./checkpointer.js";
 import { ReportCanvas, validateComposed } from "./report/canvas.js";
+import { extractSources } from "./report/sources.js";
 import { reportWriteTool } from "./tools/report-write.js";
 import { wrapUntrusted } from "./tools/index.js";
-import { allBlocks, countCharts, sectionHeadings, type ReportDocument } from "./report/document.js";
+import { allBlocks, countCharts, sectionHeadings, type ReportDocument, type Source } from "./report/document.js";
 import { attachChartData, renderFigures } from "./report/builder.js";
 import { getPriceHistory } from "./marketdata.js";
 import { gradeReport, reportDigest, type Verdict } from "./report/verdict.js";
@@ -93,7 +94,7 @@ export interface RunResult {
   document: ReportDocument;
   errors: string[];
   trace: TraceEvent[];
-  budgetUsed: RunStats & { kbFiles: number };
+  budgetUsed: RunStats;
   canvas: ReportCanvas;
   rejectedSections: number;
   verdict: Verdict | null;
@@ -235,33 +236,6 @@ function createTimePressureMiddleware(canvas: ReportCanvas, budgetMs: number, t0
   });
 }
 
-/** Knowledge-base archiver — the pass the old workspace module ran per tool
- *  call, now one post-run sweep: every non-fs tool result lands under
- *  /knowledge_base/sources/ so compactWorkspace() has files to persist and
- *  the run's Knowledge Base section has content to show. Best-effort. */
-export function hydrateKnowledgeBase(workspaceDir: string, trace: TraceEvent[]): void {
-  try {
-    const skip = /^(report_write|write_todos|read_file|write_file|edit_file|ls|glob|grep|view)/;
-    const kbDir = join(workspaceDir, "knowledge_base", "sources");
-    let n = 0;
-    for (const ev of trace) {
-      if (ev.type !== "tool_result") continue;
-      // In-memory events say "ok"|"error"; persisted rows say "OK"|"ERR".
-      if (ev.status === "error" || (ev.status as string) === "ERR") continue;
-      if (skip.test(ev.tool)) continue;
-      if (ev.result == null) continue;
-      const body = typeof ev.result === "string" ? ev.result : JSON.stringify(ev.result, null, 2);
-      if (body.length < 40) continue; // echoes and empty payloads aren't knowledge
-      // ponytail: 40 files × 20 KB cap — enough for a run's evidence; raise if runs exceed it.
-      if (n >= 40) break;
-      mkdirSync(kbDir, { recursive: true });
-      writeFileSync(join(kbDir, `${ev.tool.replace(/[^\w.-]/g, "_")}_${++n}.json`), body.length > 20_000 ? `${body.slice(0, 20_000)}…` : body);
-    }
-  } catch {
-    // KB hydration is best-effort — never fail a run over it.
-  }
-}
-
 /**
  * Workspace = LocalShellBackend: native shell `execute` inside the run's own
  * workspace dir (timeout-bounded), so plugin scripts actually run. Selected
@@ -338,13 +312,19 @@ function buildSystemPrompt(o: {
   return [fill(agentsDoc), structure, skillNote, budgetNote, generated].filter(Boolean).join("\n\n");
 }
 
-async function createRunAgent(o: RunOptions, toolNames: string[], canvas: ReportCanvas, notify: () => void) {
+async function createRunAgent(
+  o: RunOptions,
+  toolNames: string[],
+  canvas: ReportCanvas,
+  notify: () => void,
+  sources: () => Source[],
+) {
   const { backend, skills } = backendFor(runWorkspaceDir(o.runId), o.pluginIds);
   const interruptOn: InterruptOn | undefined = o.agent.interruptOn;
   return createDeepAgent({
     model: o.model,
     systemPrompt: buildSystemPrompt({ ...o, toolNames }),
-    tools: [...o.tools, reportWriteTool({ canvas, notify })],
+    tools: [...o.tools, reportWriteTool({ canvas, notify, sources })],
     backend,
     ...(skills.length ? { skills } : {}),
     middleware: [todoListMiddleware(), toolErrorGuard, createTimePressureMiddleware(canvas, o.budget.maxMs ?? 180_000, Date.now())],
@@ -357,9 +337,14 @@ async function createRunAgent(o: RunOptions, toolNames: string[], canvas: Report
 function runConfig(o: { runId: string; budget: Budget; abortSignal?: AbortSignal }): Record<string, unknown> {
   return {
     configurable: { thread_id: o.runId },
-    // LangGraph recursionLimit counts graph super-steps: one tool round-trip
-    // = model node + tools node (2), plus the final model-only step.
-    recursionLimit: o.budget.maxSteps * 2 + 2,
+    // recursionLimit counts graph super-steps; deepagents spends ~5 per tool
+    // round (TimePressure.before_model → SkillsMiddleware.before_model →
+    // model_request → todoListMiddleware.after_model → tools) plus 2
+    // before_agent nodes. Measured on run 8d80fba3: 42 = 2 + 8×5, so the old
+    // ×2+2 gave the agent 8 of its promised 20 rounds.
+    // ponytail: ×6 is arithmetic on today's middleware chain, not a guarantee —
+    // the exact fix is counting rounds in a middleware; maxMs is the real net.
+    recursionLimit: o.budget.maxSteps * 6 + 6,
     callbacks: langfuseHandlers,
     ...(o.budget.maxMs ? { signal: o.abortSignal ?? undefined } : {}),
   };
@@ -417,7 +402,7 @@ export async function runAgent(o: RunOptions): Promise<RunResult> {
     : o.tools;
   const notify = () => o.onCanvas?.(canvas);
 
-  const agent = await createRunAgent({ ...o, tools: baseTools }, toolNames, canvas, notify);
+  const agent = await createRunAgent({ ...o, tools: baseTools }, toolNames, canvas, notify, () => extractSources(trace));
   const mapper = new TraceMapper(emit);
 
   const userPrompt = datedPrompt(
@@ -428,7 +413,7 @@ export async function runAgent(o: RunOptions): Promise<RunResult> {
     ...(o.skills.length ? { pinnedSkills: o.skills.map((s) => s.id) } : {}),
   };
 
-  const budgetUsed = { steps: 0, tokens: 0, inputTokens: 0, peakInput: 0, toolCalls: 0, kbFiles: 0 };
+  const budgetUsed = { steps: 0, tokens: 0, inputTokens: 0, peakInput: 0, toolCalls: 0 };
   let endedOnInterrupt = false;
   // Wall-clock backstop: budget.maxMs aborts the stream mid-run; the stitch
   // below keeps whatever the agent already wrote (partial run).
@@ -460,6 +445,7 @@ export async function runAgent(o: RunOptions): Promise<RunResult> {
   notify();
 
   // ── STITCH — sections land exactly as the agent wrote them. ───────────────
+  canvas.setSources(extractSources(trace));
   const document = canvas.document();
   attachChartData(document, trace, undefined, await chartPreload(o));
   renderFigures(document);
@@ -474,7 +460,11 @@ export async function runAgent(o: RunOptions): Promise<RunResult> {
     const todos = state?.values?.todos ?? [];
     const open = todos.filter((t) => t.status !== "completed");
     if (todos.length && open.length) {
-      gate.push(`completion gate: ${open.length} todo item(s) still open — ${open.map((t) => t.content.slice(0, 60)).join("; ")}`);
+      gate.push(
+        `run ended before the plan was finished — ${open.length} of ${todos.length} todo(s) still open, ${canvas.sectionCount()} section(s) written — ${open
+          .map((t) => t.content.slice(0, 60))
+          .join("; ")}`,
+      );
     }
   } catch {
     // state unreadable — skip the gate
@@ -510,7 +500,6 @@ export async function runAgent(o: RunOptions): Promise<RunResult> {
   }
 
   const saveFull = shouldSaveWorkspace(o.saveWorkspace);
-  hydrateKnowledgeBase(workspaceDir, trace);
   const workspace = compactWorkspace(workspaceDir);
   const workspaceFull = saveFull ? compactWorkspace(workspaceDir, true) : undefined;
   o.onWorkspace?.(workspace);
@@ -605,6 +594,7 @@ export async function resumeAgent(o: ResumeOptions, decisions: ReviewDecision[])
     o.tools.map((t) => t.name),
     canvas,
     notify,
+    () => extractSources(trace),
   );
   emit({ type: "phase", phase: "run", label: "Resumed", detail: "Human decisions applied — continuing the run" });
   const mapper = new TraceMapper(emit);
@@ -618,6 +608,7 @@ export async function resumeAgent(o: ResumeOptions, decisions: ReviewDecision[])
   }
   notify();
 
+  canvas.setSources(extractSources(trace));
   const document = canvas.document();
   attachChartData(document, trace, undefined, await chartPreload(o));
   renderFigures(document);
@@ -632,7 +623,7 @@ export async function resumeAgent(o: ResumeOptions, decisions: ReviewDecision[])
     document,
     errors: wroteAny ? [] : ["resumed run wrote no sections"],
     trace,
-    budgetUsed: { ...mapper.stats, kbFiles: 0 },
+    budgetUsed: mapper.stats,
     canvas,
     rejectedSections: 0,
     verdict: null,

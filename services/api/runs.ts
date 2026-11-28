@@ -11,6 +11,7 @@
 
 import { randomUUID } from "node:crypto";
 import { keyPool } from "./keypool.js";
+import { getGroup } from "./taxonomy.js";
 import { fetchUserKeys } from "./provision.js";
 import { runMcpEntries, defaultMcpEnabled, mcpKeyContext } from "./mcp.js";
 import { log } from "./logger.js";
@@ -143,6 +144,9 @@ interface RunHarnessOptions {
   /** Per-run MCP allowlist (server names); absent = every configured source. */
   mcpEnabled?: string[];
   budgetOverride?: { maxSteps?: number; maxTokens?: number };
+  /** Failure text from the attempt this run replaces — Retry clears the row's
+   *  error, so it is carried here and re-published with the final notes. */
+  priorError?: string;
 }
 
 /** Display label for a plugin selection (raw ids as the fallback). */
@@ -166,6 +170,9 @@ function compileProfile(pluginIds: string[], label: string, selected?: string[] 
  * the deepagents loop with key/model fallback, persist the run, and return
  * the typed document.
  */
+/** Group keys ride the same `symbol` field — detect and resolve them once. */
+const GROUP_KEY = /^(IN|US):(SECTOR|INDUSTRY_GROUP|INDUSTRY|BASIC_INDUSTRY|SUB_INDUSTRY):.+/;
+
 export async function runHarnessSymbol(
   userId: string,
   symbol: string,
@@ -179,19 +186,34 @@ export async function runHarnessSymbol(
   const label = pluginLabel(pluginIds) || "Run";
   const profile = compileProfile(pluginIds, label, o.skillIds);
 
+  // A sector/industry run: `symbol` is a taxonomy key — resolve the group so
+  // the prompt reads naturally and the agent gets pointed at resolve_group.
+  const group = GROUP_KEY.test(symbol) ? getGroup(symbol) : null;
+
   const systemPrompt = requestedSystemPrompt || undefined;
   const template: SystemPrompt | null = getSystemPrompt(systemPrompt || "");
   const compiled = compileAgent(userId, profile, {
     template,
-    vars: { symbol, title: symbol, date: new Date().toISOString().slice(0, 10), source, agent: label },
+    vars: {
+      symbol,
+      title: group?.name ?? symbol,
+      date: new Date().toISOString().slice(0, 10),
+      source,
+      agent: label,
+      entity_kind: group ? group.level : "stock",
+      entity_name: group?.name ?? symbol,
+    },
   });
   const { llmKeys, prefs } = await fetchUserKeys(userId);
   let modelId = requestedModel || keyPool.getDefaultModel(llmKeys);
-  const budget: Budget = clampBudget({ ...compiled.budget, ...o.budgetOverride });
-  // API wall-clock backstop: hard stop at 180s.
-  if (!budget.maxMs) budget.maxMs = 180_000;
   const { config: cliCfg } = loadRunFileConfig();
   const resolved = resolveRunConfig(process.env, cliCfg);
+  // Precedence: request override > HARNESS_* env / harness.config.json > built-ins.
+  // compileProfile's budget IS the built-ins (clampBudget({})), so it goes first
+  // and must not shadow the config file — that field was silently dead before.
+  const budget: Budget = clampBudget({ ...compiled.budget, ...resolved.budget, ...o.budgetOverride });
+  // API wall-clock backstop: hard stop at 180s.
+  if (!budget.maxMs) budget.maxMs = 180_000;
   // Settings → MCP: the user's own servers join the toolbox, the ones they
   // switched off drop out of the default allowlist.
   const mcpEntries = runMcpEntries(resolved.tools?.mcp ?? [], prefs);
@@ -278,7 +300,12 @@ export async function runHarnessSymbol(
         systemPromptName: systemPrompt,
         symbol,
         source,
-        prompt: o.promptOverride || `Analyze ${symbol} (${source}). Use the tools to gather the evidence a rigorous research report needs for ${symbol}.`,
+        prompt:
+          o.promptOverride ||
+          (group
+            ? `Analyze the ${group.level.replace(/_/g, " ")} "${group.name}" (${source}, ${group.count} constituents). ` +
+              `First call resolve_group with key "${group.key}" for the constituent list, then use the tools to gather the evidence a rigorous sector research report needs for ${group.name}.`
+            : `Analyze ${symbol} (${source}). Use the tools to gather the evidence a rigorous research report needs for ${symbol}.`),
         budget,
         grade: false,
         initialWorkspace,
@@ -326,9 +353,13 @@ export async function runHarnessSymbol(
   const paused = !!result.pendingInterrupt;
   const legacyStatus = result.status === "failed" ? "ERROR" : "COMPLETED";
   const notes = [...result.errors];
-  if (result.status === "partial" && !paused) notes.unshift("some report sections could not be composed (see notes below)");
+  // Partial = three causes: open todos, a rejected section, or an interrupt.
+  // Only this one isn't already in result.errors — say what actually happened.
+  if (result.status === "partial" && !paused && result.rejectedSections)
+    notes.unshift(`${result.rejectedSections} report section(s) were rejected by the section contract and are not in the report`);
   if (result.status === "failed") notes.unshift("run produced no valid sections");
   if (toolsSkipped.length) notes.push(`unavailable data sources: ${toolsSkipped.join(", ")} — the run continued without them`);
+  if (o.priorError?.trim()) notes.push(`previous attempt: ${o.priorError.replace(/\s+/g, " ").trim()}`);
   const payload = {
     status: paused ? "RUNNING" : legacyStatus,
     symbol,
@@ -540,6 +571,8 @@ export async function retryFailedRun(
   if (!["failed", "error", "budget_exhausted"].includes(status)) return "not-failed";
 
   const pluginIds = row.plugin_ids?.length ? row.plugin_ids : pluginsForSkills(row.skill_ids ?? []);
+  // The retry republishes this row, which overwrites `error` — keep the text.
+  const priorError = row.error ? String(row.error) : "";
   await updateRunRow(runId, {
     status: "RUNNING",
     error: null,
@@ -558,6 +591,7 @@ export async function retryFailedRun(
       pluginIds,
       skillIds: row.skill_ids ?? undefined,
       mcpEnabled: row.mcp_enabled ?? undefined,
+      ...(priorError ? { priorError } : {}),
     },
   ).then((result) => {
     if (!result) throw new Error("run did not start");
